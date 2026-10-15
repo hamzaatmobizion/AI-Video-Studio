@@ -1,7 +1,7 @@
 <article class="card status-{{ g.status | lower }}">
   <div class="media">
     {% if g.status == "READY" %}
-      <video controls preload="metadata" playsinline src="/generations/{{ g.id }}/file"></video>
+      <video controls preload="metadata" playsinline src="/generations/{{ g.id }}/file#t=0.1"></video>
     {% else %}
       <div class="placeholder {{ 'portrait' if g.aspect == '9:16' else 'landscape' }}">
         {% if g.status == "GENERATING" %}<span class="spinner"></span>Generating…

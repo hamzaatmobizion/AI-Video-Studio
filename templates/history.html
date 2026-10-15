@@ -30,7 +30,7 @@
     <li class="history-row">
       <div class="thumb {{ 'portrait' if g.aspect == '9:16' else 'landscape' }}">
         {% if g.status == "READY" %}
-          <video controls preload="none" playsinline src="/generations/{{ g.id }}/file"></video>
+          <video controls preload="metadata" playsinline src="/generations/{{ g.id }}/file#t=0.1"></video>
         {% else %}
           <span class="muted">{% if g.status in active %}<span class="spinner"></span>{% endif %}{{ labels.get(g.status, g.status) }}</span>
         {% endif %}

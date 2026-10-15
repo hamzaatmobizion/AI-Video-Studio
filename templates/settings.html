@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Settings · VideoGeneration{% endblock %}
+{% block content %}
+<section class="panel">
+  <h2>Video worker</h2>
+  {% if not worker_configured %}
+    <p class="notice">Not configured: set <code>WORKER_URL</code> and <code>WORKER_API_KEY</code> in <code>.env</code>.</p>
+  {% elif health.ok %}
+    <p><span class="dot ok"></span> Connected</p>
+  {% else %}
+    <p><span class="dot bad"></span> {{ health.message }}</p>
+  {% endif %}
+  {% if worker_configured %}<button class="secondary" data-post="/settings/worker/test" data-show="worker-msg">Test connection</button>
+  <span id="worker-msg" class="muted"></span>{% endif %}
+</section>
+
+<section class="panel">
+  <h2>Gemini (Veo)</h2>
+  {% if worker_configured and health.ok %}
+    <p><span class="dot {{ 'ok' if gemini.state == 'connected' else 'bad' }}"></span>
+      <strong>{{ gemini_label }}</strong>{% if gemini.model %} · {{ gemini.model }}{% endif %}</p>
+    {% if gemini.message %}<p class="muted">{{ gemini.message }}</p>{% endif %}
+    {% if gemini.state == 'connected' %}
+      {% if gemini.plan %}
+      <p><span class="dot {{ 'ok' if gemini.plan == 'paid' else 'bad' }}"></span>
+        Subscription: <strong>{{ 'Paid plan (Google AI Pro / Ultra)' if gemini.plan == 'paid' else 'Free plan' }}</strong></p>
+      {% endif %}
+      {% if gemini.video %}
+      <p><span class="dot {{ 'ok' if gemini.video == 'available' else 'bad' }}"></span>
+        Video generation: <strong>{{ 'Available' if gemini.video == 'available' else 'Not available on this account' }}</strong></p>
+      {% endif %}
+      {% if gemini.video != 'available' and (gemini.plan or gemini.video) %}
+      <p class="muted">Making videos with Veo needs a Google AI Pro or Ultra plan. Upgrade this Google account
+        (or sign in with one that has it), then click Check session.</p>
+      {% elif not gemini.plan %}
+      <p class="muted">Click Check session to see this account's subscription and video access.</p>
+      {% endif %}
+    {% endif %}
+    {% if pause %}
+      <p class="error">Generation is paused: {{ pause.message }}</p>
+      <p class="muted">Fix the cause in the sign-in window (or wait for the limit to reset), then resume.</p>
+      <button data-post="/settings/gemini/resume" data-reload>Resume generation</button>
+    {% endif %}
+    {% if login_window_open or gemini.checking %}
+      <div id="gemini-watch" data-key="{{ gemini_key }}" hidden></div>
+    {% endif %}
+    {% if login_window_open %}
+      <p class="notice">A Gemini window is open. Sign in to Google there (to switch accounts, sign out of Gemini
+        first, then sign in with the other one). When you're finished, <strong>quit that window with ⌘Q</strong>.
+        This page then checks your sign-in and updates by itself. Generation waits while the window is open.</p>
+      <p class="muted">Closed it with the red ✕ and nothing happened? Chrome is still running in the background.
+        <button class="link" data-post="/settings/gemini/done" data-reload>Close it for me</button></p>
+    {% elif gemini.checking %}
+      <p class="notice"><span class="spinner"></span> Checking your Gemini sign-in… This page updates by itself.</p>
+    {% else %}
+      {% if gemini.state == 'connected' %}
+      <button class="secondary" data-post="/settings/gemini/login" data-reload>Use a different Google account</button>
+      {% else %}
+      <button data-post="/settings/gemini/login" data-reload>Open Gemini sign-in window</button>
+      {% endif %}
+      <button class="secondary" data-post="/settings/gemini/check" data-reload>Check session</button>
+    {% endif %}
+  {% else %}
+    <p class="muted">Available once the worker is connected.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Google Drive</h2>
+  {% if google_result %}
+    <p class="notice"><span class="dot {{ google_result[0] }}"></span> {{ google_result[1] }}</p>
+  {% endif %}
+  {% if not google_configured %}
+    <p class="notice">Not configured: set {{ google_missing | join(", ") }} in <code>.env</code>.
+      Authorised redirect URI: <code>{{ redirect_uri }}</code></p>
+  {% elif drive %}
+    <p><span class="dot ok"></span> Connected{% if drive.email %} as {{ drive.email }}{% endif %}</p>
+    <p>Saving to folder: <strong>{{ drive.folder_name or default_folder }}</strong>{% if not drive.folder_id %} <span class="muted">(default)</span>{% endif %}</p>
+    <div class="row">
+      <button class="secondary" id="load-folders">Choose folder…</button>
+      <button class="secondary" data-post="/settings/google/folder/default" data-reload>Use default</button>
+      <button class="secondary" data-post="/settings/google/disconnect" data-confirm="Disconnect Google Drive? Existing videos stay in Drive." data-reload>Disconnect</button>
+    </div>
+    <div id="folder-picker" hidden>
+      <select id="folder-select"></select>
+      <button id="folder-use">Use this folder</button>
+      <input id="folder-new" placeholder="…or new folder name">
+      <button id="folder-create">Create</button>
+    </div>
+  {% else %}
+    <p><span class="dot bad"></span> Not connected</p>
+    <a class="button" href="/auth/google/start">Connect Google Drive</a>
+  {% endif %}
+</section>
+
+{% endblock %}

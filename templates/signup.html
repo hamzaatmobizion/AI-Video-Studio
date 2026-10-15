@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Create account · VideoGeneration{% endblock %}
+{% block content %}
+<form id="signup" class="panel narrow">
+  <h1>Create account</h1>
+  <label>Email <input name="email" type="email" autocomplete="username" required></label>
+  <label>Password <input name="password" type="password" autocomplete="new-password" minlength="10" required></label>
+  <label>Repeat password <input name="repeat" type="password" autocomplete="new-password" minlength="10" required></label>
+  <p class="muted">At least 10 characters.</p>
+  <p class="error" id="signup-error" hidden></p>
+  <button type="submit">Create account</button>
+  <p class="muted">Already have an account? <a href="/login">Sign in</a></p>
+</form>
+{% endblock %}

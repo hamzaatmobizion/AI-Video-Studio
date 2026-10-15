@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <title>{% block title %}VideoGeneration{% endblock %}</title>
+  <link rel="stylesheet" href="{{ asset('css/app.css') }}">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">VideoGeneration</a>
+    {% if user %}
+    <nav>
+      {% set here = request.url.path %}
+      <a href="/" {% if here == '/' %}class="active" aria-current="page"{% endif %}>Studio</a>
+      <a href="/history" {% if here == '/history' %}class="active" aria-current="page"{% endif %}>History</a>
+      <a href="/settings" {% if here == '/settings' %}class="active" aria-current="page"{% endif %}>Settings</a>
+      <a href="/account" {% if here == '/account' %}class="active" aria-current="page"{% endif %}>Account</a>
+      <button class="link" data-post="/logout" data-then="/login">Sign out</button>
+    </nav>
+    {% endif %}
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <script src="{{ asset('js/app.js') }}"></script>
+</body>
+</html>

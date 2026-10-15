@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>New video</h1>
+  <p class="muted">One 8-second clip per prompt.</p>
+  {% if not can_generate %}
+    <p class="notice">Video generation is off: set <code>WORKER_URL</code> and <code>WORKER_API_KEY</code> in <code>.env</code>.</p>
+  {% elif not drive_connected %}
+    <p class="notice">Connect Google Drive in <a href="/settings">Settings</a> first, so finished videos have somewhere to go.</p>
+  {% endif %}
+  <form id="new-video">
+    <label>Prompt
+      <textarea name="prompt" rows="4" maxlength="2000" required placeholder="A paper boat drifting down a rain-soaked street at dusk, close-up, cinematic"{% if prefill_prompt %} autofocus{% endif %}>{{ prefill_prompt }}</textarea>
+    </label>
+    <div class="row">
+      <fieldset class="aspect">
+        <legend>Aspect</legend>
+        <label><input type="radio" name="aspect" value="9:16" {% if prefill_aspect != '16:9' %}checked{% endif %}> 9:16 (Reel)</label>
+        <label><input type="radio" name="aspect" value="16:9" {% if prefill_aspect == '16:9' %}checked{% endif %}> 16:9</label>
+      </fieldset>
+      <label class="grow">Reference images (optional, up to 3 · JPG/PNG/WebP · 10 MB each)
+        <input type="file" name="images" accept="image/jpeg,image/png,image/webp" multiple>
+      </label>
+    </div>
+    <p class="error" id="new-error" hidden></p>
+    <button type="submit" {% if not can_generate or not drive_connected %}disabled{% endif %}>Generate 8-second video</button>
+  </form>
+</section>
+<section id="cards" class="cards">
+  {% for c in cards %}<div class="card-wrap" data-id="{{ c.id }}" data-hash="{{ c.hash }}">{{ c.html | safe }}</div>{% endfor %}
+</section>
+<p class="muted history-link"><a href="/history">See all your videos in History →</a></p>
+<script>window.STUDIO_ACTIVE = {{ 'true' if cards | selectattr('active') | list else 'false' }};</script>
+{% endblock %}

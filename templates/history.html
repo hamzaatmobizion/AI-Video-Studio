@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}History · VideoGeneration{% endblock %}
+{% set labels = {"READY": "Ready", "GENERATING": "Generating", "SAVING": "Saving", "SAVE_FAILED": "Not saved",
+                 "FAILED": "Failed", "CANCELLED": "Cancelled"} %}
+{% block content %}
+<section class="panel">
+  <h1>History</h1>
+  <form class="filters" method="get" action="/history" role="search">
+    <input type="search" name="q" value="{{ q }}" maxlength="200" placeholder="Search prompts" aria-label="Search prompts">
+    <select name="status" aria-label="Status">
+      {% for key, label in statuses.items() %}<option value="{{ key }}" {% if key == status %}selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+    <button type="submit">Search</button>
+    {% if q or status != 'all' %}<a class="clear" href="/history">Clear</a>{% endif %}
+  </form>
+  <p class="muted small">{{ total }} video{{ '' if total == 1 else 's' }}{% if q or status != 'all' %} match{% endif %}</p>
+</section>
+
+{% if not rows %}
+  <section class="panel empty">
+    {% if q or status != 'all' %}
+      <p>Nothing matches. <a href="/history">Show all videos</a></p>
+    {% else %}
+      <p>No videos yet. <a href="/">Make one in Studio</a></p>
+    {% endif %}
+  </section>
+{% else %}
+  <ul class="history">
+    {% for g in rows %}
+    <li class="history-row">
+      <div class="thumb {{ 'portrait' if g.aspect == '9:16' else 'landscape' }}">
+        {% if g.status == "READY" %}
+          <video controls preload="none" playsinline src="/generations/{{ g.id }}/file"></video>
+        {% else %}
+          <span class="muted">{% if g.status in active %}<span class="spinner"></span>{% endif %}{{ labels.get(g.status, g.status) }}</span>
+        {% endif %}
+      </div>
+      <div class="details">
+        <p class="prompt">{{ g.prompt }}</p>
+        <p class="meta">
+          <span class="pill {{ g.status | lower }}">{{ labels.get(g.status, g.status) }}</span>
+          #{{ g.id }} · {{ g.aspect }} · {{ g.created_at.strftime("%Y-%m-%d %H:%M") }} UTC
+          {% if g.dismissed %}· <span class="badge">Hidden from Studio</span>{% endif %}
+        </p>
+        {% if g.error %}<p class="{{ 'muted' if g.status in active else 'error' }} small">{{ g.error }}</p>{% endif %}
+        <div class="actions">
+          <a class="button secondary" href="/?prompt_from={{ g.id }}">Use prompt again</a>
+          {% if g.status == "READY" %}
+            <a class="button secondary" href="/generations/{{ g.id }}/file?download=1">Download</a>
+            {% if g.drive_file_id %}<a class="button secondary" href="https://drive.google.com/file/d/{{ g.drive_file_id }}/view" target="_blank" rel="noopener">Open in Drive</a>{% endif %}
+          {% endif %}
+          {% if g.status == "SAVE_FAILED" %}<button data-post="/generations/{{ g.id }}/save" data-reload>Try saving again</button>{% endif %}
+          {% if g.status in ("FAILED", "CANCELLED") %}<button data-post="/generations/{{ g.id }}/retry" data-reload>Retry</button>{% endif %}
+          {% if g.dismissed and g.status not in active %}<button class="secondary" data-post="/generations/{{ g.id }}/restore" data-reload>Restore to Studio</button>{% endif %}
+          {% if g.status not in active %}<button class="secondary danger" data-post="/generations/{{ g.id }}/delete" data-reload
+            data-confirm="Remove this video from your history?{{ ' The video stays in your Google Drive.' if g.drive_file_id else '' }}">Delete</button>{% endif %}
+        </div>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if pages > 1 %}
+  <nav class="pager" aria-label="Pages">
+    {% if prev_url %}<a class="button secondary" href="{{ prev_url }}">← Newer</a>{% else %}<span></span>{% endif %}
+    <span class="muted small">Page {{ page }} of {{ pages }}</span>
+    {% if next_url %}<a class="button secondary" href="{{ next_url }}">Older →</a>{% else %}<span></span>{% endif %}
+  </nav>
+  {% endif %}
+{% endif %}
+{% endblock %}

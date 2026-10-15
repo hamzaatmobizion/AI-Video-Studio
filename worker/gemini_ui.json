@@ -1,0 +1,137 @@
+{
+  "_note": "All Gemini UI knowledge lives here. When Gemini changes its page, edit this file (run `python -m worker check-gemini` to see what matches). Each selector key is a list of candidates; the first visible match wins.",
+  "app_url": "https://gemini.google.com/app",
+  "allowed_hosts": [
+    "gemini.google.com",
+    "accounts.google.com",
+    "consent.google.com",
+    "www.google.com"
+  ],
+  "selectors": {
+    "prompt_input": [
+      "rich-textarea div[contenteditable='true']",
+      "div.ql-editor[contenteditable='true']",
+      "[role='textbox'][contenteditable='true']"
+    ],
+    "send_button": [
+      "button[aria-label='Send message']",
+      "button[aria-label*='Send' i]",
+      "button.send-button"
+    ],
+    "sign_in_button": [
+      "a[href*='accounts.google.com/ServiceLogin']",
+      "a[aria-label='Sign in']",
+      "a:has-text('Sign in')",
+      "button:has-text('Sign in')"
+    ],
+    "account_button": [
+      "a[aria-label*='Google Account' i]",
+      "a[href*='accounts.google.com/SignOutOptions']",
+      "img.gb_P[alt]"
+    ],
+    "tools_button": [
+      "button[aria-label='Upload & tools']",
+      "button[aria-label='Tools']",
+      "toolbox-drawer button",
+      "button:has-text('Tools')"
+    ],
+    "more_tools": [
+      "button[aria-label='More tools']",
+      "button:has-text('More tools')",
+      "button:has-text('More')"
+    ],
+    "upgrade_button": [
+      "gem-button button:has-text('Upgrade')",
+      "button:has-text('Upgrade')",
+      "a:has-text('Upgrade')"
+    ],
+    "video_tool": [
+      "button:has-text('Create videos')",
+      "button:has-text('Create video')",
+      "[role='menuitemcheckbox']:has-text('Create video')",
+      "[role='menuitemcheckbox']:has-text('Video')",
+      "toolbox-drawer-item button:has-text('Video')"
+    ],
+    "video_tool_active": [
+      "button[aria-label*='Deselect Video' i]",
+      "button[aria-label*='Video' i][aria-pressed='true']",
+      ".toolbox-drawer-item-deselect-button:has-text('Video')"
+    ],
+    "model_switch": [
+      "button[data-test-id='bard-mode-menu-button']",
+      "bard-mode-switcher button",
+      "button[aria-label*='mode picker' i]"
+    ],
+    "model_option": [
+      "[role='menuitemradio']:has-text('{label}')",
+      "[role='menuitem']:has-text('{label}')",
+      "button.bard-mode-list-button:has-text('{label}')"
+    ],
+    "file_input": [
+      "input[type='file']"
+    ],
+    "upload_button": [
+      "button[aria-label*='upload file menu' i]",
+      "button[aria-label*='Add files' i]",
+      "button[aria-label*='Upload' i]"
+    ],
+    "upload_menu_item": [
+      "[role='menuitem']:has-text('Upload files')",
+      "button:has-text('Upload files')"
+    ],
+    "attachment_preview": [
+      "uploader-file-preview",
+      "[data-test-id='file-preview']",
+      ".file-preview-container img"
+    ],
+    "response": [
+      "model-response"
+    ],
+    "response_video": [
+      "video"
+    ],
+    "download_button": [
+      "button[aria-label*='Download' i]"
+    ],
+    "captcha": [
+      "iframe[src*='recaptcha']",
+      "iframe[title*='reCAPTCHA' i]"
+    ]
+  },
+  "patterns": {
+    "verification": [
+      "unusual traffic",
+      "verify (it'?s|that it'?s) you",
+      "i'?m not a robot",
+      "captcha",
+      "confirm (it'?s|that it'?s) you"
+    ],
+    "limit": [
+      "reached (your|the) (daily |video )?(generation )?limit",
+      "limit (resets|will reset)",
+      "you'?ve hit (your|the) limit",
+      "(no|out of) (more )?video generations",
+      "come back (later|tomorrow) (to|for) (create|make|generate) (more )?videos?"
+    ],
+    "no_subscription": [
+      "upgrade to (google )?ai (pro|ultra|plus)",
+      "available (with|on|in) (google )?ai (pro|ultra|plus)",
+      "subscribe to (google )?(ai|gemini)",
+      "requires a (google )?ai (pro|ultra|plus)"
+    ],
+    "safety": [
+      "(can'?t|cannot|won'?t|unable to) (create|generate|make) (that|this|a video|videos) (because|as it|since)",
+      "(violat|goes against)\\w* (our|the) (policy|policies|guidelines)",
+      "safety (policy|policies|guidelines|filters)"
+    ],
+    "error": [
+      "something went wrong",
+      "(couldn'?t|could not|wasn'?t able to) (generate|create|make) (the|your) video",
+      "an error occurred"
+    ],
+    "signed_out": [
+      "sign in to (continue|use gemini|gemini)",
+      "^\\s*sign in\\s*$"
+    ]
+  }
+}

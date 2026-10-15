@@ -1,0 +1,24 @@
+"""Content sniffing for uploads and downloads (by bytes, never by extension)."""
+
+
+def image_kind(head: bytes) -> str | None:
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def video_kind(head: bytes) -> str | None:
+    if len(head) >= 12 and head[4:8] == b"ftyp":
+        return "mp4"
+    if head.startswith(b"\x1a\x45\xdf\xa3"):
+        return "webm"
+    return None
+
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGES = 3
+MAX_VIDEO_BYTES = 500 * 1024 * 1024

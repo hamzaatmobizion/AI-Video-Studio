@@ -1,0 +1,14 @@
+{
+  "name": "gemini-veo",
+  "provider": "gemini_browser",
+  "description": "Gemini web app video tool (Veo). One clip per job.",
+  "max_clip_duration": 8,
+  "min_clip_duration": 8,
+  "aspects": ["9:16", "16:9"],
+  "resolution": "1280x720",
+  "fps": 24,
+  "has_audio": true,
+  "supports_reference_image": null,
+  "model_label": null,
+  "_note": "model_label null = use whatever model is selected in Gemini. supports_reference_image null = not yet calibrated against the live app."
+}

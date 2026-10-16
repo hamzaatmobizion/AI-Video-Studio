@@ -1,4 +1,4 @@
-# Guide: your first 8-second video
+# Guide: your first 10-second video
 
 1. **Start it.** In Terminal, in this folder, run `./run.sh`. Leave it running.
 2. **Sign in to the app.** Open http://localhost:8000 (or your `APP_PORT`). The first time, click
@@ -9,7 +9,7 @@
 4. **Connect Google Drive (once).** Settings, then **Connect Google Drive**, then approve. Videos go to the
    "VideoGeneration" folder unless you choose another.
 5. **Make a video.** On the Studio page, describe the shot, pick 9:16 (Reels) or 16:9, optionally add up to
-   3 reference images, and click **Generate 8-second video**. The card updates by itself: Generating…,
+   3 reference images, and click **Generate 10-second video**. The card updates by itself: Generating…,
    then Saving to Google Drive…, then the player.
 
 ## If something goes wrong

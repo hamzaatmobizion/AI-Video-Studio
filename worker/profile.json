@@ -2,7 +2,7 @@
   "name": "gemini-veo",
   "provider": "gemini_browser",
   "description": "Gemini web app video tool (Veo). One clip per job.",
-  "max_clip_duration": 8,
+  "max_clip_duration": 10,
   "min_clip_duration": 8,
   "aspects": ["9:16", "16:9"],
   "resolution": "1280x720",

@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>New video</h1>
-  <p class="muted">One 8-second clip per prompt.</p>
+  <p class="muted">One 10-second clip per prompt.</p>
   {% if not can_generate %}
     <p class="notice">Video generation is off: set <code>WORKER_URL</code> and <code>WORKER_API_KEY</code> in <code>.env</code>.</p>
   {% elif not drive_connected %}
@@ -23,7 +23,7 @@
       </label>
     </div>
     <p class="error" id="new-error" hidden></p>
-    <button type="submit" {% if not can_generate or not drive_connected %}disabled{% endif %}>Generate 8-second video</button>
+    <button type="submit" {% if not can_generate or not drive_connected %}disabled{% endif %}>Generate 10-second video</button>
   </form>
 </section>
 <section id="cards" class="cards">

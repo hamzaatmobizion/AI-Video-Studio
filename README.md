@@ -1,6 +1,6 @@
-# VideoGeneration (starting stage: one 8-second clip)
+# VideoGeneration (starting stage: one 10-second clip)
 
-Type a prompt, get **one 8-second video** made by the Gemini web app (Veo), saved to your Google Drive,
+Type a prompt, get **one 10-second video** made by the Gemini web app (Veo), saved to your Google Drive,
 playable in the browser. Multi-shot films, audio, editing and Meta publishing come in later phases.
 
 ```

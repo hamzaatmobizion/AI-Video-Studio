@@ -50,7 +50,7 @@ def check_clip(path: Path, aspect: str, min_duration: float) -> QCResult:
         res.reasons.append(f"Resolution too low ({w}x{h}); need at least 360p.")
     if dur < min_duration:
         res.ok = False
-        res.reasons.append(f"Clip is only {dur:.1f}s; expected about 8s.")
+        res.reasons.append(f"Clip is only {dur:.1f}s; expected at least {min_duration:.0f}s.")
     portrait = h > w
     if (aspect == "9:16") != portrait:
         res.warnings.append(f"Gemini returned {w}x{h}, which doesn't match {aspect}; it will show letterboxed.")

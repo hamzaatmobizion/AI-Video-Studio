@@ -5,6 +5,8 @@ Account-safety rules (non-negotiable):
 - Top-level navigation only to the allowlisted hosts in gemini_ui.json.
 - No stealth, fingerprinting, proxies, CAPTCHA solving or account rotation. Any limit, sign-out,
   verification or upgrade page raises a typed error and the worker STOPS.
+- The only page prompt the worker answers is Gemini's one-time "Creating content from images and
+  files" consent (Agree), approved by the account owner so reference images can be attached.
 - Logs carry job ids, steps and durations only: never prompts, cookies, tokens or page text.
 """
 import base64
@@ -486,12 +488,21 @@ class GeminiBrowserGenerator:
         if switch is None or label.lower() not in (switch.inner_text() or "").lower():
             raise GenerationError(f"Gemini didn't switch to model “{label}”.")
 
-    def _attach(self, pg: Page, images: list[Path]) -> None:
-        files = [str(p) for p in images]
-        inp = pg.page.locator(self.ui["selectors"]["file_input"][0])
-        if inp.count():
-            inp.first.set_input_files(files)
-        else:
+    def _accept_upload_consent(self, pg: Page, timeout: float = 1.0) -> bool:
+        """Click Agree on Gemini's one-time image-upload consent dialog, if it's showing."""
+        agree = pg.find("upload_consent_agree", timeout=timeout)
+        if agree is None:
+            return False
+        log.info("step=upload_consent")
+        agree.click()
+        pg.page.wait_for_timeout(800)
+        return True
+
+    def _open_file_chooser(self, pg: Page, files: list[str]) -> None:
+        """Upload button → "Upload files" → file chooser, accepting the consent dialog if it appears."""
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        def click_upload_item(timeout_ms: int):
             btn = pg.find("upload_button", timeout=5)
             if btn is None:
                 raise GenerationError("Couldn't find Gemini's upload button for the reference images.")
@@ -499,15 +510,39 @@ class GeminiBrowserGenerator:
             item = pg.find("upload_menu_item", timeout=5)
             if item is None:
                 raise GenerationError("Couldn't find Gemini's “Upload files” option.")
-            with pg.page.expect_file_chooser(timeout=10_000) as fc:
+            with pg.page.expect_file_chooser(timeout=timeout_ms) as fc:
                 item.click()
-            fc.value.set_files(files)
+            return fc.value
+
+        try:
+            chooser = click_upload_item(5_000)
+        except PlaywrightTimeoutError:
+            agree = pg.find("upload_consent_agree", timeout=2)
+            if agree is None:
+                raise
+            log.info("step=upload_consent")
+            try:  # Agree may open the file chooser itself
+                with pg.page.expect_file_chooser(timeout=5_000) as fc:
+                    agree.click()
+                chooser = fc.value
+            except PlaywrightTimeoutError:
+                chooser = click_upload_item(10_000)
+        chooser.set_files(files)
+
+    def _attach(self, pg: Page, images: list[Path]) -> None:
+        files = [str(p) for p in images]
+        inp = pg.page.locator(self.ui["selectors"]["file_input"][0])
+        if inp.count():
+            inp.first.set_input_files(files)
+        else:
+            self._open_file_chooser(pg, files)
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             for s in self.ui["selectors"]["attachment_preview"]:
                 if pg.page.locator(s).count() >= len(files):
                     pg.page.wait_for_timeout(1000)
                     return
+            self._accept_upload_consent(pg, timeout=0)  # the dialog can also follow a direct upload
             pg.page.wait_for_timeout(1000)
         raise GenerationError("Gemini didn't accept the reference images within a minute.")
 

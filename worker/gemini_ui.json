@@ -79,6 +79,10 @@
       "[role='menuitem']:has-text('Upload files')",
       "button:has-text('Upload files')"
     ],
+    "upload_consent_agree": [
+      "[role='dialog']:has-text('Creating content from images and files') button:has-text('Agree')",
+      "mat-dialog-container:has-text('Creating content from images') button:has-text('Agree')"
+    ],
     "attachment_preview": [
       "uploader-file-preview",
       "[data-test-id='file-preview']",

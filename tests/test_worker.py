@@ -412,7 +412,8 @@ def test_ui_config_complete():
     assert set(ui["allowed_hosts"]) == {"gemini.google.com", "accounts.google.com", "consent.google.com",
                                         "www.google.com"}
     for key in ("prompt_input", "send_button", "video_tool", "response", "response_video", "file_input",
-                "sign_in_button", "captcha", "download_button", "model_switch", "model_option"):
+                "sign_in_button", "captcha", "download_button", "model_switch", "model_option",
+                "upload_consent_agree"):
         assert ui["selectors"][key], key
     for kind in ("limit", "verification", "safety", "error", "signed_out", "no_subscription"):
         assert ui["patterns"][kind], kind

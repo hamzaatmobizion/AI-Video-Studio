@@ -30,7 +30,7 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:16px; }
 .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; height:100%; }
 .card video { width:100%; max-height:460px; background:#000; display:block; }
-.placeholder { display:flex; align-items:center; justify-content:center; gap:8px; background:var(--line); color:var(--muted); }
+.placeholder { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; background:var(--line); color:var(--muted); }
 .placeholder.portrait { aspect-ratio:9/16; max-height:360px; } .placeholder.landscape { aspect-ratio:16/9; }
 .card .body { padding:12px 14px; }
 .prompt { margin:0 0 4px; overflow-wrap:anywhere; }
@@ -38,6 +38,7 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .actions { display:flex; gap:8px; flex-wrap:wrap; }
 .actions button { padding:5px 10px; font-size:.9em; }
 .spinner { width:14px; height:14px; border:2px solid var(--muted); border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; }
+.spinner.lg { width:48px; height:48px; border-width:4px; border-color:var(--accent); border-top-color:transparent; }
 @keyframes spin { to { transform:rotate(360deg); } }
 code { font-size:.9em; }
 .pw { position:relative; display:block; }

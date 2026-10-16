@@ -52,7 +52,7 @@ Videos made before accounts existed belong to the first account.
 | `GEMINI_MODEL_LABEL` | (unset; see `profile.json`) | Model to pick in Gemini's picker; empty = keep the current one |
 | `GENERATION_TIMEOUT_SECONDS` | `900` | Maximum wait for Gemini to finish one clip |
 | `MAX_RETRIES` | `1` | Extra attempts after a QC or Gemini error |
-| `BROWSER_HEADLESS` | `false` | Keep the browser visible locally |
+| `BROWSER_HEADLESS` | `true` | Generate in the background with no browser window; `false` to watch or debug |
 | `BROWSER_CHANNEL` | (empty) | `chrome` = use installed Google Chrome |
 
 ## Google Drive OAuth setup

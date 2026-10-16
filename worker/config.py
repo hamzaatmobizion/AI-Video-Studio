@@ -21,7 +21,7 @@ class WorkerSettings(BaseSettings):
     GEMINI_MODEL_LABEL: str | None = None  # None → profile.json; "" → whatever is selected in Gemini
     GENERATION_TIMEOUT_SECONDS: int = 900
     MAX_RETRIES: int = 1
-    BROWSER_HEADLESS: bool = False
+    BROWSER_HEADLESS: bool = True
     BROWSER_CHANNEL: str = ""  # "" = Playwright Chromium, or "chrome"
 
     @field_validator("BROWSER_PROFILE_PATH", mode="before")

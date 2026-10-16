@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}History · VideoGeneration{% endblock %}
-{% set labels = {"READY": "Ready", "GENERATING": "Generating", "SAVING": "Saving", "SAVE_FAILED": "Not saved",
-                 "FAILED": "Failed", "CANCELLED": "Cancelled"} %}
+{% set labels = {"READY": "Ready", "PLANNING": "Planning", "GENERATING": "Generating", "SAVING": "Saving", "SAVE_FAILED": "Not saved",
+                 "FAILED": "Failed", "CANCELLED": "Cancelled", "PAUSED": "Paused"} %}
 {% block content %}
 <section class="panel">
   <h1>History</h1>
@@ -39,7 +39,7 @@
         <p class="prompt">{{ g.prompt }}</p>
         <p class="meta">
           <span class="pill {{ g.status | lower }}">{{ labels.get(g.status, g.status) }}</span>
-          #{{ g.id }} · {{ g.aspect }} · {{ g.created_at.strftime("%Y-%m-%d %H:%M") }} UTC
+          #{{ g.id }} · {{ g.aspect }}{% if g.scenes | length > 1 %} · {{ g.scenes | length }} scenes{% endif %} · {{ g.created_at.strftime("%Y-%m-%d %H:%M") }} UTC
           {% if g.dismissed %}· <span class="badge">Hidden from Studio</span>{% endif %}
         </p>
         {% if g.error %}<p class="{{ 'muted' if g.status in active else 'error' }} small">{{ g.error }}</p>{% endif %}
@@ -50,6 +50,7 @@
             {% if g.drive_file_id %}<a class="button secondary" href="https://drive.google.com/file/d/{{ g.drive_file_id }}/view" target="_blank" rel="noopener">Open in Drive</a>{% endif %}
           {% endif %}
           {% if g.status == "SAVE_FAILED" %}<button data-post="/generations/{{ g.id }}/save" data-reload>Try saving again</button>{% endif %}
+          {% if g.status == "PAUSED" %}<button data-post="/generations/{{ g.id }}/resume" data-reload>Resume</button>{% endif %}
           {% if g.status in ("FAILED", "CANCELLED") %}<button data-post="/generations/{{ g.id }}/retry" data-reload>Retry</button>{% endif %}
           {% if g.dismissed and g.status not in active %}<button class="secondary" data-post="/generations/{{ g.id }}/restore" data-reload>Restore to Studio</button>{% endif %}
           {% if g.status not in active %}<button class="secondary danger" data-post="/generations/{{ g.id }}/delete" data-reload

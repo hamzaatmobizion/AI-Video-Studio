@@ -15,6 +15,17 @@ class ClipRequest:
     out_dir: Path = Path(".")
 
 
+@dataclass
+class PlanRequest:
+    """Ask Gemini (chat, not the Video tool) to split one idea into `scene_count` clip prompts."""
+
+    job_id: str
+    prompt: str
+    aspect: str
+    scene_count: int
+    clip_seconds: int = 10
+
+
 class GeneratorError(Exception):
     """Base. `user_message` is shown to the owner verbatim."""
 
@@ -62,4 +73,8 @@ class VideoGenerator(Protocol):
 
     def generate(self, req: ClipRequest, should_cancel: Callable[[], bool]) -> Path:
         """Produce one clip file inside req.out_dir and return its path."""
+        ...
+
+    def plan(self, req: PlanRequest, should_cancel: Callable[[], bool]) -> list[str]:
+        """Return exactly req.scene_count scene prompts written by Gemini."""
         ...

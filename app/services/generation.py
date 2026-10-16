@@ -1,5 +1,9 @@
-"""Generation lifecycle: submit → poll worker → download → save to Drive → READY.
+"""Generation lifecycle: [plan] → for each scene, submit → poll worker → download; then join → save → READY.
 
+Planning: when the user gives one prompt and a length, Gemini (chat) first writes one prompt per scene.
+
+Scenes go to the worker one at a time, so a Gemini limit never fails a queue of them: the generation is
+PAUSED with its finished clips kept, and continues only when the user clicks Resume on that video.
 Driven by `tick()` (scheduler every 5 s, never overlapping). All state is in the DB, so a restart
 simply continues; temp files in var/generated survive restarts.
 """
@@ -15,7 +19,8 @@ from sqlalchemy import func, select
 from app.enums import ACTIVE, GenStatus
 from app.factories import Providers
 from app.interfaces import GeneratorError, StorageError
-from app.models import Generation, GoogleConnection, utcnow
+from app.models import Generation, GoogleConnection, Scene, utcnow
+from app.video_join import JoinError, join_clips
 
 log = logging.getLogger("app.generation")
 
@@ -25,7 +30,8 @@ HISTORY_FILTERS = {
     "ready": [GenStatus.READY],
     "failed": [GenStatus.FAILED],
     "cancelled": [GenStatus.CANCELLED],
-    "in_progress": [GenStatus.GENERATING, GenStatus.SAVING, GenStatus.SAVE_FAILED],
+    "in_progress": [GenStatus.PLANNING, GenStatus.GENERATING, GenStatus.SAVING, GenStatus.SAVE_FAILED,
+                    GenStatus.PAUSED],
 }
 MAX_UPLOAD_ATTEMPTS = 10
 UPLOAD_RETRY = timedelta(seconds=30)
@@ -42,7 +48,8 @@ class UserError(Exception):
 
 def drive_name(gen: Generation, when: datetime) -> tuple[str, str]:
     """(subfolder, filename) → <YYYY-MM>/<date> <prompt> (<id>).mp4"""
-    words = re.sub(r"[\\/:*?\"<>|\n\r\t]+", " ", gen.prompt).strip()
+    text = gen.scenes[0].prompt if gen.scenes and not gen.planned else gen.prompt
+    words = re.sub(r"[\\/:*?\"<>|\n\r\t]+", " ", text).strip()
     words = re.sub(r"\s+", " ", words)[:60].rstrip() or "video"
     return when.strftime("%Y-%m"), f"{when:%Y-%m-%d} {words} ({gen.id}).mp4"
 
@@ -54,15 +61,22 @@ class GenerationService:
         self.settings = providers.settings
 
     # ---- user actions ----------------------------------------------------
-    def create(self, user_id: int, prompt: str, aspect: str, images: list[tuple[str, bytes]]) -> int:
-        """`images` already validated by content: [(ext, bytes)]."""
+    def create(self, user_id: int, scenes: list[str], aspect: str, images: list[tuple[str, bytes]],
+               plan: int | None = None) -> int:
+        """`scenes`: one prompt per ~10 s clip, already validated. With `plan` = N, `scenes` is the user's
+        one prompt and Gemini first writes N scene prompts from it. `images` validated by content: [(ext, bytes)]."""
         if self.p.generator() is None:
             raise UserError("Video generation is off: set WORKER_URL and WORKER_API_KEY in .env.", 503)
         if self.p.storage(user_id) is None:
             raise UserError("Connect Google Drive in Settings first, so the video has somewhere to go.", 503)
+        if plan:
+            prompt, scenes = scenes[0], [""] * plan
+        else:
+            prompt = scenes[0] if len(scenes) == 1 else "\n\n".join(f"Scene {i}: {p}" for i, p in enumerate(scenes, 1))
         with self.db.session() as s:
             gen = Generation(user_id=user_id, prompt=prompt, aspect=aspect, ref_images=[], status=GenStatus.GENERATING,
-                             poll_errors=0, upload_attempts=0, dismissed=False)
+                             poll_errors=0, upload_attempts=0, dismissed=False, planned=bool(plan),
+                             scenes=[Scene(position=i, prompt=p) for i, p in enumerate(scenes, 1)])
             s.add(gen)
             s.flush()
             paths = []
@@ -75,31 +89,85 @@ class GenerationService:
                     paths.append(str(path))
             gen.ref_images = paths
             gen_id = gen.id
-        self._submit(gen_id)
+        self._continue(gen_id)
         return gen_id
+
+    def _continue(self, gen_id: int) -> None:
+        """Plan the scenes if needed, else submit the next scene without a clip, else join them."""
+        with self.db.session() as s:
+            gen = s.get(Generation, gen_id)
+            if not gen.scenes:  # made before scenes existed
+                gen.scenes.append(Scene(position=1, prompt=gen.prompt))
+            unplanned = any(not sc.prompt for sc in gen.scenes)
+            pending = _next_scene(gen) is not None
+        if unplanned:
+            self._submit_plan(gen_id)
+        elif pending:
+            self._submit(gen_id)
+        else:
+            self._join(gen_id)
 
     def _submit(self, gen_id: int) -> None:
         gen_client = self.p.generator()
         with self.db.session() as s:
             gen = s.get(Generation, gen_id)
+            scene = _next_scene(gen)
             try:
                 if gen_client is None:
                     raise GeneratorError("Video generation is off: set WORKER_URL and WORKER_API_KEY.", final=True)
                 images = [Path(p) for p in gen.ref_images if Path(p).exists()]
-                job_id = gen_client.submit(gen.prompt, gen.aspect, f"gen-{gen.id}-{uuid.uuid4().hex[:6]}", images)
+                job_id = gen_client.submit(scene.prompt, gen.aspect,
+                                           f"gen-{gen.id}-s{scene.position}-{uuid.uuid4().hex[:6]}", images)
             except GeneratorError as e:
-                gen.status, gen.error = GenStatus.FAILED, e.message
-                log.info("generation %s submit failed", gen_id)
+                pause = _worker_pause(gen_client)
+                if pause:
+                    self._pause(gen, pause)
+                else:
+                    gen.status, gen.error = GenStatus.FAILED, _scene_error(gen, scene, e.message)
+                    log.info("generation %s submit failed", gen_id)
                 return
             gen.worker_job_id = job_id
             gen.submitted_at = utcnow()
+            gen.poll_errors = 0
             gen.status = GenStatus.GENERATING
-            log.info("generation %s submitted as %s", gen_id, job_id)
+            log.info("generation %s scene %d submitted as %s", gen_id, scene.position, job_id)
+
+    def _submit_plan(self, gen_id: int) -> None:
+        client = self.p.generator()
+        with self.db.session() as s:
+            gen = s.get(Generation, gen_id)
+            try:
+                if client is None:
+                    raise GeneratorError("Video generation is off: set WORKER_URL and WORKER_API_KEY.", final=True)
+                job_id = client.plan(gen.prompt, gen.aspect, f"gen-{gen.id}-plan-{uuid.uuid4().hex[:6]}",
+                                     len(gen.scenes))
+            except GeneratorError as e:
+                pause = _worker_pause(client)
+                if pause:
+                    self._pause(gen, pause)
+                else:
+                    gen.status, gen.error = GenStatus.FAILED, f"Gemini couldn't plan the scenes: {e.message}"
+                return
+            gen.worker_job_id, gen.submitted_at, gen.poll_errors = job_id, utcnow(), 0
+            gen.status = GenStatus.PLANNING
+            log.info("generation %s planning %d scenes as %s", gen_id, len(gen.scenes), job_id)
+
+    def _pause(self, gen: Generation, pause: dict) -> None:
+        """Gemini stopped the whole account: keep finished scenes and wait until the user resumes this video."""
+        done, total = _scene_counts(gen)
+        gen.status, gen.worker_job_id, gen.submitted_at, gen.poll_errors = GenStatus.PAUSED, None, None, 0
+        if pause.get("kind") == "limit_reached":
+            gen.error = "Gemini's video limit has been reached. Click Resume on this video once the limit resets."
+        else:
+            gen.error = (pause.get("message") or "Gemini stopped generating.") + " Then click Resume on this video."
+        if total > 1 and done:
+            gen.error += f" {done} of {total} scenes are done and kept."
+        log.info("generation %s paused (%s)", gen.id, pause.get("kind"))
 
     def cancel(self, gen_id: int, user_id: int) -> None:
         with self.db.session() as s:
             gen = self._get(s, gen_id, user_id)
-            if gen.status == GenStatus.GENERATING and gen.worker_job_id:
+            if gen.status in (GenStatus.PLANNING, GenStatus.GENERATING) and gen.worker_job_id:
                 client = self.p.generator()
                 if client:
                     client.cancel(gen.worker_job_id)
@@ -111,9 +179,10 @@ class GenerationService:
                     storage.delete(gen.drive_file_id)
                 except StorageError as e:
                     raise UserError(e.message, 502) from e
-            elif gen.status not in (GenStatus.SAVING, GenStatus.SAVE_FAILED):
+            elif gen.status not in (GenStatus.SAVING, GenStatus.SAVE_FAILED, GenStatus.PAUSED):
                 raise UserError("This video can't be cancelled now.")
             self._drop_temp(gen)
+            self._drop_scenes(gen)
             gen.status, gen.error = GenStatus.CANCELLED, None
 
     def retry(self, gen_id: int, user_id: int) -> None:
@@ -125,7 +194,28 @@ class GenerationService:
             gen.worker_job_id = gen.final_prompt = gen.drive_file_id = None
             gen.poll_errors = gen.upload_attempts = 0
             gen.submitted_at = None
-        self._submit(gen_id)
+            for scene in gen.scenes:  # finished clips that are still on disk aren't made (or paid for) again
+                if scene.clip_path and not Path(scene.clip_path).exists():
+                    scene.clip_path = None
+        self._continue(gen_id)
+
+    def resume(self, gen_id: int, user_id: int) -> None:
+        """Continue a paused video from its next scene. Paused videos never restart on their own."""
+        client = self.p.generator()
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            if gen.status != GenStatus.PAUSED:
+                raise UserError("Only paused videos can be resumed.")
+            if client is None:
+                raise UserError("Video generation is off: set WORKER_URL and WORKER_API_KEY in .env.", 503)
+            if _worker_pause(client):  # lift the worker's pause too, so one click is enough
+                try:
+                    client.gemini("POST", "resume")
+                except GeneratorError as e:
+                    raise UserError(e.message, 502) from e
+            gen.status, gen.error = GenStatus.GENERATING, None
+        log.info("generation %s resumed by the user", gen_id)
+        self._continue(gen_id)
 
     def save_again(self, gen_id: int, user_id: int) -> None:
         with self.db.session() as s:
@@ -155,6 +245,7 @@ class GenerationService:
             if gen.status in ACTIVE:
                 raise UserError("Cancel it first; it's still in progress.")
             self._drop_temp(gen)
+            self._drop_scenes(gen)
             shutil.rmtree(self.settings.refs_dir / str(gen.id), ignore_errors=True)
             s.delete(gen)
 
@@ -186,10 +277,67 @@ class GenerationService:
     def _advance(self, gen_id: int) -> None:
         with self.db.session() as s:
             status = s.get(Generation, gen_id).status
-        if status == GenStatus.GENERATING:
+        if status == GenStatus.PLANNING:
+            self._poll_plan(gen_id)
+        elif status == GenStatus.GENERATING:
             self._poll(gen_id)
         elif status == GenStatus.SAVING:
             self._upload(gen_id)
+
+    def _poll_plan(self, gen_id: int) -> None:
+        client = self.p.generator()
+        with self.db.session() as s:
+            gen = s.get(Generation, gen_id)
+            no_job = not gen.worker_job_id
+        if no_job:  # crash before the plan was handed over
+            self._continue(gen_id)
+            return
+        with self.db.session() as s:
+            gen = s.get(Generation, gen_id)
+            st = self._check(gen, client)
+            if st is None or st.status in ("queued", "running"):
+                return
+            if st.status == "failed":
+                pause = _worker_pause(client)
+                if pause:
+                    self._pause(gen, pause)
+                else:
+                    gen.status = GenStatus.FAILED
+                    gen.error = f"Gemini couldn't plan the scenes: {st.error or 'no reason given.'}"
+                return
+            prompts = [p.strip() for p in (st.scenes or []) if isinstance(p, str) and p.strip()]
+            if len(prompts) < len(gen.scenes):
+                gen.status, gen.error = GenStatus.FAILED, "Gemini didn't write all the scenes. Retry it."
+                return
+            for scene, text in zip(gen.scenes, prompts):
+                scene.prompt = text[:2000]
+            gen.worker_job_id, gen.submitted_at, gen.poll_errors = None, None, 0
+            gen.status = GenStatus.GENERATING
+            log.info("generation %s planned", gen_id)
+        self._continue(gen_id)
+
+    def _check(self, gen: Generation, client):
+        """The worker's status for the generation's current job, or None after recording a problem
+        (FAILED on a final error, a lost worker or a timeout; a transient error just counts)."""
+        if client is None:
+            gen.status, gen.error = GenStatus.FAILED, "Video generation is off: WORKER_URL/WORKER_API_KEY not set."
+            return None
+        try:
+            st = client.check(gen.worker_job_id)
+        except GeneratorError as e:
+            if e.final:
+                gen.status, gen.error = GenStatus.FAILED, e.message
+                return None
+            gen.poll_errors += 1
+            if gen.poll_errors >= MAX_POLL_ERRORS:
+                gen.status, gen.error = GenStatus.FAILED, f"Lost contact with the video worker. ({e.message})"
+            return None
+        gen.poll_errors = 0
+        if st.status in ("queued", "running") and gen.submitted_at and utcnow() - gen.submitted_at > JOB_TIMEOUT:
+            client.cancel(gen.worker_job_id)
+            gen.status, gen.error = GenStatus.FAILED, "The video didn't finish in time."
+            return None
+        return st
 
     def _poll(self, gen_id: int) -> None:
         client = self.p.generator()
@@ -198,36 +346,36 @@ class GenerationService:
             if client is None:
                 gen.status, gen.error = GenStatus.FAILED, "Video generation is off: WORKER_URL/WORKER_API_KEY not set."
                 return
-            if not gen.worker_job_id:  # submit never succeeded (e.g. crash mid-submit)
-                gen.status, gen.error = GenStatus.FAILED, "The video was never handed to the worker. Retry it."
+            no_job = not gen.worker_job_id
+        if no_job:  # between scenes, or a crash mid-submit/mid-join: carry on from the database state
+            self._continue(gen_id)
+            return
+        with self.db.session() as s:
+            gen = s.get(Generation, gen_id)
+            scene = _next_scene(gen)
+            if scene is None:  # every scene already has its clip; this job is stale
+                gen.worker_job_id = None
                 return
-            try:
-                st = client.check(gen.worker_job_id)
-            except GeneratorError as e:
-                if e.final:
-                    gen.status, gen.error = GenStatus.FAILED, e.message
-                    return
-                gen.poll_errors += 1
-                if gen.poll_errors >= MAX_POLL_ERRORS:
-                    gen.status, gen.error = GenStatus.FAILED, f"Lost contact with the video worker. ({e.message})"
+            st = self._check(gen, client)
+            if st is None:
                 return
-            gen.poll_errors = 0
             if st.final_prompt:
                 gen.final_prompt = st.final_prompt
             if st.status == "failed":
-                gen.status, gen.error = GenStatus.FAILED, st.error or "The video couldn't be made."
+                pause = _worker_pause(client)
+                if pause:
+                    self._pause(gen, pause)
+                    return
+                gen.status, gen.error = GenStatus.FAILED, _scene_error(gen, scene, st.error or "The video couldn't be made.")
                 log.info("generation %s failed at worker", gen_id)
                 return
             if st.status in ("queued", "running"):
-                if gen.submitted_at and utcnow() - gen.submitted_at > JOB_TIMEOUT:
-                    client.cancel(gen.worker_job_id)
-                    gen.status, gen.error = GenStatus.FAILED, "The video didn't finish in time."
                 return
             if not st.video_url:
                 gen.status, gen.error = GenStatus.FAILED, "The worker finished but gave no video link."
                 return
-            self.settings.generated_dir.mkdir(parents=True, exist_ok=True)
-            dest = self.settings.generated_dir / f"{gen.id}-{uuid.uuid4().hex}.mp4"
+            dest = self._scene_dir(gen) / f"scene-{scene.position}.mp4"
+            dest.parent.mkdir(parents=True, exist_ok=True)
             try:
                 size = client.download(st.video_url, dest)
             except GeneratorError as e:
@@ -238,9 +386,33 @@ class GenerationService:
                     if gen.poll_errors >= MAX_POLL_ERRORS:
                         gen.status, gen.error = GenStatus.FAILED, e.message
                 return
+            scene.clip_path = str(dest)
+            gen.worker_job_id, gen.submitted_at, gen.poll_errors = None, None, 0
+            log.info("generation %s scene %d downloaded (%d bytes)", gen_id, scene.position, size)
+        self._continue(gen_id)
+
+    def _join(self, gen_id: int) -> None:
+        with self.db.session() as s:
+            gen = s.get(Generation, gen_id)
+            paths = [Path(sc.clip_path) for sc in gen.scenes]
+            if not all(p.exists() for p in paths):
+                gen.status, gen.error = GenStatus.FAILED, "A finished scene went missing before joining. Retry it."
+                return
+            dest = self.settings.generated_dir / f"{gen.id}-{uuid.uuid4().hex}.mp4"
+        try:  # outside the session: a long ffmpeg run mustn't hold a database transaction
+            size = join_clips(paths, dest)
+        except JoinError as e:
+            with self.db.session() as s:
+                gen = s.get(Generation, gen_id)
+                gen.status, gen.error = GenStatus.FAILED, f"{e.message} Retry to join them again."
+            log.info("generation %s join failed", gen_id)
+            return
+        with self.db.session() as s:
+            gen = s.get(Generation, gen_id)
+            self._drop_scenes(gen)
             gen.temp_path, gen.file_size = str(dest), size
             gen.status, gen.upload_attempts, gen.next_upload_at = GenStatus.SAVING, 0, utcnow()
-            log.info("generation %s downloaded (%d bytes)", gen_id, size)
+            log.info("generation %s joined %d scene(s) (%d bytes)", gen_id, len(paths), size)
         self._upload(gen_id)
 
     def _upload(self, gen_id: int) -> None:
@@ -292,3 +464,31 @@ class GenerationService:
         if gen.temp_path:
             Path(gen.temp_path).unlink(missing_ok=True)
             gen.temp_path = None
+
+    def _scene_dir(self, gen: Generation) -> Path:
+        return self.settings.generated_dir / f"{gen.id}-scenes"
+
+    def _drop_scenes(self, gen: Generation) -> None:
+        shutil.rmtree(self._scene_dir(gen), ignore_errors=True)
+        for scene in gen.scenes:
+            scene.clip_path = None
+
+
+def _next_scene(gen: Generation) -> Scene | None:
+    return next((sc for sc in gen.scenes if not sc.clip_path), None)
+
+
+def _scene_counts(gen: Generation) -> tuple[int, int]:
+    return sum(1 for sc in gen.scenes if sc.clip_path), len(gen.scenes)
+
+
+def _scene_error(gen: Generation, scene: Scene | None, message: str) -> str:
+    return f"Scene {scene.position}: {message}" if scene and len(gen.scenes) > 1 else message
+
+
+def _worker_pause(client) -> dict | None:
+    """The worker's account pause (limit reached, signed out, …), or None if it isn't paused or can't be asked."""
+    if client is None:
+        return None
+    health = client.ping()
+    return (health.details.get("account_paused") or None) if health.ok else None

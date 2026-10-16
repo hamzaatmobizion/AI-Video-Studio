@@ -34,8 +34,19 @@ def studio(request: Request, prompt_from: int | None = None, user=Depends(requir
     return render(request, "studio.html", cards=cards_for(request, user.id),
                   can_generate=st.providers.generator() is not None,
                   drive_connected=st.providers.connection(user.id) is not None,
-                  prefill_prompt=prefill.prompt if prefill else "",
+                  **_prefill(prefill),
                   prefill_aspect=prefill.aspect if prefill else "9:16")
+
+
+def _prefill(gen: Generation | None) -> dict:
+    """Studio form values for "Use prompt again": one prompt + length, or the user's own scenes."""
+    if gen is None:
+        return {"prefill_prompt": "", "prefill_duration": 10, "prefill_scenes": [""], "prefill_manual": False}
+    manual = not gen.planned and len(gen.scenes) > 1
+    return {"prefill_prompt": "" if manual else gen.prompt,
+            "prefill_duration": max(len(gen.scenes), 1) * 10,
+            "prefill_scenes": [sc.prompt for sc in gen.scenes] if manual else [""],
+            "prefill_manual": manual}
 
 
 HISTORY_STATUSES = {"all": "All", "ready": "Ready", "in_progress": "In progress", "failed": "Failed",

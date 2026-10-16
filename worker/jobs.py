@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   attempts INTEGER NOT NULL DEFAULT 0,       -- attempts that counted toward MAX_RETRIES
   interruptions INTEGER NOT NULL DEFAULT 0,  -- worker restarts while running
   clip_path TEXT,
+  kind TEXT NOT NULL DEFAULT 'clip',         -- clip | plan (Gemini writes scene prompts)
+  scene_count INTEGER,                       -- plan jobs: how many scene prompts to write
+  result TEXT,                               -- plan jobs: JSON list of scene prompts
   cancel_requested INTEGER NOT NULL DEFAULT 0,
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL
@@ -39,6 +42,11 @@ class JobStore:
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(SCHEMA)
+            have = {r["name"] for r in self._conn.execute("PRAGMA table_info(jobs)")}
+            for col, ddl in (("kind", "TEXT NOT NULL DEFAULT 'clip'"), ("scene_count", "INTEGER"),
+                             ("result", "TEXT")):
+                if col not in have:  # databases made before plan jobs existed
+                    self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
         path.chmod(0o600)
 
     def _x(self, sql: str, args=()) -> sqlite3.Cursor:
@@ -47,11 +55,12 @@ class JobStore:
 
     # ---- jobs --------------------------------------------------------------
     def create(self, prompt: str, aspect: str, ref: str | None, images: list[str] | None = None,
-               job_id: str | None = None) -> str:
+               job_id: str | None = None, kind: str = "clip", scene_count: int | None = None) -> str:
         jid = job_id or uuid.uuid4().hex[:16]
         now = time.time()
-        self._x("INSERT INTO jobs (id, ref, prompt, aspect, images, status, created_at, updated_at) "
-                "VALUES (?,?,?,?,?, 'queued', ?, ?)", (jid, ref, prompt, aspect, json.dumps(images or []), now, now))
+        self._x("INSERT INTO jobs (id, ref, prompt, aspect, images, status, kind, scene_count, created_at, updated_at) "
+                "VALUES (?,?,?,?,?, 'queued', ?, ?, ?, ?)",
+                (jid, ref, prompt, aspect, json.dumps(images or []), kind, scene_count, now, now))
         self.event(jid, "created")
         return jid
 
@@ -62,11 +71,13 @@ class JobStore:
         d = dict(row)
         d["images"] = json.loads(d["images"])
         d["warnings"] = json.loads(d["warnings"])
+        d["result"] = json.loads(d["result"]) if d.get("result") else None
         return d
 
     def update(self, jid: str, **fields) -> None:
-        if "warnings" in fields:
-            fields["warnings"] = json.dumps(fields["warnings"])
+        for key in ("warnings", "result"):
+            if key in fields and fields[key] is not None:
+                fields[key] = json.dumps(fields[key])
         fields["updated_at"] = time.time()
         cols = ", ".join(f"{k}=?" for k in fields)
         self._x(f"UPDATE jobs SET {cols} WHERE id=?", (*fields.values(), jid))

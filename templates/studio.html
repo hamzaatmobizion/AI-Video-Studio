@@ -2,16 +2,39 @@
 {% block content %}
 <section class="panel">
   <h1>New video</h1>
-  <p class="muted">One 10-second clip per prompt.</p>
+  <p class="muted">Describe your video and pick a length, up to 2 minutes. Gemini splits it into 10-second scenes, which are made one by one and joined into one video.</p>
   {% if not can_generate %}
     <p class="notice">Video generation is off: set <code>WORKER_URL</code> and <code>WORKER_API_KEY</code> in <code>.env</code>.</p>
   {% elif not drive_connected %}
     <p class="notice">Connect Google Drive in <a href="/settings">Settings</a> first, so finished videos have somewhere to go.</p>
   {% endif %}
   <form id="new-video">
-    <label>Prompt
-      <textarea name="prompt" rows="4" maxlength="2000" required placeholder="A paper boat drifting down a rain-soaked street at dusk, close-up, cinematic"{% if prefill_prompt %} autofocus{% endif %}>{{ prefill_prompt }}</textarea>
-    </label>
+    <div id="auto-mode"{% if prefill_manual %} hidden{% endif %}>
+      <label>Prompt
+        <textarea name="prompt" rows="6" maxlength="10000" required placeholder="A paper boat drifting down a rain-soaked street at dusk, close-up, cinematic"{% if prefill_prompt %} autofocus{% endif %}{% if prefill_manual %} disabled{% endif %}>{{ prefill_prompt }}</textarea>
+      </label>
+      <label class="length">Length
+        <select name="duration" id="duration"{% if prefill_manual %} disabled{% endif %}>
+          {% for s in range(10, 130, 10) %}
+          <option value="{{ s }}"{% if s == prefill_duration %} selected{% endif %}>{{ '%d seconds' | format(s) if s < 60 else '%d:%02d' | format(s // 60, s % 60) }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <div id="manual-mode"{% if not prefill_manual %} hidden{% endif %}>
+      <div id="scenes">
+        {% for text in prefill_scenes %}
+        <div class="scene">
+          <label><span class="scene-label">Scene {{ loop.index }}</span>
+            <textarea name="scenes" rows="3" maxlength="2000" required placeholder="What happens in these 10 seconds"{% if not prefill_manual %} disabled{% endif %}>{{ text }}</textarea>
+          </label>
+          <button type="button" class="link remove-scene" aria-label="Remove scene"{% if prefill_scenes | length == 1 %} hidden{% endif %}>Remove</button>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="button" class="secondary" id="add-scene">+ Add scene</button>
+    </div>
+    <button type="button" class="link" id="toggle-mode">{{ 'Write one prompt instead' if prefill_manual else 'Write scenes myself' }}</button>
     <div class="row">
       <fieldset class="aspect">
         <legend>Aspect</legend>
@@ -23,7 +46,8 @@
       </label>
     </div>
     <p class="error" id="new-error" hidden></p>
-    <button type="submit" {% if not can_generate or not drive_connected %}disabled{% endif %}>Generate 10-second video</button>
+    <button type="submit" id="generate" {% if not can_generate or not drive_connected %}disabled{% endif %}>Generate 10-second video</button>
+    <p class="muted small scene-hint">Each 10-second scene uses one Gemini video from your daily limit.</p>
   </form>
 </section>
 <section id="cards" class="cards">

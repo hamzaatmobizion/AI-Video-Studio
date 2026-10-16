@@ -233,6 +233,22 @@ def test_account_stop_pauses_everything(api, ws, store, lock, exc, kind):
     assert api.post("/videos", headers=AUTH, json={"prompt": "c", "aspect": "9:16"}).status_code == 200
 
 
+def test_pause_is_visible_before_the_job_reads_failed(ws, store, lock):
+    """The web app keeps a video's finished scenes only if /health already shows the pause."""
+    runner = make_runner(ws, store, lock, [stop_error("limit")])
+    jid = store.create("a", "9:16", None)
+    seen, update = [], store.update
+
+    def spy(job_id, **kw):
+        if job_id == jid and kw.get("status") == "failed":
+            seen.append(runner.paused())
+        return update(job_id, **kw)
+
+    store.update = spy
+    runner.tick()
+    assert seen and seen[0]["kind"] == "limit_reached"
+
+
 # ---- crash recovery -------------------------------------------------------------------
 def test_crash_recovery(ws, store, lock):
     jid = store.create("x", "9:16", None)
@@ -471,3 +487,62 @@ def test_logs_never_contain_prompts(api, caplog):
     api.runner.tick()
     joined = "\n".join(r.getMessage() for r in caplog.records)
     assert "Zorblax" not in joined and KEY not in joined
+
+
+# ---- plan jobs (Gemini writes scene prompts) ------------------------------------------
+def test_plan_job_returns_scene_prompts(api):
+    r = api.post("/plans", headers=AUTH, json={"prompt": "a lighthouse story", "aspect": "9:16", "scenes": 3})
+    assert r.status_code == 200
+    jid = r.json()["job_id"]
+    api.runner.tick()
+    body = api.get(f"/videos/{jid}", headers=AUTH).json()
+    assert body["status"] == "done" and body["video_url"] is None
+    assert body["scenes"] == [f"a lighthouse story (part {i})" for i in (1, 2, 3)]
+    req = api.runner.generator.calls[0]
+    assert req.scene_count == 3 and req.clip_seconds == 10
+
+
+@pytest.mark.parametrize("scenes", [0, 13, "3", True])
+def test_plan_scene_count_validated(api, scenes):
+    r = api.post("/plans", headers=AUTH, json={"prompt": "x", "aspect": "9:16", "scenes": scenes})
+    assert r.status_code == 400
+
+
+def test_limit_while_planning_pauses(ws, store, lock):
+    runner = make_runner(ws, store, lock, [stop_error("limit")])
+    jid = store.create("idea", "9:16", None, kind="plan", scene_count=2)
+    runner.tick()
+    assert store.get(jid)["status"] == "failed" and runner.paused()["kind"] == "limit_reached"
+
+
+def test_old_job_database_gets_plan_columns(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE jobs (id TEXT PRIMARY KEY, ref TEXT, prompt TEXT NOT NULL, aspect TEXT NOT NULL, "
+                "images TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL, error TEXT, warnings TEXT NOT NULL "
+                "DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0, interruptions INTEGER NOT NULL DEFAULT 0, "
+                "clip_path TEXT, cancel_requested INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL, "
+                "updated_at REAL NOT NULL)")
+    con.execute("INSERT INTO jobs (id, prompt, aspect, status, created_at, updated_at) VALUES "
+                "('old', 'p', '9:16', 'done', 0, 0)")
+    con.commit()
+    con.close()
+    assert JobStore(path).get("old")["kind"] == "clip"
+
+
+@pytest.mark.parametrize("text,expected", [
+    ('JSON\n```json\n["a", "b"]\n```', ["a", "b"]),
+    ('["a", "b", "c"]', ["a", "b"]),  # extra scenes are dropped
+])
+def test_parse_scene_list(text, expected):
+    from worker.gemini_browser import parse_scene_list
+    assert parse_scene_list(text, 2) == expected
+
+
+@pytest.mark.parametrize("text", ['["only one"]', "Here are your scenes: one, two", '["a", '])
+def test_parse_scene_list_rejects(text):
+    from worker.gemini_browser import parse_scene_list
+    from worker.generator import GenerationError
+    with pytest.raises(GenerationError):
+        parse_scene_list(text, 2)

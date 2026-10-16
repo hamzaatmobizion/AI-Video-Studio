@@ -45,6 +45,13 @@ class TestPatternGenerator:
         secs = step[1] if isinstance(step, tuple) else self.seconds
         return make_clip(req.out_dir / f"attempt-{req.attempt}.mp4", secs, self.size)
 
+    def plan(self, req, should_cancel) -> list[str]:
+        self.calls.append(req)
+        step = self.script.pop(0) if self.script else "ok"
+        if isinstance(step, BaseException):
+            raise step
+        return [f"{req.prompt} (part {i})" for i in range(1, req.scene_count + 1)]
+
 
 # ---- web app side: fake worker + fake Google behind one MockTransport ---------
 class FakeWorker:
@@ -56,15 +63,17 @@ class FakeWorker:
         self.gemini: dict = {"state": "connected", "model": "Veo"}
         self.status_errors = 0  # next N status calls return 503
         self.video_bytes: bytes | None = None
+        self.clips: dict[str, bytes] = {}  # per-job video bytes, overriding video_bytes
+        self.paused: dict | None = None  # /health "account_paused"
         self.seq = 0
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("authorization") != "Bearer worker-key-123456789012345":
             return httpx.Response(401, json={"detail": "Missing or wrong API key."})
         path = request.url.path
-        if request.method == "POST" and path == "/videos":
+        if request.method == "POST" and path in ("/videos", "/plans"):
             ctype = request.headers.get("content-type", "")
-            self.submits.append({"multipart": ctype.startswith("multipart"), "body": request.content[:200]})
+            self.submits.append({"multipart": ctype.startswith("multipart"), "body": request.content[:200], "path": path})
             if self.submit_response:
                 code, body = self.submit_response
                 return httpx.Response(code, json=body)
@@ -81,7 +90,9 @@ class FakeWorker:
             if not job:
                 return httpx.Response(404, json={"detail": "No such job."})
             body = {"status": job["status"], "error": job["error"], "video_url": None, "final_prompt": "p"}
-            if job["status"] == "done":
+            if job["status"] == "done" and "scenes" in job:
+                body["scenes"] = job["scenes"]
+            elif job["status"] == "done":
                 body["video_url"] = f"/videos/{m.group(1)}/file"
             return httpx.Response(200, json=body)
         if m and request.method == "DELETE":
@@ -89,11 +100,15 @@ class FakeWorker:
             return httpx.Response(200, json={"ok": True})
         m = re.fullmatch(r"/videos/(\w+)/file", path)
         if m:
-            return httpx.Response(200, content=self.video_bytes or b"")
+            return httpx.Response(200, content=self.clips.get(m.group(1), self.video_bytes or b""))
         if path == "/health":
-            return httpx.Response(200, json={"ok": True, "account_paused": None,
+            return httpx.Response(200, json={"ok": True, "account_paused": self.paused,
                                              "login_window_open": self.gemini.get("login_window_open", False),
                                              "gemini": self.gemini})
+        if path == "/gemini/resume" and request.method == "POST":
+            self.resumed = getattr(self, "resumed", 0) + 1
+            self.paused = None
+            return httpx.Response(200, json=self.gemini)
         if path == "/gemini/status":
             return httpx.Response(200, json=self.gemini)
         return httpx.Response(404, json={"detail": "nope"})

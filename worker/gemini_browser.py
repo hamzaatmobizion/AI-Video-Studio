@@ -1,4 +1,4 @@
-"""Playwright driver for the Gemini web app's video tool (Veo).
+"""Playwright driver for the Gemini web app: the video tool (Veo) for clips, plain chat for scene plans.
 
 Account-safety rules (non-negotiable):
 - One fixed sequence. Nothing on the page or in the prompt changes it.
@@ -27,6 +27,7 @@ from worker.generator import (
     GenerationError,
     GeneratorError,
     LimitReached,
+    PlanRequest,
     SafetyRefusal,
     SignedOut,
     SubscriptionRequired,
@@ -36,6 +37,41 @@ from worker.generator import (
 log = logging.getLogger("worker.gemini")
 MAX_DOWNLOAD = 500 * 1024 * 1024
 POLL_SECONDS = 4
+PLAN_TIMEOUT = 180  # seconds for Gemini to write the scene list
+MAX_SCENE_PROMPT = 2000
+
+
+def plan_instruction(req: PlanRequest) -> str:
+    total = req.scene_count * req.clip_seconds
+    return (
+        f"You write prompts for an AI video generator that makes one {req.clip_seconds}-second clip per prompt. "
+        f"Turn the idea below into exactly {req.scene_count} consecutive scenes that together play as one "
+        f"continuous {total}-second {req.aspect} video.\n"
+        "Rules:\n"
+        "- Each scene prompt is used on its own (the generator never sees the other scenes), so repeat the "
+        "main characters' appearance, clothing, setting and visual style in every scene.\n"
+        f"- Describe only what happens in that scene's {req.clip_seconds} seconds: action, camera movement, "
+        "lighting and sound. Keep the story moving forward without repeating a scene.\n"
+        "- Put any on-screen text only in the scene where it should appear, spelled exactly as in the idea.\n"
+        f"- Reply with ONLY a JSON array of {req.scene_count} strings, one per scene, in order. No other text.\n\n"
+        f"Idea:\n{req.prompt}"
+    )
+
+
+def parse_scene_list(text: str, count: int) -> list[str]:
+    """The scene prompts from Gemini's reply (a JSON array, possibly inside a code block)."""
+    start, end = text.find("["), text.rfind("]")
+    if start < 0 or end <= start:
+        raise GenerationError("Gemini didn't reply with a list of scenes.")
+    try:
+        items = json.loads(text[start:end + 1])
+    except ValueError:
+        raise GenerationError("Gemini's list of scenes wasn't valid JSON.") from None
+    scenes = [str(s).strip()[:MAX_SCENE_PROMPT] for s in items if isinstance(s, str) and s.strip()] \
+        if isinstance(items, list) else []
+    if len(scenes) < count:
+        raise GenerationError(f"Gemini wrote {len(scenes)} scene(s) instead of {count}.")
+    return scenes[:count]
 
 
 # ---- UI config ---------------------------------------------------------------
@@ -262,11 +298,23 @@ class GeminiBrowserGenerator:
         self.profile = settings.profile()
 
     def generate(self, req: ClipRequest, should_cancel: Callable[[], bool]) -> Path:
+        started = time.monotonic()
+        req.out_dir.mkdir(parents=True, exist_ok=True)
+        out = self._in_browser(req.job_id, lambda pg, ctx: self._run(pg, ctx, req, should_cancel))
+        log.info("job %s clip ready in %.0fs", req.job_id, time.monotonic() - started)
+        return out
+
+    def plan(self, req: PlanRequest, should_cancel: Callable[[], bool]) -> list[str]:
+        started = time.monotonic()
+        scenes = self._in_browser(req.job_id, lambda pg, ctx: self._run_plan(pg, req, should_cancel))
+        log.info("job %s plan ready (%d scenes) in %.0fs", req.job_id, len(scenes), time.monotonic() - started)
+        return scenes
+
+    def _in_browser(self, jid: str, work):
+        """Launch the profile, run `work(pg, ctx)`, always close the browser."""
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
 
-        started = time.monotonic()
-        req.out_dir.mkdir(parents=True, exist_ok=True)
         with sync_playwright() as p:
             ctx = launch_context(p, self.settings)
             try:
@@ -274,20 +322,18 @@ class GeminiBrowserGenerator:
                 page = ctx.pages[0] if ctx.pages else ctx.new_page()
                 pg = Page(page, self.ui)
                 try:
-                    out = self._run(pg, ctx, req, should_cancel)
+                    return work(pg, ctx)
                 except (GeneratorError, Cancelled):
                     raise
                 except PlaywrightError as e:
-                    pg.screenshot(self.settings, f"{req.job_id}-browser-error")
-                    log.warning("job %s browser error: %s", req.job_id, type(e).__name__)
+                    pg.screenshot(self.settings, f"{jid}-browser-error")
+                    log.warning("job %s browser error: %s", jid, type(e).__name__)
                     raise GenerationError("The browser hit an error while talking to Gemini.") from e
             finally:
                 try:
                     ctx.close()
                 except Exception:
                     pass
-        log.info("job %s clip ready in %.0fs", req.job_id, time.monotonic() - started)
-        return out
 
     # The fixed sequence. Do not add branches that depend on page content beyond stop detection.
     def _run(self, pg: Page, ctx, req: ClipRequest, should_cancel) -> Path:
@@ -313,12 +359,33 @@ class GeminiBrowserGenerator:
             self._attach(pg, req.images)
         self._cancel_point(should_cancel)
 
+        before = self._send_prompt(pg, req.prompt, jid)
+        src = self._wait_for_video(pg, before, should_cancel, jid)
+        log.info("job %s step=download", jid)
+        dest = req.out_dir / f"attempt-{req.attempt}.mp4"
+        self._download(pg, ctx, src, dest)
+        return dest
+
+    # The plan sequence: same page and checks, plain chat (no tool), reply is a JSON list of prompts.
+    def _run_plan(self, pg: Page, req: PlanRequest, should_cancel) -> list[str]:
+        jid = req.job_id
+        log.info("job %s step=open", jid)
+        pg.page.goto(self.ui["app_url"], wait_until="domcontentloaded", timeout=60_000)
+        pg.page.wait_for_timeout(2500)
+        log.info("job %s step=session", jid)
+        check_session(pg, self.stop)
+        self._cancel_point(should_cancel)
+        before = self._send_prompt(pg, plan_instruction(req), jid)
+        return self._wait_for_plan(pg, before, req.scene_count, should_cancel, jid)
+
+    def _send_prompt(self, pg: Page, text: str, jid: str) -> int:
+        """Type `text` and send it; return how many responses were on the page before."""
         log.info("job %s step=prompt", jid)
         box = pg.find("prompt_input", timeout=10)
         if box is None:
             raise GenerationError("Gemini's prompt box disappeared. Run `python -m worker check-gemini`.")
         box.click()
-        pg.page.keyboard.insert_text(req.prompt)
+        pg.page.keyboard.insert_text(text)
         pg.page.wait_for_timeout(500)
 
         responses = self._responses(pg)
@@ -332,12 +399,46 @@ class GeminiBrowserGenerator:
             pg.page.wait_for_timeout(500)
         log.info("job %s step=send", jid)
         send.click()
+        return before
 
-        src = self._wait_for_video(pg, before, should_cancel, jid)
-        log.info("job %s step=download", jid)
-        dest = req.out_dir / f"attempt-{req.attempt}.mp4"
-        self._download(pg, ctx, src, dest)
-        return dest
+    def _wait_for_plan(self, pg: Page, before: int, count: int, should_cancel, jid: str) -> list[str]:
+        """Wait until the reply parses as the scene list and has stopped changing (it streams in)."""
+        deadline = time.monotonic() + PLAN_TIMEOUT
+        last_text, error, stable = None, None, 0
+        while time.monotonic() < deadline:
+            self._cancel_point(should_cancel)
+            pg.page.wait_for_timeout(2000)
+            url = pg.page.url
+            if (urlparse(url).hostname or "") == "accounts.google.com":
+                raise stop_error("signed_out")
+            if "/sorry/" in url or pg.matches("captcha"):
+                raise stop_error("verification")
+            responses = self._responses(pg)
+            n = responses.count()
+            if n <= before:
+                continue
+            try:
+                text = responses.nth(n - 1).inner_text(timeout=3000)
+            except Exception:
+                continue
+            try:
+                scenes = parse_scene_list(text, count)
+            except GenerationError as e:
+                scenes, error = None, e
+            stable = stable + 1 if text == last_text else 0
+            last_text = text
+            if scenes and stable:
+                return scenes
+            if scenes is None and stable and text.strip():
+                kind = self.stop.classify(text)  # a finished reply that isn't a list: limit, refusal, …
+                if kind:
+                    pg.screenshot(self.settings, f"{jid}-stop-{kind}")
+                    raise stop_error(kind)
+                if stable >= 3:  # unchanged for ~6 s and still not a list: Gemini is done, just wrong
+                    pg.screenshot(self.settings, f"{jid}-plan-unreadable")
+                    raise error
+        pg.screenshot(self.settings, f"{jid}-plan-timeout")
+        raise error or GenerationError("Gemini didn't finish writing the scenes in time.")
 
     @staticmethod
     def _cancel_point(should_cancel) -> None:

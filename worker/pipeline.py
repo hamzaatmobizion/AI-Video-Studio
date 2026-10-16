@@ -21,6 +21,7 @@ from worker.generator import (
     Cancelled,
     ClipRequest,
     GeneratorError,
+    PlanRequest,
     SafetyRefusal,
     VideoGenerator,
 )
@@ -37,6 +38,42 @@ class Runner:
         self.generator = generator
         self.lock = lock
         self.profile = generator.profile
+
+    def _process_plan(self, job: dict) -> None:
+        """Gemini (chat) writes the scene prompts for a long video. Same stop/retry rules as clips."""
+        jid = job["id"]
+        self.store.update(jid, status="running", error=None)
+        self.store.event(jid, "attempt_started", "plan")
+        req = PlanRequest(job_id=jid, prompt=job["prompt"], aspect=job["aspect"], scene_count=job["scene_count"],
+                          clip_seconds=int(self.profile.get("max_clip_duration") or 10))
+
+        def should_cancel() -> bool:
+            j = self.store.get(jid)
+            return bool(j and j["cancel_requested"])
+
+        try:
+            scenes = self.generator.plan(req, should_cancel)
+        except Cancelled:
+            self.store.update(jid, status="cancelled", error="Cancelled.")
+            return
+        except SafetyRefusal as e:
+            self.store.update(jid, status="failed", error=e.user_message)
+            self.store.event(jid, "safety_refusal")
+            return
+        except AccountStop as e:
+            self.pause(e.kind, e.user_message)
+            self.store.update(jid, status="failed", error=e.user_message)
+            return
+        except GeneratorError as e:
+            self._retry_or_fail(jid, e.user_message, type(e).__name__)
+            return
+        except Exception as e:
+            log.error("job %s plan unexpected %s", jid, type(e).__name__)
+            self._retry_or_fail(jid, "Something unexpected went wrong while planning the scenes.", type(e).__name__)
+            return
+        self.store.update(jid, status="done", result=scenes)
+        self.store.event(jid, "done", f"plan {len(scenes)} scenes")
+        log.info("job %s plan done (%d scenes)", jid, len(scenes))
 
     # ---- pause / resume ------------------------------------------------------
     def paused(self) -> dict | None:
@@ -98,6 +135,9 @@ class Runner:
         return n
 
     def _process(self, job: dict) -> None:
+        if job.get("kind") == "plan":
+            self._process_plan(job)
+            return
         jid = job["id"]
         attempt = self._next_attempt(jid)
         self.store.update(jid, status="running", error=None)
@@ -124,9 +164,10 @@ class Runner:
             log.info("job %s refused by generator (safety)", jid)
             return
         except AccountStop as e:
-            # This attempt doesn't count against the job; the whole account stops.
-            self.store.update(jid, status="failed", error=e.user_message)
+            # This attempt doesn't count against the job; the whole account stops. Pause first, so anyone
+            # who sees this job failed also sees the pause (the web app keeps a paused video's scenes).
             self.pause(e.kind, e.user_message)
+            self.store.update(jid, status="failed", error=e.user_message)
             return
         except GeneratorError as e:
             self._retry_or_fail(jid, e.user_message, type(e).__name__)

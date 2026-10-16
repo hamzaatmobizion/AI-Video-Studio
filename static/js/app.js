@@ -104,8 +104,48 @@
     } catch (ex) { showError(err, ex.message); }
   });
 
-  // New video
+  // New video: one prompt + length (Gemini writes the scenes), or the user's own scenes
   const form = document.getElementById("new-video");
+  const scenesBox = document.getElementById("scenes"), addScene = document.getElementById("add-scene");
+  const autoMode = document.getElementById("auto-mode"), manualMode = document.getElementById("manual-mode");
+  const MAX_SCENES = 12, SCENE_SECONDS = 10;
+  const manual = () => autoMode && autoMode.hidden;
+  function setEnabled(box, on) { box.querySelectorAll("textarea, select").forEach((el) => { el.disabled = !on; }); }
+  function syncScenes() {
+    if (!scenesBox) return;
+    const items = [...scenesBox.querySelectorAll(".scene")];
+    items.forEach((el, i) => {
+      el.querySelector(".scene-label").textContent = `Scene ${i + 1}`;
+      el.querySelector(".remove-scene").hidden = items.length === 1;
+    });
+    addScene.disabled = items.length >= MAX_SCENES;
+    const n = manual() ? items.length : Number(document.getElementById("duration").value) / SCENE_SECONDS;
+    const secs = n * SCENE_SECONDS;
+    const length = secs < 60 ? `${secs}-second` : `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    document.getElementById("generate").textContent =
+      n === 1 || !manual() ? `Generate ${length} video` : `Generate ${length} video (${n} scenes)`;
+  }
+  if (scenesBox) {
+    addScene.addEventListener("click", () => {
+      const first = scenesBox.querySelector(".scene"), el = first.cloneNode(true), ta = el.querySelector("textarea");
+      ta.value = "";
+      scenesBox.append(el); syncScenes(); ta.focus();
+    });
+    scenesBox.addEventListener("click", (e) => {
+      const rm = e.target.closest(".remove-scene");
+      if (!rm || scenesBox.querySelectorAll(".scene").length === 1) return;
+      rm.closest(".scene").remove(); syncScenes();
+    });
+    document.getElementById("duration").addEventListener("change", syncScenes);
+    document.getElementById("toggle-mode").addEventListener("click", (e) => {
+      const toManual = !manual();
+      autoMode.hidden = toManual; manualMode.hidden = !toManual;
+      setEnabled(autoMode, !toManual); setEnabled(manualMode, toManual);  // hidden fields aren't sent
+      e.target.textContent = toManual ? "Write one prompt instead" : "Write scenes myself";
+      syncScenes();
+    });
+    syncScenes();
+  }
   if (form) form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = document.getElementById("new-error");
@@ -115,7 +155,11 @@
     for (const f of files) if (f.size > 10 * 1024 * 1024) return showError(err, `${f.name} is larger than 10 MB.`);
     const btn = form.querySelector("button[type=submit]");
     btn.disabled = true;
-    try { await post("/generations", new FormData(form)); form.prompt.value = ""; form.images.value = ""; await refresh(); }
+    try {
+      await post("/generations", new FormData(form));
+      scenesBox.querySelectorAll(".scene").forEach((el, i) => { if (i) el.remove(); else el.querySelector("textarea").value = ""; });
+      form.prompt.value = ""; syncScenes(); form.images.value = ""; await refresh();
+    }
     catch (ex) { showError(err, ex.message); }
     finally { btn.disabled = false; }
   });

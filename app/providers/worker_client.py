@@ -51,6 +51,16 @@ class WorkerClient:
             raise GeneratorError("The video worker didn't return a job id.", final=True)
         return str(job_id)
 
+    def plan(self, prompt: str, aspect: str, ref: str, scenes: int) -> str:
+        """Ask the worker to have Gemini split `prompt` into `scenes` clip prompts; returns a job id."""
+        r = self._request("POST", "/plans", json={"prompt": prompt, "aspect": aspect, "ref": ref, "scenes": scenes})
+        if r.status_code >= 400:
+            raise GeneratorError(_detail(r), final=True)
+        job_id = r.json().get("job_id")
+        if not job_id:
+            raise GeneratorError("The video worker didn't return a job id.", final=True)
+        return str(job_id)
+
     def check(self, job_id: str) -> JobStatus:
         r = self._request("GET", f"/videos/{job_id}")
         if r.status_code >= 400:
@@ -60,7 +70,8 @@ class WorkerClient:
         if status not in ("queued", "running", "done", "failed"):
             raise GeneratorError(f"The video worker sent an unknown status: {status!r}.", final=False)
         return JobStatus(status=status, error=b.get("error"), video_url=b.get("video_url"),
-                         final_prompt=b.get("final_prompt"))
+                         final_prompt=b.get("final_prompt"),
+                         scenes=b.get("scenes") if isinstance(b.get("scenes"), list) else None)
 
     def download(self, video_url: str, dest: Path) -> int:
         url = urljoin(self.base_url + "/", video_url)

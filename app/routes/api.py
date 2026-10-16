@@ -14,7 +14,10 @@ from app.routes.views import cards_for
 from app.services.generation import UserError, drive_name
 
 router = APIRouter()
-MAX_PROMPT = 2000
+MAX_PROMPT = 2000  # one clip prompt, as Gemini's video tool takes it
+MAX_IDEA = 10000  # one prompt that Gemini's chat turns into scene prompts
+MAX_SCENES = 12  # × ~10 s ≈ 2 minutes
+SCENE_SECONDS = 10
 
 
 @router.get("/api/generations")
@@ -25,12 +28,32 @@ def list_generations(request: Request, user=Depends(require_api_user)):
 
 @router.post("/generations")
 async def create_generation(request: Request, user=Depends(require_post), prompt: str = Form(""),
+                            duration: int = Form(SCENE_SECONDS), scenes: list[str] = Form(default=[]),
                             aspect: str = Form("9:16"), images: list[UploadFile] = File(default=[])):
-    prompt = prompt.strip()
-    if not prompt:
-        raise UserError("Write a prompt first.")
-    if len(prompt) > MAX_PROMPT:
-        raise UserError(f"Keep the prompt under {MAX_PROMPT} characters.")
+    """Either one `prompt` + `duration` (Gemini writes the scenes), or `scenes` written by the user."""
+    plan = None
+    if not scenes:
+        if duration % SCENE_SECONDS or not SCENE_SECONDS <= duration <= MAX_SCENES * SCENE_SECONDS:
+            raise UserError(f"Length must be {SCENE_SECONDS} seconds to {MAX_SCENES * SCENE_SECONDS // 60} minutes, "
+                            f"in steps of {SCENE_SECONDS} seconds.")
+        prompt = prompt.strip()
+        if not prompt:
+            raise UserError("Write the prompt first.")
+        if len(prompt) > MAX_IDEA:
+            raise UserError(f"Keep the prompt under {MAX_IDEA:,} characters.")
+        count = duration // SCENE_SECONDS
+        # Gemini's chat writes the clip prompts for a long video, and condenses a long prompt for one clip.
+        plan = count if count > 1 or len(prompt) > MAX_PROMPT else None
+        scenes = [prompt]
+    else:
+        scenes = [s.strip() for s in scenes]
+        if len(scenes) > MAX_SCENES:
+            raise UserError(f"A video can have at most {MAX_SCENES} scenes.")
+        for i, text in enumerate(scenes, 1):
+            if not text:
+                raise UserError(f"Write scene {i} first.")
+            if len(text) > MAX_PROMPT:
+                raise UserError(f"Keep scene {i} under {MAX_PROMPT} characters.")
     if aspect not in {a.value for a in Aspect}:
         raise UserError("Aspect must be 9:16 or 16:9.")
     images = [f for f in images if f.filename]
@@ -45,14 +68,15 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
         if kind is None:
             raise UserError(f"{f.filename} isn't a JPG, PNG or WebP image.")
         checked.append((kind, data))
-    gen_id = request.app.state.service.create(user.id, prompt, aspect, checked)
+    gen_id = request.app.state.service.create(user.id, scenes, aspect, checked, plan=plan)
     return {"id": gen_id}
 
 
 @router.post("/generations/{gen_id}/{action}")
 def generation_action(gen_id: int, action: str, request: Request, user=Depends(require_post)):
     svc = request.app.state.service
-    actions = {"cancel": svc.cancel, "retry": svc.retry, "dismiss": svc.dismiss, "save": svc.save_again,
+    actions = {"cancel": svc.cancel, "retry": svc.retry, "resume": svc.resume, "dismiss": svc.dismiss,
+               "save": svc.save_again,
                "restore": svc.restore, "delete": svc.delete}
     if action not in actions:
         return JSONResponse({"detail": "Unknown action."}, status_code=404)

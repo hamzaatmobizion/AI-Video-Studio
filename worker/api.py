@@ -17,7 +17,9 @@ log = logging.getLogger("worker.api")
 
 MAX_BODY = 35 * 1024 * 1024  # 3 images × 10 MB + form overhead
 MAX_IMAGE = 10 * 1024 * 1024
-MAX_PROMPT = 2000
+MAX_PROMPT = 2000  # one clip prompt
+MAX_IDEA = 10000  # a plan's prompt (Gemini's chat condenses it into clip prompts)
+MAX_SCENES = 12
 
 
 class _TooLarge(Exception):
@@ -159,6 +161,32 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
         log.info("job %s created (images=%d)", jid, len(paths))
         return {"job_id": jid}
 
+    @app.post("/plans", dependencies=[Depends(auth)])
+    async def create_plan(request: Request):
+        """Queue a job in which Gemini (chat) splits one idea into `scenes` clip prompts."""
+        pause = runner.paused()
+        if pause:
+            raise HTTPException(409, pause["message"])
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Body must be JSON.")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Body must be a JSON object.")
+        prompt = str(body.get("prompt") or "").strip()
+        aspect = str(body.get("aspect") or "")
+        ref = str(body.get("ref") or "")[:100] or None
+        scenes = body.get("scenes")
+        if not prompt or len(prompt) > MAX_IDEA:
+            raise HTTPException(400, f"The prompt must be 1–{MAX_IDEA} characters.")
+        if aspect not in runner.profile["aspects"]:
+            raise HTTPException(400, f"Aspect must be one of {', '.join(runner.profile['aspects'])}.")
+        if not isinstance(scenes, int) or isinstance(scenes, bool) or not 1 <= scenes <= MAX_SCENES:
+            raise HTTPException(400, f"Scenes must be a number from 1 to {MAX_SCENES}.")
+        jid = store.create(prompt, aspect, ref, kind="plan", scene_count=scenes)
+        log.info("job %s created (plan, scenes=%d)", jid, scenes)
+        return {"job_id": jid}
+
     def _job(jid: str) -> dict:
         job = store.get(jid)
         if job is None:
@@ -174,6 +202,8 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
             out.update(status="failed", error=job["error"] or "Cancelled.")
         elif st == "failed":
             out["error"] = job["error"] or "The video couldn't be made."
+        elif st == "done" and job["kind"] == "plan":
+            out["scenes"] = job["result"]
         elif st == "done":
             out["video_url"] = f"/videos/{jid}/file"
         if job["warnings"]:

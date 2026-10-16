@@ -2,6 +2,7 @@ import re
 from datetime import timedelta
 from pathlib import Path
 
+import pytest
 from sqlalchemy import inspect, select
 
 from app.enums import GenStatus
@@ -530,3 +531,266 @@ def test_use_prompt_again_prefills_studio(app, authed, user):
     assert ">a neon city in rain</textarea>" in html
     assert re.search(r'value="16:9" checked', html)
     assert authed.get("/?prompt_from=99999").status_code == 200
+
+
+# ---- multi-scene videos -----------------------------------------------------------
+LIMIT = {"kind": "limit_reached", "message": "Gemini's video limit has been reached."}
+
+
+def submit_scenes(client, scenes, aspect="9:16"):
+    return client.post("/generations", data={"scenes": scenes, "aspect": aspect})
+
+
+def clip_bytes(tmp_path, name, seconds=1.0):
+    from tests.fakes import make_clip
+    return make_clip(tmp_path / f"{name}.mp4", seconds).read_bytes()
+
+
+def duration_of(data: bytes, tmp_path) -> float:
+    import subprocess
+    path = tmp_path / "joined.mp4"
+    path.write_bytes(data)
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                         capture_output=True, text=True, check=True).stdout
+    return float(out)
+
+
+def finish(net, app, job):
+    net.worker.jobs[job]["status"] = "done"
+    tick(app)
+
+
+def test_scenes_are_made_one_at_a_time_then_joined(app, authed, drive_connected, net, tmp_path):
+    for job in ("job1", "job2", "job3"):
+        net.worker.clips[job] = clip_bytes(tmp_path, job)
+    r = submit_scenes(authed, ["a boat at dawn", "the boat at noon", "the boat at dusk"])
+    assert r.status_code == 200
+    gid = r.json()["id"]
+    assert len(net.worker.submits) == 1  # only the first scene goes to the worker
+    assert b"a boat at dawn" in net.worker.submits[0]["body"]
+
+    finish(net, app, "job1")
+    g = gen(app, gid)
+    assert g.status == GenStatus.GENERATING and g.worker_job_id == "job2"
+    assert b"the boat at noon" in net.worker.submits[1]["body"]
+    card = authed.get("/api/generations").json()["cards"][0]["html"]
+    assert "Generating scene 2 of 3" in card and "3 scenes" in card
+
+    finish(net, app, "job2")
+    finish(net, app, "job3")
+    g = gen(app, gid)
+    assert g.status == GenStatus.READY, g.error
+    assert len(net.worker.submits) == 3
+    stored = net.google.files[g.drive_file_id]
+    assert 2.8 <= duration_of(stored["data"], tmp_path) <= 3.3
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d a boat at dawn \(\d+\)\.mp4", stored["name"])
+    assert not any(Path(app.state.settings.generated_dir).iterdir())  # scene clips and joined copy cleaned up
+
+
+def test_limit_mid_video_pauses_keeps_scenes_and_resumes(app, authed, drive_connected, net, tmp_path):
+    net.worker.clips["job1"] = clip_bytes(tmp_path, "s1")
+    net.worker.clips["job3"] = clip_bytes(tmp_path, "s2")
+    gid = submit_scenes(authed, ["first", "second"]).json()["id"]
+    finish(net, app, "job1")
+
+    net.worker.paused = LIMIT
+    net.worker.jobs["job2"].update(status="failed", error=LIMIT["message"])
+    tick(app)
+    g = gen(app, gid)
+    assert g.status == GenStatus.PAUSED and "1 of 2 scenes are done" in g.error
+    assert "Click Resume on this video" in g.error
+    assert Path(g.scenes[0].clip_path).exists() and g.scenes[1].clip_path is None
+    card = authed.get("/api/generations").json()["cards"][0]["html"]
+    assert "1 of 2 scenes done" in card and f"/generations/{gid}/resume" in card
+
+    net.worker.paused = None  # "Resume generation" in Settings only unpauses the worker…
+    tick(app, 3)
+    assert gen(app, gid).status == GenStatus.PAUSED and len(net.worker.submits) == 2  # …the video waits
+
+    assert authed.post(f"/generations/{gid}/resume").status_code == 200  # the video's own Resume
+    g = gen(app, gid)
+    assert g.status == GenStatus.GENERATING and g.worker_job_id == "job3"
+    assert b"second" in net.worker.submits[2]["body"]
+    finish(net, app, "job3")
+    assert gen(app, gid).status == GenStatus.READY
+
+
+def test_submit_rejected_while_paused_pauses_instead_of_failing(app, authed, drive_connected, net):
+    net.worker.paused = LIMIT
+    net.worker.submit_response = (409, {"detail": LIMIT["message"]})
+    gid = submit_scenes(authed, ["a", "b"]).json()["id"]
+    g = gen(app, gid)
+    assert g.status == GenStatus.PAUSED and "Click Resume on this video" in g.error
+    assert authed.post(f"/generations/{gid}/cancel").status_code == 200
+    assert gen(app, gid).status == GenStatus.CANCELLED
+
+
+def test_failed_scene_is_named_and_retry_keeps_finished_ones(app, authed, drive_connected, net, tmp_path):
+    net.worker.clips["job1"] = clip_bytes(tmp_path, "s1")
+    net.worker.clips["job3"] = clip_bytes(tmp_path, "s2")
+    gid = submit_scenes(authed, ["first", "second"]).json()["id"]
+    finish(net, app, "job1")
+    net.worker.jobs["job2"].update(status="failed", error="Gemini couldn't make this video.")
+    tick(app)
+    g = gen(app, gid)
+    assert g.status == GenStatus.FAILED and g.error == "Scene 2: Gemini couldn't make this video."
+
+    assert authed.post(f"/generations/{gid}/retry").status_code == 200
+    assert len(net.worker.submits) == 3 and b"second" in net.worker.submits[2]["body"]  # scene 1 not redone
+    finish(net, app, "job3")
+    assert gen(app, gid).status == GenStatus.READY
+
+
+@pytest.mark.parametrize("scenes,message", [
+    (["x"] * 13, "at most 12 scenes"),
+    (["fine", "  "], "Write scene 2 first."),
+    (["fine", "y" * 2001], "Keep scene 2 under 2000 characters."),
+])
+def test_scene_validation(authed, drive_connected, scenes, message):
+    r = submit_scenes(authed, scenes)
+    assert r.status_code == 400 and message in r.json()["detail"]
+
+
+def test_use_prompt_again_prefills_every_scene(app, authed, user):
+    from app.models import Scene
+    with app.state.db.session() as s:
+        g = Generation(user_id=user, prompt="Scene 1: dawn\n\nScene 2: dusk", aspect="9:16", ref_images=[],
+                       status=GenStatus.READY, poll_errors=0, upload_attempts=0, dismissed=False,
+                       scenes=[Scene(position=1, prompt="dawn"), Scene(position=2, prompt="dusk")])
+        s.add(g)
+        s.flush()
+        gid = g.id
+    html = authed.get(f"/?prompt_from={gid}").text
+    assert ">dawn</textarea>" in html and ">dusk</textarea>" in html
+
+
+def test_migration_gives_existing_videos_one_scene(tmp_path):
+    import sqlalchemy as sa
+    from alembic import command
+    from alembic.config import Config
+
+    url = f"sqlite:///{tmp_path}/m.db"
+    root = Path(__file__).resolve().parent.parent
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, "0002")
+    engine = sa.create_engine(url)
+    with engine.begin() as c:
+        c.exec_driver_sql("INSERT INTO generations (prompt, aspect, ref_images, status, worker_job_id, poll_errors, "
+                          "upload_attempts, dismissed, created_at, updated_at) VALUES ('old one', '9:16', '[]', "
+                          "'GENERATING', 'job9', 0, 0, 0, '2026-01-01', '2026-01-01')")
+    command.upgrade(cfg, "head")
+    with engine.begin() as c:
+        assert c.exec_driver_sql("SELECT generation_id, position, prompt, clip_path FROM scenes").all() == \
+            [(1, 1, "old one", None)]
+
+
+# ---- one prompt + length: Gemini plans the scenes -------------------------------------
+def submit_idea(client, prompt="a day in the life of a lighthouse keeper", duration=30):
+    return client.post("/generations", data={"prompt": prompt, "duration": str(duration), "aspect": "9:16"})
+
+
+def test_one_prompt_gemini_plans_scenes_then_they_are_made(app, authed, drive_connected, net, tmp_path):
+    for job in ("job2", "job3", "job4"):
+        net.worker.clips[job] = clip_bytes(tmp_path, job)
+    gid = submit_idea(authed).json()["id"]
+    g = gen(app, gid)
+    assert g.status == GenStatus.PLANNING and g.planned and len(g.scenes) == 3
+    assert net.worker.submits[0]["path"] == "/plans" and b'"scenes":3' in net.worker.submits[0]["body"]
+    assert "Gemini is writing 3 scenes" in authed.get("/api/generations").json()["cards"][0]["html"]
+
+    net.worker.jobs["job1"].update(status="done", scenes=["dawn at the lighthouse", "noon storm", "night beam"])
+    tick(app)
+    g = gen(app, gid)
+    assert g.status == GenStatus.GENERATING and [sc.prompt for sc in g.scenes] == \
+        ["dawn at the lighthouse", "noon storm", "night beam"]
+    assert net.worker.submits[1]["path"] == "/videos" and b"dawn at the lighthouse" in net.worker.submits[1]["body"]
+
+    for job in ("job2", "job3", "job4"):
+        finish(net, app, job)
+    g = gen(app, gid)
+    assert g.status == GenStatus.READY, g.error
+    assert g.prompt == "a day in the life of a lighthouse keeper"
+    stored = net.google.files[g.drive_file_id]
+    assert "a day in the life of a lighthouse keeper" in stored["name"]
+    assert 2.8 <= duration_of(stored["data"], tmp_path) <= 3.3
+
+
+def test_ten_seconds_skips_planning(app, authed, drive_connected, net):
+    gid = submit_idea(authed, duration=10).json()["id"]
+    assert gen(app, gid).status == GenStatus.GENERATING and net.worker.submits[0]["path"] == "/videos"
+
+
+@pytest.mark.parametrize("duration", [0, 15, 130])
+def test_length_validation(authed, drive_connected, duration):
+    r = submit_idea(authed, duration=duration)
+    assert r.status_code == 400 and "Length must be" in r.json()["detail"]
+
+
+def test_plan_failure_and_retry_plans_again(app, authed, drive_connected, net):
+    gid = submit_idea(authed, duration=20).json()["id"]
+    net.worker.jobs["job1"].update(status="failed", error="Gemini didn't reply with a list of scenes.")
+    tick(app)
+    g = gen(app, gid)
+    assert g.status == GenStatus.FAILED and g.error.startswith("Gemini couldn't plan the scenes:")
+    authed.post(f"/generations/{gid}/retry")
+    assert gen(app, gid).status == GenStatus.PLANNING and net.worker.submits[1]["path"] == "/plans"
+
+
+def test_too_few_planned_scenes_fails(app, authed, drive_connected, net):
+    gid = submit_idea(authed, duration=30).json()["id"]
+    net.worker.jobs["job1"].update(status="done", scenes=["only one"])
+    tick(app)
+    g = gen(app, gid)
+    assert g.status == GenStatus.FAILED and "didn't write all the scenes" in g.error
+
+
+def test_limit_while_planning_pauses_then_plans_after_resume(app, authed, drive_connected, net):
+    gid = submit_idea(authed, duration=20).json()["id"]
+    net.worker.paused = LIMIT
+    net.worker.jobs["job1"].update(status="failed", error=LIMIT["message"])
+    tick(app)
+    assert gen(app, gid).status == GenStatus.PAUSED
+    tick(app, 2)
+    assert gen(app, gid).status == GenStatus.PAUSED and len(net.worker.submits) == 1  # never restarts by itself
+
+    assert authed.post(f"/generations/{gid}/resume").status_code == 200  # also lifts the worker's pause
+    assert net.worker.resumed == 1 and net.worker.paused is None
+    assert gen(app, gid).status == GenStatus.PLANNING and net.worker.submits[1]["path"] == "/plans"
+
+
+def test_only_paused_videos_can_be_resumed(app, authed, drive_connected, net):
+    gid = submit_idea(authed, duration=20).json()["id"]
+    r = authed.post(f"/generations/{gid}/resume")
+    assert r.status_code == 400 and "Only paused videos" in r.json()["detail"]
+
+
+def test_cancel_while_planning(app, authed, drive_connected, net):
+    gid = submit_idea(authed).json()["id"]
+    assert authed.post(f"/generations/{gid}/cancel").status_code == 200
+    assert gen(app, gid).status == GenStatus.CANCELLED and net.worker.cancelled == ["job1"]
+
+
+def test_use_prompt_again_for_planned_video_prefills_prompt_and_length(app, authed, drive_connected, net):
+    gid = submit_idea(authed, prompt="a lighthouse story", duration=30).json()["id"]
+    html = authed.get(f"/?prompt_from={gid}").text
+    assert ">a lighthouse story</textarea>" in html
+    assert re.search(r'<option value="30" selected>', html)
+
+
+def test_long_prompt_allowed_for_planned_videos(app, authed, drive_connected, net):
+    gid = submit_idea(authed, prompt="a long story " * 400, duration=60).json()["id"]  # ~5,200 characters
+    assert gen(app, gid).status == GenStatus.PLANNING and len(gen(app, gid).scenes) == 6
+
+
+def test_long_prompt_for_ten_seconds_is_condensed_by_gemini(app, authed, drive_connected, net):
+    gid = submit_idea(authed, prompt="x" * 3000, duration=10).json()["id"]
+    g = gen(app, gid)
+    assert g.status == GenStatus.PLANNING and len(g.scenes) == 1
+    assert net.worker.submits[0]["path"] == "/plans"
+
+
+def test_prompt_over_ten_thousand_characters_rejected(authed, drive_connected):
+    r = submit_idea(authed, prompt="x" * 10001, duration=60)
+    assert r.status_code == 400 and "10,000 characters" in r.json()["detail"]

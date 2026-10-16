@@ -1,7 +1,11 @@
-# VideoGeneration (starting stage: one 10-second clip)
+# VideoGeneration
 
-Type a prompt, get **one 10-second video** made by the Gemini web app (Veo), saved to your Google Drive,
-playable in the browser. Multi-shot films, audio, editing and Meta publishing come in later phases.
+Write one prompt, pick a length (10 seconds to 2 minutes), and get **one video** made by the Gemini web app
+(Veo), saved to your Google Drive, playable in the browser. Gemini's chat first splits your prompt into
+10-second scenes (one per 10 seconds; no video quota used), then each scene is made as one clip and the clips
+are joined with ffmpeg (hard cuts). "Write scenes myself" lets you write the scenes instead. Each scene uses one Gemini video from the daily limit. If
+the limit is hit partway, the video pauses with its finished scenes kept and continues after
+**Resume generation** in Settings. Editing, transitions and Meta publishing come in later phases.
 
 ```
 Web app (FastAPI :8000) ──polls──► Worker (FastAPI 127.0.0.1:8100, Bearer key)

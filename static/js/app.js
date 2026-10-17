@@ -110,6 +110,27 @@
   const autoMode = document.getElementById("auto-mode"), manualMode = document.getElementById("manual-mode");
   const MAX_SCENES = 12, SCENE_SECONDS = 10;
   const manual = () => autoMode && autoMode.hidden;
+  // Mirrors duration_from_prompt in app/routes/api.py (the server's answer is the one used)
+  const WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+    nine: 9, ten: 10, eleven: 11, twelve: 12, "half a": 0.5, "half an": 0.5 };
+  function durationFromPrompt(text) {
+    const found = [];
+    const length = /\b(\d+(?:\.\d+)?|half an?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)[\s-]*(seconds?|secs?|minutes?|mins?)\b/gi;
+    for (const [, num, unit] of text.matchAll(length)) {
+      const key = num.toLowerCase().split(/\s+/).join(" ");
+      const n = key in WORDS ? WORDS[key] : Number(num);
+      found.push(unit.toLowerCase().startsWith("m") ? n * 60 : n);
+    }
+    for (const [, m, s] of text.matchAll(/\b([0-2]):([0-5]\d)\b(?!\s*[ap]\.?m\b)/gi)) found.push(Number(m) * 60 + Number(s));
+    const longest = Math.max(0, ...found);
+    if (!longest) return null;
+    return Math.min(Math.max(Math.ceil(longest / SCENE_SECONDS), 1), MAX_SCENES) * SCENE_SECONDS;
+  }
+  function chosenDuration() {
+    const picked = document.getElementById("duration").value;
+    if (picked) return Number(picked);
+    return durationFromPrompt(form.querySelector("textarea[name=prompt]").value) || SCENE_SECONDS;
+  }
   function setEnabled(box, on) { box.querySelectorAll("textarea, select").forEach((el) => { el.disabled = !on; }); }
   function syncScenes() {
     if (!scenesBox) return;
@@ -119,7 +140,7 @@
       el.querySelector(".remove-scene").hidden = items.length === 1;
     });
     addScene.disabled = items.length >= MAX_SCENES;
-    const n = manual() ? items.length : Number(document.getElementById("duration").value) / SCENE_SECONDS;
+    const n = manual() ? items.length : chosenDuration() / SCENE_SECONDS;
     const secs = n * SCENE_SECONDS;
     const length = secs < 60 ? `${secs}-second` : `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
     document.getElementById("generate").textContent =
@@ -137,6 +158,7 @@
       rm.closest(".scene").remove(); syncScenes();
     });
     document.getElementById("duration").addEventListener("change", syncScenes);
+    form.querySelector("textarea[name=prompt]").addEventListener("input", syncScenes);
     document.getElementById("toggle-mode").addEventListener("click", (e) => {
       const toManual = !manual();
       autoMode.hidden = toManual; manualMode.hidden = !toManual;

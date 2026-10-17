@@ -8,6 +8,7 @@ from sqlalchemy import inspect, select
 from app.enums import GenStatus
 from app.models import Generation, GoogleConnection, utcnow
 from app.providers.drive_storage import _token_cache
+from app.routes.api import duration_from_prompt
 from tests.conftest import csrf_of
 from tests.fakes import PNG
 
@@ -722,10 +723,44 @@ def test_ten_seconds_skips_planning(app, authed, drive_connected, net):
     assert gen(app, gid).status == GenStatus.GENERATING and net.worker.submits[0]["path"] == "/videos"
 
 
-@pytest.mark.parametrize("duration", [0, 15, 130])
+@pytest.mark.parametrize("duration", [0, 15, 130, "abc"])
 def test_length_validation(authed, drive_connected, duration):
     r = submit_idea(authed, duration=duration)
-    assert r.status_code == 400 and "Length must be" in r.json()["detail"]
+    assert r.status_code == 400 and "Duration must be" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("text,seconds", [
+    ("a 30 second video of a fox", 30),
+    ("a 30-second video", 30),
+    ("make it 1 minute long", 60),
+    ("1.5 minutes of rain", 90),
+    ("a 1:30 video", 90),
+    ("two minutes of waves", 120),
+    ("half a minute", 30),
+    ("5 minutes long", 120),
+    ("25 seconds", 30),
+    ("a 3 sec clip", 10),
+    ("a 40 second video with a 5-second pause", 40),
+    ("a cat in a garden", None),
+    ("80s style neon, the 1990s, 9:16 portrait, at 4:30 pm", None),
+])
+def test_duration_from_prompt(text, seconds):
+    assert duration_from_prompt(text) == seconds
+
+
+def test_default_duration_comes_from_prompt(app, authed, drive_connected, net):
+    gid = submit_idea(authed, prompt="a 30 second video of a lighthouse at night", duration="").json()["id"]
+    assert len(gen(app, gid).scenes) == 3 and b'"scenes":3' in net.worker.submits[0]["body"]
+
+
+def test_default_duration_without_length_is_ten_seconds(app, authed, drive_connected, net):
+    gid = submit_idea(authed, prompt="a lighthouse at night", duration="").json()["id"]
+    assert len(gen(app, gid).scenes) == 1 and net.worker.submits[0]["path"] == "/videos"
+
+
+def test_picked_duration_beats_prompt(app, authed, drive_connected, net):
+    gid = submit_idea(authed, prompt="a 1 minute video of a lighthouse", duration=20).json()["id"]
+    assert len(gen(app, gid).scenes) == 2
 
 
 def test_plan_failure_and_retry_plans_again(app, authed, drive_connected, net):

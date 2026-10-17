@@ -1,3 +1,4 @@
+import math
 import re
 from urllib.parse import quote
 
@@ -19,6 +20,31 @@ MAX_IDEA = 10000  # one prompt that Gemini's chat turns into scene prompts
 MAX_SCENES = 12  # × ~10 s ≈ 2 minutes
 SCENE_SECONDS = 10
 
+_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+          "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "half a": 0.5, "half an": 0.5}
+# "30 second", "45-sec", "1.5 minutes", "two min", "half a minute". Bare "s"/"m" are left out on purpose:
+# "80s style" or "the 1990s" aren't lengths.
+_LENGTH = re.compile(r"\b(\d+(?:\.\d+)?|half an?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+                     r"[\s-]*(seconds?|secs?|minutes?|mins?)\b", re.I)
+# "1:30" as a length (0–2 minutes only, so "9:16" or "4:30 pm" aren't read as one)
+_CLOCK = re.compile(r"\b([0-2]):([0-5]\d)\b(?!\s*[ap]\.?m\b)", re.I)
+
+
+def duration_from_prompt(text: str) -> int | None:
+    """The video length the prompt asks for (e.g. "30 second", "1 minute", "1:30"), as a valid duration:
+    rounded up to whole scenes, 10 s to 2 minutes. The largest length mentioned wins; None if there's none."""
+    found = []
+    for num, unit in _LENGTH.findall(text):
+        n = _WORDS.get(" ".join(num.lower().split()))
+        n = float(num) if n is None else n
+        found.append(n * 60 if unit.lower().startswith("m") else n)
+    found += [int(m) * 60 + int(s) for m, s in _CLOCK.findall(text)]
+    longest = max((f for f in found if f > 0), default=None)
+    if longest is None:
+        return None
+    scenes = math.ceil(longest / SCENE_SECONDS)
+    return min(max(scenes, 1), MAX_SCENES) * SCENE_SECONDS
+
 
 @router.get("/api/generations")
 def list_generations(request: Request, user=Depends(require_api_user)):
@@ -28,13 +54,18 @@ def list_generations(request: Request, user=Depends(require_api_user)):
 
 @router.post("/generations")
 async def create_generation(request: Request, user=Depends(require_post), prompt: str = Form(""),
-                            duration: int = Form(SCENE_SECONDS), scenes: list[str] = Form(default=[]),
+                            duration: str = Form(""), scenes: list[str] = Form(default=[]),
                             aspect: str = Form("9:16"), images: list[UploadFile] = File(default=[])):
-    """Either one `prompt` + `duration` (Gemini writes the scenes), or `scenes` written by the user."""
+    """Either one `prompt` + `duration` (Gemini writes the scenes), or `scenes` written by the user.
+    An empty `duration` (Default) takes the length from the prompt, else 10 seconds."""
     plan = None
     if not scenes:
+        if duration.strip().lower() in ("", "auto"):
+            duration = duration_from_prompt(prompt) or SCENE_SECONDS
+        else:
+            duration = int(duration) if duration.strip().isdigit() else 0
         if duration % SCENE_SECONDS or not SCENE_SECONDS <= duration <= MAX_SCENES * SCENE_SECONDS:
-            raise UserError(f"Length must be {SCENE_SECONDS} seconds to {MAX_SCENES * SCENE_SECONDS // 60} minutes, "
+            raise UserError(f"Duration must be {SCENE_SECONDS} seconds to {MAX_SCENES * SCENE_SECONDS // 60} minutes, "
                             f"in steps of {SCENE_SECONDS} seconds.")
         prompt = prompt.strip()
         if not prompt:

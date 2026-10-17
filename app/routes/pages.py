@@ -39,9 +39,9 @@ def studio(request: Request, prompt_from: int | None = None, user=Depends(requir
 
 
 def _prefill(gen: Generation | None) -> dict:
-    """Studio form values for "Use prompt again": one prompt + length, or the user's own scenes."""
+    """Studio form values for "Use prompt again": one prompt + duration, or the user's own scenes."""
     if gen is None:
-        return {"prefill_prompt": "", "prefill_duration": 10, "prefill_scenes": [""], "prefill_manual": False}
+        return {"prefill_prompt": "", "prefill_duration": None, "prefill_scenes": [""], "prefill_manual": False}
     manual = not gen.planned and len(gen.scenes) > 1
     return {"prefill_prompt": "" if manual else gen.prompt,
             "prefill_duration": max(len(gen.scenes), 1) * 10,

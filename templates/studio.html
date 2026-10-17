@@ -2,7 +2,7 @@
 {% block content %}
 <section class="panel">
   <h1>New video</h1>
-  <p class="muted">Describe your video and pick a length, up to 2 minutes. Gemini splits it into 10-second scenes, which are made one by one and joined into one video.</p>
+  <p class="muted">Describe your video. Its duration (up to 2 minutes) comes from your prompt, e.g. “a 30-second video…”, unless you pick one. Gemini splits it into 10-second scenes, which are made one by one and joined into one video.</p>
   {% if not can_generate %}
     <p class="notice">Video generation is off: set <code>WORKER_URL</code> and <code>WORKER_API_KEY</code> in <code>.env</code>.</p>
   {% elif not drive_connected %}
@@ -13,8 +13,9 @@
       <label>Prompt
         <textarea name="prompt" rows="6" maxlength="10000" required placeholder="A paper boat drifting down a rain-soaked street at dusk, close-up, cinematic"{% if prefill_prompt %} autofocus{% endif %}{% if prefill_manual %} disabled{% endif %}>{{ prefill_prompt }}</textarea>
       </label>
-      <label class="length">Length
+      <label class="length">Duration
         <select name="duration" id="duration"{% if prefill_manual %} disabled{% endif %}>
+          <option value=""{% if not prefill_duration %} selected{% endif %}>Default (from prompt)</option>
           {% for s in range(10, 130, 10) %}
           <option value="{{ s }}"{% if s == prefill_duration %} selected{% endif %}>{{ '%d seconds' | format(s) if s < 60 else '%d:%02d' | format(s // 60, s % 60) }}</option>
           {% endfor %}

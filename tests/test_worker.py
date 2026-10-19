@@ -535,6 +535,9 @@ def test_old_job_database_gets_plan_columns(tmp_path):
 @pytest.mark.parametrize("text,expected", [
     ('JSON\n```json\n["a", "b"]\n```', ["a", "b"]),
     ('["a", "b", "c"]', ["a", "b"]),  # extra scenes are dropped
+    # unescaped dialogue quotes inside the scenes, one scene per line
+    ('[\n"He mutters: "ارے یار!". It lifts off.",\n"A man shouts: "Look", "up!" and points."\n]',
+     ['He mutters: "ارے یار!". It lifts off.', 'A man shouts: "Look", "up!" and points.']),
 ])
 def test_parse_scene_list(text, expected):
     from worker.gemini_browser import parse_scene_list

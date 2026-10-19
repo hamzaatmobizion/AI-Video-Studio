@@ -55,7 +55,9 @@ def plan_instruction(req: PlanRequest) -> str:
         f"- Describe only what happens in that scene's {req.clip_seconds} seconds: action, camera movement, "
         "lighting and sound. Keep the story moving forward without repeating a scene.\n"
         "- Put any on-screen text only in the scene where it should appear, spelled exactly as in the idea.\n"
-        f"- Reply with ONLY a JSON array of {req.scene_count} strings, one per scene, in order. No other text.\n\n"
+        "- Inside a scene, put spoken lines and on-screen text in single quotes ('like this'), never double quotes.\n"
+        f"- Reply with ONLY a JSON array of {req.scene_count} strings, one per scene, in order, each scene on its "
+        "own line. No other text.\n\n"
         f"Idea:\n{req.prompt}"
     )
 
@@ -68,12 +70,22 @@ def parse_scene_list(text: str, count: int) -> list[str]:
     try:
         items = json.loads(text[start:end + 1])
     except ValueError:
-        raise GenerationError("Gemini's list of scenes wasn't valid JSON.") from None
+        items = _loose_scene_list(text[start + 1:end])
+        if not items:
+            raise GenerationError("Gemini's list of scenes wasn't valid JSON.") from None
     scenes = [str(s).strip()[:MAX_SCENE_PROMPT] for s in items if isinstance(s, str) and s.strip()] \
         if isinstance(items, list) else []
     if len(scenes) < count:
         raise GenerationError(f"Gemini wrote {len(scenes)} scene(s) instead of {count}.")
     return scenes[:count]
+
+
+def _loose_scene_list(body: str) -> list[str]:
+    """The items of a one-scene-per-line array whose strings hold unescaped quotes (Gemini quoting dialogue)."""
+    body = body.strip().rstrip(",").strip()
+    if len(body) < 2 or body[0] != '"' or body[-1] != '"':
+        return []
+    return [s.replace('\\"', '"') for s in re.split(r'"\s*,\s*\n\s*"', body[1:-1])]
 
 
 # ---- UI config ---------------------------------------------------------------

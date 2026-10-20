@@ -178,7 +178,8 @@
     const btn = form.querySelector("button[type=submit]");
     btn.disabled = true;
     try {
-      await post("/generations", new FormData(form));
+      const made = await post("/generations", new FormData(form));
+      if (made.review && manual()) { location.href = `/generations/${made.id}/script`; return; }
       scenesBox.querySelectorAll(".scene").forEach((el, i) => { if (i) el.remove(); else el.querySelector("textarea").value = ""; });
       form.prompt.value = ""; syncScenes(); form.images.value = ""; await refresh();
     }
@@ -234,5 +235,193 @@
       if (!name) return;
       try { await post("/settings/google/folder", { new_name: name }); location.reload(); } catch (err) { alert(err.message); }
     });
+  }
+  // Characters: one form for adding and editing
+  const charForm = document.getElementById("character-form");
+  if (charForm) {
+    const title = document.getElementById("character-form-title"), save = document.getElementById("character-save");
+    const cancelEdit = document.getElementById("character-cancel"), removeRow = document.getElementById("remove-image-row");
+    const reset = () => {
+      charForm.reset(); charForm.dataset.id = "";
+      title.textContent = "New character"; save.textContent = "Add character";
+      cancelEdit.hidden = true; removeRow.hidden = true;
+    };
+    document.querySelectorAll(".edit-character").forEach((btn) => btn.addEventListener("click", () => {
+      const c = JSON.parse(btn.closest(".char-card").dataset.character);
+      for (const k of ["name", "appearance", "outfit", "voice", "personality"]) charForm[k].value = c[k] || "";
+      charForm.dataset.id = c.id; charForm.image.value = ""; charForm.remove_image.checked = false;
+      title.textContent = `Edit ${c.name}`; save.textContent = "Save changes";
+      cancelEdit.hidden = false; removeRow.hidden = !c.has_image;
+      charForm.scrollIntoView({ behavior: "smooth" }); charForm.name.focus();
+    }));
+    cancelEdit.addEventListener("click", reset);
+    charForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = document.getElementById("character-error");
+      showError(err, "");
+      const f = charForm.image.files[0];
+      if (f && f.size > 10 * 1024 * 1024) return showError(err, `${f.name} is larger than 10 MB.`);
+      save.disabled = true;
+      try {
+        await post(charForm.dataset.id ? `/characters/${charForm.dataset.id}` : "/characters", new FormData(charForm));
+        location.reload();
+      } catch (ex) { showError(err, ex.message); }
+      finally { save.disabled = false; }
+    });
+  }
+
+  // Script editor: per scene the setting, camera, who is where, action, lines and sound
+  const editor = document.getElementById("script-editor");
+  if (editor) {
+    const data = JSON.parse(document.getElementById("script-data").textContent);
+    const editable = editor.dataset.editable === "true";
+    const people = data.library.map((id, i) => ({ id, name: data.names[i] }));
+    const styleIn = document.getElementById("script-style"), langIn = document.getElementById("script-language");
+    styleIn.value = data.style; langIn.value = data.language;
+    const el = (tag, attrs = {}, ...kids) => {
+      const n = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs)) {
+        if (k === "text") n.textContent = v;
+        else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+        else if (v !== false && v != null) n.setAttribute(k, v === true ? "" : v);
+      }
+      n.append(...kids);
+      return n;
+    };
+    const blank = () => ({ setting: "", time_of_day: "", action: "", sound: "", shot: {}, characters: [], dialogue: [] });
+    let scenes = data.scenes.length ? data.scenes : [blank()];
+
+    // A person is a library character (by id) or a name Gemini made up; the select's value encodes which.
+    const key = (p) => (p.id ? `id:${p.id}` : `name:${p.name}`);
+    const fromKey = (k) => {
+      if (k.startsWith("id:")) { const id = Number(k.slice(3)); return { id, name: (people.find((c) => c.id === id) || {}).name || "" }; }
+      return { id: null, name: k.slice(5) };
+    };
+    function personSelect(current, extra, onchange) {
+      const sel = el("select", { disabled: !editable, "aria-label": "Character", onchange: () => onchange(fromKey(sel.value)) });
+      const seen = new Set();
+      const add = (p, label) => { const k = key(p); if (seen.has(k)) return; seen.add(k); sel.add(new Option(label || p.name, k)); };
+      people.forEach((p) => add(p));
+      [current, ...extra].filter((p) => p && p.name).forEach((p) => add(p, p.id ? p.name : `${p.name} (not in library)`));
+      if (current) sel.value = key(current);
+      return sel;
+    }
+    function field(label, value, onInput, attrs = {}) {
+      const input = el(attrs.rows ? "textarea" : "input", { type: attrs.rows ? null : "text", disabled: !editable, ...attrs,
+        oninput: (e) => { onInput(e.target.value); changed(); } });
+      input.value = value || "";
+      return el("label", {}, label, input);
+    }
+    function words(sc) { return sc.dialogue.reduce((n, d) => n + (d.line.trim() ? d.line.trim().split(/\s+/).length : 0), 0); }
+
+    function card(sc, i) {
+      sc.shot = sc.shot || {};
+      const castRows = el("div", { class: "rows" }), lineRows = el("div", { class: "rows" });
+      const count = el("span", { class: "muted small" });
+      const updateCount = () => {
+        const n = words(sc);
+        count.textContent = n ? `${n} spoken word${n === 1 ? "" : "s"}${n > data.max_words ? ` (about ${data.max_words} fit in 10 seconds)` : ""}` : "";
+        count.className = n > data.max_words ? "warn" : "muted small";
+      };
+      function drawCast() {
+        castRows.replaceChildren(...sc.characters.map((p, j) => el("div", { class: "line" },
+          personSelect(p, [], (np) => { sc.characters[j] = { ...np, position: p.position }; changed(); drawLines(); }),
+          (() => {
+            const pos = el("select", { disabled: !editable, "aria-label": "Position in frame",
+              onchange: (e) => { p.position = e.target.value; changed(); } });
+            pos.add(new Option("anywhere in frame", ""));
+            data.positions.forEach((o) => pos.add(new Option(o, o)));
+            if (p.position && !data.positions.includes(p.position)) pos.add(new Option(p.position, p.position));
+            pos.value = p.position || "";
+            return pos;
+          })(),
+          editable ? el("button", { type: "button", class: "link", text: "Remove",
+            onclick: () => { sc.characters.splice(j, 1); drawCast(); changed(); } }) : "")));
+      }
+      function drawLines() {
+        lineRows.replaceChildren(...sc.dialogue.map((d, j) => el("div", { class: "line" },
+          personSelect(d, sc.characters, (np) => { Object.assign(d, np); changed(); }),
+          (() => {
+            const input = el("input", { type: "text", maxlength: 400, disabled: !editable, placeholder: "What they say",
+              "aria-label": "Line", oninput: (e) => { d.line = e.target.value; updateCount(); changed(); } });
+            input.value = d.line;
+            return input;
+          })(),
+          editable ? el("button", { type: "button", class: "link", text: "Remove",
+            onclick: () => { sc.dialogue.splice(j, 1); drawLines(); updateCount(); changed(); } }) : "")));
+      }
+      drawCast(); drawLines(); updateCount();
+      const firstPerson = () => sc.characters[0] || people[0] || { id: null, name: "Narrator" };
+      const prompt = el("pre", { class: "prompt-text", text: data.prompts[i] || "" });
+      const warns = el("div", { class: "warnings" });
+      return el("article", { class: "shot-card" },
+        el("header", {}, el("h2", { text: `Scene ${i + 1}` }), el("span", { class: "muted small", text: `${i * 10}–${i * 10 + 10} s` }),
+          editable && scenes.length > 1 ? el("button", { type: "button", class: "link", text: "Remove scene",
+            onclick: () => { if (confirm(`Remove scene ${i + 1}?`)) { scenes.splice(i, 1); draw(); changed(); } } }) : ""),
+        el("div", { class: "grid2" },
+          field("Setting", sc.setting, (v) => { sc.setting = v; }, { maxlength: 400, placeholder: "Old Lahore rooftop, kites in the sky" }),
+          field("Time of day", sc.time_of_day, (v) => { sc.time_of_day = v; }, { maxlength: 60, list: "time-options" })),
+        el("h3", { class: "sub", text: "Camera" }),
+        el("div", { class: "grid4" }, ...["framing", "angle", "movement", "lens"].map((k) =>
+          field(k[0].toUpperCase() + k.slice(1), sc.shot[k], (v) => { sc.shot[k] = v; }, { maxlength: 60, list: `${k}-options` }))),
+        el("h3", { class: "sub", text: "In the shot" }), castRows,
+        editable ? el("button", { type: "button", class: "link", text: "+ Add character to shot",
+          onclick: () => { sc.characters.push({ ...(people.find((p) => !sc.characters.some((c) => c.id === p.id)) || firstPerson()), position: "" }); drawCast(); changed(); } }) : "",
+        field("Action", sc.action, (v) => { sc.action = v; }, { rows: 3, maxlength: 1500, placeholder: "What happens, how they move and react" }),
+        el("h3", { class: "sub", text: "Dialogue" }), lineRows,
+        el("div", { class: "line" }, editable ? el("button", { type: "button", class: "link", text: "+ Add line",
+          onclick: () => { sc.dialogue.push({ ...firstPerson(), line: "" }); drawLines(); changed(); } }) : "", " ", count),
+        field("Sound", sc.sound, (v) => { sc.sound = v; }, { maxlength: 300, placeholder: "Wind, distant traffic, kite strings" }),
+        warns,
+        el("details", { class: "compiled" }, el("summary", { text: "Clip prompt" }), prompt));
+    }
+    function draw() { editor.replaceChildren(...scenes.map(card)); }
+    draw();
+
+    // Autosave (and refresh the clip prompts) shortly after each change
+    const status = document.getElementById("script-status"), err = document.getElementById("script-error");
+    let saveTimer = null, saving = Promise.resolve();
+    const payload = (approve) => ({ scenes, style: styleIn.value, language: langIn.value, approve });
+    function show(result) {
+      editor.querySelectorAll(".shot-card").forEach((c, i) => {
+        const r = result[i]; if (!r) return;
+        c.querySelector(".prompt-text").textContent = r.prompt;
+        c.querySelector(".warnings").replaceChildren(...r.warnings.map((w) => el("p", { class: "warn", text: w })));
+      });
+    }
+    async function saveNow() {
+      clearTimeout(saveTimer);
+      status.textContent = "Saving…";
+      try { show((await post(`/generations/${editor.dataset.id}/script`, payload(false))).scenes); status.textContent = "Saved"; }
+      catch (ex) { status.textContent = ""; showError(err, ex.message); }
+    }
+    function changed() {
+      if (!editable) return;
+      showError(err, ""); status.textContent = "Unsaved changes";
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { saving = saveNow(); }, 700);
+    }
+    if (editable) {
+      styleIn.addEventListener("input", changed); langIn.addEventListener("input", changed);
+      document.getElementById("add-shot").addEventListener("click", () => {
+        if (scenes.length >= 12) return showError(err, "A video can have at most 12 scenes.");
+        const prev = scenes[scenes.length - 1] || blank();
+        scenes.push({ ...blank(), setting: prev.setting, time_of_day: prev.time_of_day, characters: prev.characters.map((p) => ({ ...p })) });
+        draw(); changed();
+        editor.lastElementChild.scrollIntoView({ behavior: "smooth" });
+      });
+      document.getElementById("approve-script").addEventListener("click", async (e) => {
+        const btn = e.target;
+        btn.disabled = true; showError(err, "");
+        clearTimeout(saveTimer);
+        try {
+          await saving;
+          await post(`/generations/${editor.dataset.id}/script`, payload(true));
+          location.href = "/";
+        } catch (ex) { showError(err, ex.message); }
+        finally { btn.disabled = false; }
+      });
+      saving = saveNow();  // shows the warnings and current prompts straight away
+    }
   }
 })();

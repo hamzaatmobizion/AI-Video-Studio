@@ -20,6 +20,21 @@ MAX_IMAGE = 10 * 1024 * 1024
 MAX_PROMPT = 2000  # one clip prompt
 MAX_IDEA = 10000  # a plan's prompt (Gemini's chat condenses it into clip prompts)
 MAX_SCENES = 12
+MAX_CAST = 8
+CAST_LIMITS = {"name": 60, "appearance": 400, "outfit": 200, "voice": 150, "personality": 200}
+
+
+def _plan_options(body: dict) -> dict:
+    """The plan's optional cast, style and language, bounded."""
+    cast = body.get("cast") or []
+    if not isinstance(cast, list) or len(cast) > MAX_CAST or not all(isinstance(c, dict) for c in cast):
+        raise HTTPException(400, f"Cast must be a list of at most {MAX_CAST} characters.")
+    cast = [{k: str(c.get(k) or "").strip()[:n] for k, n in CAST_LIMITS.items()} for c in cast]
+    if any(not c["name"] for c in cast):
+        raise HTTPException(400, "Every cast member needs a name.")
+    opts = {"cast": cast, "style": str(body.get("style") or "").strip()[:300],
+            "language": str(body.get("language") or "").strip()[:40]}
+    return {k: v for k, v in opts.items() if v}
 
 
 class _TooLarge(Exception):
@@ -163,7 +178,7 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
 
     @app.post("/plans", dependencies=[Depends(auth)])
     async def create_plan(request: Request):
-        """Queue a job in which Gemini (chat) splits one idea into `scenes` clip prompts."""
+        """Queue a job in which Gemini (chat) writes a `scenes`-scene script from one idea."""
         pause = runner.paused()
         if pause:
             raise HTTPException(409, pause["message"])
@@ -183,7 +198,7 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
             raise HTTPException(400, f"Aspect must be one of {', '.join(runner.profile['aspects'])}.")
         if not isinstance(scenes, int) or isinstance(scenes, bool) or not 1 <= scenes <= MAX_SCENES:
             raise HTTPException(400, f"Scenes must be a number from 1 to {MAX_SCENES}.")
-        jid = store.create(prompt, aspect, ref, kind="plan", scene_count=scenes)
+        jid = store.create(prompt, aspect, ref, kind="plan", scene_count=scenes, options=_plan_options(body))
         log.info("job %s created (plan, scenes=%d)", jid, scenes)
         return {"job_id": jid}
 

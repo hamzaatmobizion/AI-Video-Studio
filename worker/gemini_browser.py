@@ -43,41 +43,110 @@ PLAN_TIMEOUT = 180  # seconds for Gemini to write the scene list
 MAX_SCENE_PROMPT = 2000
 
 
+# Shot vocabulary for the script. app/script.py offers the same lists in the script editor.
+FRAMINGS = ["extreme wide", "wide", "medium", "medium close-up", "close-up", "extreme close-up",
+            "over-the-shoulder", "two-shot"]
+ANGLES = ["eye level", "low angle", "high angle", "bird's-eye", "dutch angle"]
+MOVEMENTS = ["static", "slow push-in", "pull-out", "pan left", "pan right", "tilt up", "tilt down", "tracking",
+             "dolly", "handheld", "orbit", "crane"]
+LENSES = ["24mm wide-angle lens", "35mm lens", "50mm lens", "85mm lens with shallow depth of field"]
+POSITIONS = ["frame left", "center", "frame right", "foreground", "background"]
+MAX_SPOKEN_WORDS = 25
+_EXAMPLE = ('{"setting": "...", "time_of_day": "...", "characters": [{"name": "...", "position": "..."}], '
+            '"shot": {"framing": "...", "angle": "...", "movement": "...", "lens": "..."}, "action": "...", '
+            '"dialogue": [{"name": "...", "line": "..."}], "sound": "..."}')
+
+
 def plan_instruction(req: PlanRequest) -> str:
     total = req.scene_count * req.clip_seconds
+    if req.cast:
+        sheets = "\n".join(
+            f"- {c['name']}: " + "; ".join(x for x in (c.get("appearance"), c.get("outfit")) if x)
+            + (f". Voice: {c['voice']}" if c.get("voice") else "")
+            + (f". Personality: {c['personality']}" if c.get("personality") else "")
+            for c in req.cast)
+        cast = ("Cast (use these names exactly, and only these people unless the idea needs extras; their looks "
+                "and voices are added to every scene for you, so don't describe them again):\n" + sheets + "\n")
+    else:
+        cast = ("Invent the characters the idea needs and give each a short name. Each scene is made on its own, "
+                "so in every scene's action describe each character's appearance and clothing in the same words.\n")
+    style = f"Visual style for every scene: {req.style}\n" if req.style else ""
+    language = f"All spoken lines are in {req.language}.\n" if req.language else ""
     return (
-        f"You write prompts for an AI video generator that makes one {req.clip_seconds}-second clip per prompt. "
-        f"Turn the idea below into exactly {req.scene_count} consecutive scenes that together play as one "
-        f"continuous {total}-second {req.aspect} video.\n"
+        f"You are a film director writing the shooting script for an AI video generator that makes one "
+        f"{req.clip_seconds}-second clip per scene. Turn the idea below into exactly {req.scene_count} consecutive "
+        f"scenes that together play as one continuous {total}-second {req.aspect} video.\n"
+        + cast + style + language +
         "Rules:\n"
-        "- Each scene prompt is used on its own (the generator never sees the other scenes), so repeat the "
-        "main characters' appearance, clothing, setting and visual style in every scene.\n"
-        f"- Describe only what happens in that scene's {req.clip_seconds} seconds: action, camera movement, "
-        "lighting and sound. Keep the story moving forward without repeating a scene.\n"
-        "- Put any on-screen text only in the scene where it should appear, spelled exactly as in the idea.\n"
-        "- Inside a scene, put spoken lines and on-screen text in single quotes ('like this'), never double quotes.\n"
-        f"- Reply with ONLY a JSON array of {req.scene_count} strings, one per scene, in order, each scene on its "
-        "own line. No other text.\n\n"
+        "- The generator never sees the other scenes, so give every scene its full setting and keep places, "
+        "props and lighting consistent from scene to scene.\n"
+        f"- Describe only what happens in that scene's {req.clip_seconds} seconds and keep the story moving.\n"
+        "- Direct it like a film: open with an establishing wide shot, use medium shots for action and close-ups "
+        "for emotion and dialogue, and keep screen direction consistent (whoever is frame left in a conversation "
+        "stays frame left).\n"
+        f"- framing is one of: {', '.join(FRAMINGS)}. angle is one of: {', '.join(ANGLES)}. movement is one of: "
+        f"{', '.join(MOVEMENTS)}. lens is one of: {', '.join(LENSES)}. position is one of: {', '.join(POSITIONS)}.\n"
+        f"- Spoken lines must fit in {req.clip_seconds} seconds: at most about {MAX_SPOKEN_WORDS} words per scene "
+        "in total. Leave dialogue empty when nobody speaks.\n"
+        "- Put any on-screen text in the action of the scene where it appears, spelled exactly as in the idea.\n"
+        "- Never put double quotes inside a value; write quotes as single quotes ('like this').\n"
+        f"- Reply with ONLY a JSON array of {req.scene_count} objects, one per scene, in order, each like:\n"
+        f"{_EXAMPLE}\nNo other text.\n\n"
         f"Idea:\n{req.prompt}"
     )
 
 
-def parse_scene_list(text: str, count: int) -> list[str]:
-    """The scene prompts from Gemini's reply (a JSON array, possibly inside a code block)."""
+def parse_script(text: str, count: int) -> list[dict]:
+    """The script scenes from Gemini's reply (a JSON array of objects, possibly inside a code block). A reply
+    that is a list of plain prompts still works: each one becomes a scene's action."""
     start, end = text.find("["), text.rfind("]")
     if start < 0 or end <= start:
         raise GenerationError("Gemini didn't reply with a list of scenes.")
+    body = text[start:end + 1]
     try:
-        items = json.loads(text[start:end + 1])
+        items = json.loads(body)
     except ValueError:
-        items = _loose_scene_list(text[start + 1:end])
+        try:  # a list of objects: repair quotes inside values; a list of strings: split it by lines
+            items = json.loads(_escape_stray_quotes(body)) if body[1:].lstrip().startswith("{") \
+                else _loose_scene_list(body[1:-1])
+        except ValueError:
+            items = None
         if not items:
             raise GenerationError("Gemini's list of scenes wasn't valid JSON.") from None
-    scenes = [str(s).strip()[:MAX_SCENE_PROMPT] for s in items if isinstance(s, str) and s.strip()] \
-        if isinstance(items, list) else []
+    scenes = [sc for sc in map(_scene_item, items) if sc] if isinstance(items, list) else []
     if len(scenes) < count:
         raise GenerationError(f"Gemini wrote {len(scenes)} scene(s) instead of {count}.")
     return scenes[:count]
+
+
+def _scene_item(item) -> dict | None:
+    if isinstance(item, str):
+        return {"action": item.strip()[:MAX_SCENE_PROMPT]} if item.strip() else None
+    if isinstance(item, dict) and any(item.values()):
+        return item
+    return None
+
+
+def _escape_stray_quotes(body: str) -> str:
+    """Escape double quotes inside JSON strings (Gemini quoting dialogue): a quote that closes a string is
+    followed by `:`, `,`, `}` or `]`; any other one inside a string is part of the text."""
+    out, in_str, i = [], False, 0
+    while i < len(body):
+        ch = body[i]
+        if in_str and ch == "\\":
+            out.append(body[i:i + 2])
+            i += 2
+            continue
+        if ch == '"':
+            if not in_str:
+                in_str = True
+            elif body[i + 1:].lstrip()[:1] in (":", ",", "}", "]", ""):
+                in_str = False
+            else:
+                ch = '\\"'
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _loose_scene_list(body: str) -> list[str]:
@@ -318,7 +387,7 @@ class GeminiBrowserGenerator:
         log.info("job %s clip ready in %.0fs", req.job_id, time.monotonic() - started)
         return out
 
-    def plan(self, req: PlanRequest, should_cancel: Callable[[], bool]) -> list[str]:
+    def plan(self, req: PlanRequest, should_cancel: Callable[[], bool]) -> list[dict]:
         started = time.monotonic()
         scenes = self._in_browser(req.job_id, lambda pg, ctx: self._run_plan(pg, req, should_cancel))
         log.info("job %s plan ready (%d scenes) in %.0fs", req.job_id, len(scenes), time.monotonic() - started)
@@ -380,8 +449,8 @@ class GeminiBrowserGenerator:
         self._download(pg, ctx, src, dest)
         return dest
 
-    # The plan sequence: same page and checks, plain chat (no tool), reply is a JSON list of prompts.
-    def _run_plan(self, pg: Page, req: PlanRequest, should_cancel) -> list[str]:
+    # The plan sequence: same page and checks, plain chat (no tool), reply is a JSON list of script scenes.
+    def _run_plan(self, pg: Page, req: PlanRequest, should_cancel) -> list[dict]:
         jid = req.job_id
         log.info("job %s step=open", jid)
         pg.page.goto(self.ui["app_url"], wait_until="domcontentloaded", timeout=60_000)
@@ -415,7 +484,7 @@ class GeminiBrowserGenerator:
         send.click()
         return before
 
-    def _wait_for_plan(self, pg: Page, before: int, count: int, should_cancel, jid: str) -> list[str]:
+    def _wait_for_plan(self, pg: Page, before: int, count: int, should_cancel, jid: str) -> list[dict]:
         """Wait until the reply parses as the scene list and has stopped changing (it streams in)."""
         deadline = time.monotonic() + PLAN_TIMEOUT
         last_text, error, stable = None, None, 0
@@ -436,7 +505,7 @@ class GeminiBrowserGenerator:
             except Exception:
                 continue
             try:
-                scenes = parse_scene_list(text, count)
+                scenes = parse_script(text, count)
             except GenerationError as e:
                 scenes, error = None, e
             stable = stable + 1 if text == last_text else 0

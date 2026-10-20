@@ -45,12 +45,12 @@ class TestPatternGenerator:
         secs = step[1] if isinstance(step, tuple) else self.seconds
         return make_clip(req.out_dir / f"attempt-{req.attempt}.mp4", secs, self.size)
 
-    def plan(self, req, should_cancel) -> list[str]:
+    def plan(self, req, should_cancel) -> list[dict]:
         self.calls.append(req)
         step = self.script.pop(0) if self.script else "ok"
         if isinstance(step, BaseException):
             raise step
-        return [f"{req.prompt} (part {i})" for i in range(1, req.scene_count + 1)]
+        return [{"action": f"{req.prompt} (part {i})"} for i in range(1, req.scene_count + 1)]
 
 
 # ---- web app side: fake worker + fake Google behind one MockTransport ---------
@@ -73,7 +73,9 @@ class FakeWorker:
         path = request.url.path
         if request.method == "POST" and path in ("/videos", "/plans"):
             ctype = request.headers.get("content-type", "")
-            self.submits.append({"multipart": ctype.startswith("multipart"), "body": request.content[:200], "path": path})
+            self.submits.append({"multipart": ctype.startswith("multipart"), "body": request.content[:200], "path": path,
+                                 "json": json.loads(request.content) if ctype.startswith("application/json") else None,
+                                 "images": request.content.count(b'name="images"')})
             if self.submit_response:
                 code, body = self.submit_response
                 return httpx.Response(code, json=body)

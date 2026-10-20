@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Characters · VideoGeneration{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Characters</h1>
+  <p class="muted">Your cast. Each scene a character is in describes them in exactly these words, and their picture is sent as a reference, so they look and sound the same from clip to clip and video to video. Pick them under <em>Cast</em> in the <a href="/">Studio</a>.</p>
+  <form id="character-form" class="stack" data-id="">
+    <h2 id="character-form-title">New character</h2>
+    <div class="grid2">
+      <label>Name
+        <input type="text" name="name" maxlength="{{ limits.name }}" required placeholder="Ali">
+      </label>
+      <label>Voice
+        <input type="text" name="voice" maxlength="{{ limits.voice }}" placeholder="Deep, calm male voice, slow pace, Lahori Urdu accent">
+      </label>
+    </div>
+    <label>Appearance
+      <textarea name="appearance" rows="2" maxlength="{{ limits.appearance }}" required placeholder="Man in his 30s, short black hair, trimmed beard, brown eyes, slim build"></textarea>
+      <span class="hint">Face, hair, age, build. Be specific and keep it short; these exact words go into every scene.</span>
+    </label>
+    <label>Outfit
+      <input type="text" name="outfit" maxlength="{{ limits.outfit }}" placeholder="White kurta, navy waistcoat, black sandals">
+    </label>
+    <label>Personality (optional)
+      <input type="text" name="personality" maxlength="{{ limits.personality }}" placeholder="Warm, funny, a little stubborn">
+      <span class="hint">Helps Gemini write their lines and acting; not added to the clip prompt.</span>
+    </label>
+    <label>Reference picture (optional · JPG/PNG/WebP · 10 MB)
+      <input type="file" name="image" accept="image/jpeg,image/png,image/webp">
+    </label>
+    <label class="check" id="remove-image-row" hidden><input type="checkbox" name="remove_image" value="1"> Remove the current picture</label>
+    <p class="error" id="character-error" hidden></p>
+    <div class="form-actions">
+      <button type="submit" id="character-save">Add character</button>
+      <button type="button" class="secondary" id="character-cancel" hidden>Cancel editing</button>
+    </div>
+  </form>
+</section>
+
+{% if characters %}
+<ul class="char-list">
+  {% for c in characters %}
+  <li class="char-card" data-character='{{ {"id": c.id, "name": c.name, "appearance": c.appearance, "outfit": c.outfit, "voice": c.voice, "personality": c.personality, "has_image": c.image_path is not none} | tojson }}'>
+    <header>
+      {% if c.image_path %}<img class="char-thumb" src="/characters/{{ c.id }}/image" alt="">{% else %}<span class="char-thumb initial" aria-hidden="true">{{ c.name[:1] }}</span>{% endif %}
+      <h2>{{ c.name }}</h2>
+    </header>
+    <dl>
+      <dt>Appearance</dt><dd>{{ c.appearance }}</dd>
+      {% if c.outfit %}<dt>Outfit</dt><dd>{{ c.outfit }}</dd>{% endif %}
+      {% if c.voice %}<dt>Voice</dt><dd>{{ c.voice }}</dd>{% endif %}
+      {% if c.personality %}<dt>Personality</dt><dd>{{ c.personality }}</dd>{% endif %}
+    </dl>
+    <div class="actions">
+      <button class="secondary edit-character">Edit</button>
+      <button class="secondary danger" data-post="/characters/{{ c.id }}/delete" data-reload data-confirm="Delete {{ c.name }}? Videos already made keep them.">Delete</button>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<section class="panel empty"><p class="muted">No characters yet. Add the people who appear in your videos above.</p></section>
+{% endif %}
+{% endblock %}

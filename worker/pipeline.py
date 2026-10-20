@@ -44,8 +44,11 @@ class Runner:
         jid = job["id"]
         self.store.update(jid, status="running", error=None)
         self.store.event(jid, "attempt_started", "plan")
+        opts = job.get("options") or {}
         req = PlanRequest(job_id=jid, prompt=job["prompt"], aspect=job["aspect"], scene_count=job["scene_count"],
-                          clip_seconds=int(self.profile.get("max_clip_duration") or 10))
+                          clip_seconds=int(self.profile.get("max_clip_duration") or 10),
+                          cast=opts.get("cast") or [], style=opts.get("style") or "",
+                          language=opts.get("language") or "")
 
         def should_cancel() -> bool:
             j = self.store.get(jid)

@@ -17,13 +17,17 @@ class ClipRequest:
 
 @dataclass
 class PlanRequest:
-    """Ask Gemini (chat, not the Video tool) to split one idea into `scene_count` clip prompts."""
+    """Ask Gemini (chat, not the Video tool) to write a `scene_count`-scene script from one idea.
+    `cast`: [{name, appearance, outfit, voice, personality}] the script must use."""
 
     job_id: str
     prompt: str
     aspect: str
     scene_count: int
     clip_seconds: int = 10
+    cast: list[dict] = field(default_factory=list)
+    style: str = ""
+    language: str = ""
 
 
 class GeneratorError(Exception):
@@ -75,6 +79,6 @@ class VideoGenerator(Protocol):
         """Produce one clip file inside req.out_dir and return its path."""
         ...
 
-    def plan(self, req: PlanRequest, should_cancel: Callable[[], bool]) -> list[str]:
-        """Return exactly req.scene_count scene prompts written by Gemini."""
+    def plan(self, req: PlanRequest, should_cancel: Callable[[], bool]) -> list[dict]:
+        """Return exactly req.scene_count script scenes written by Gemini (see parse_script)."""
         ...

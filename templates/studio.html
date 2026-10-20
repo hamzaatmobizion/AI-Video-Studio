@@ -36,6 +36,37 @@
       <button type="button" class="secondary" id="add-scene">+ Add scene</button>
     </div>
     <button type="button" class="link" id="toggle-mode">{{ 'Write one prompt instead' if prefill_manual else 'Write scenes myself' }}</button>
+    <fieldset class="direction">
+      <legend>Direction</legend>
+      <div class="cast">
+        <span class="field-label">Cast</span>
+        {% if characters %}
+          <div class="cast-list">
+            {% for c in characters %}
+            <label class="cast-pick" title="{{ c.appearance }}">
+              <input type="checkbox" name="cast" value="{{ c.id }}" {% if c.id in prefill_cast %}checked{% endif %}>
+              {% if c.image_path %}<img src="/characters/{{ c.id }}/image" alt="" loading="lazy">{% else %}<span class="initial" aria-hidden="true">{{ c.name[:1] }}</span>{% endif %}
+              {{ c.name }}
+            </label>
+            {% endfor %}
+          </div>
+          <span class="hint">Picked characters look and sound the same in every scene. <a href="/characters">Manage characters</a></span>
+        {% else %}
+          <span class="hint">No characters yet. <a href="/characters">Create characters</a> to keep the same people, outfits and voices across scenes and videos.</span>
+        {% endif %}
+      </div>
+      <div class="row">
+        <label class="grow">Visual style (optional)
+          <input type="text" name="style" maxlength="300" list="style-options" value="{{ prefill_style }}" placeholder="e.g. Cinematic film, natural light">
+          <datalist id="style-options">{% for s in styles %}<option value="{{ s }}">{% endfor %}</datalist>
+        </label>
+        <label class="grow">Spoken language (optional)
+          <input type="text" name="language" maxlength="40" list="language-options" value="{{ prefill_language }}" placeholder="e.g. English, Urdu">
+          <datalist id="language-options">{% for l in ["English", "Urdu", "Hindi", "Punjabi", "Arabic", "Spanish", "French", "Turkish"] %}<option value="{{ l }}">{% endfor %}</datalist>
+        </label>
+      </div>
+      <label class="check"><input type="checkbox" name="review" value="1" {% if prefill_review %}checked{% endif %}> Let me review and edit the script (shots, dialogue, who is in each scene) before the clips are made</label>
+    </fieldset>
     <div class="row">
       <fieldset class="aspect">
         <legend>Aspect</legend>

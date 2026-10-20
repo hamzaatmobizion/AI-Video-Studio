@@ -498,7 +498,7 @@ def test_plan_job_returns_scene_prompts(api):
     api.runner.tick()
     body = api.get(f"/videos/{jid}", headers=AUTH).json()
     assert body["status"] == "done" and body["video_url"] is None
-    assert body["scenes"] == [f"a lighthouse story (part {i})" for i in (1, 2, 3)]
+    assert body["scenes"] == [{"action": f"a lighthouse story (part {i})"} for i in (1, 2, 3)]
     req = api.runner.generator.calls[0]
     assert req.scene_count == 3 and req.clip_seconds == 10
 
@@ -533,20 +533,58 @@ def test_old_job_database_gets_plan_columns(tmp_path):
 
 
 @pytest.mark.parametrize("text,expected", [
-    ('JSON\n```json\n["a", "b"]\n```', ["a", "b"]),
-    ('["a", "b", "c"]', ["a", "b"]),  # extra scenes are dropped
+    ('JSON\n```json\n["a", "b"]\n```', [{"action": "a"}, {"action": "b"}]),
+    ('["a", "b", "c"]', [{"action": "a"}, {"action": "b"}]),  # extra scenes are dropped
     # unescaped dialogue quotes inside the scenes, one scene per line
     ('[\n"He mutters: "ارے یار!". It lifts off.",\n"A man shouts: "Look", "up!" and points."\n]',
-     ['He mutters: "ارے یار!". It lifts off.', 'A man shouts: "Look", "up!" and points.']),
+     [{"action": 'He mutters: "ارے یار!". It lifts off.'}, {"action": 'A man shouts: "Look", "up!" and points.'}]),
+    # script objects
+    ('[{"action": "a", "shot": {"framing": "wide"}}, {"dialogue": [{"name": "Ali", "line": "Hi"}]}]',
+     [{"action": "a", "shot": {"framing": "wide"}}, {"dialogue": [{"name": "Ali", "line": "Hi"}]}]),
+    # double quotes inside a value
+    ('[{"action": "He says "hi" loudly"},\n{"action": "b", "dialogue": [{"name": "Ali", "line": "It\'s "fine""}]}]',
+     [{"action": 'He says "hi" loudly'}, {"action": "b", "dialogue": [{"name": "Ali", "line": 'It\'s "fine"'}]}]),
 ])
-def test_parse_scene_list(text, expected):
-    from worker.gemini_browser import parse_scene_list
-    assert parse_scene_list(text, 2) == expected
+def test_parse_script(text, expected):
+    from worker.gemini_browser import parse_script
+    assert parse_script(text, 2) == expected
 
 
-@pytest.mark.parametrize("text", ['["only one"]', "Here are your scenes: one, two", '["a", '])
-def test_parse_scene_list_rejects(text):
-    from worker.gemini_browser import parse_scene_list
+@pytest.mark.parametrize("text", ['["only one"]', "Here are your scenes: one, two", '["a", ', '[{"a": ""}, {}]'])
+def test_parse_script_rejects(text):
+    from worker.gemini_browser import parse_script
     from worker.generator import GenerationError
     with pytest.raises(GenerationError):
-        parse_scene_list(text, 2)
+        parse_script(text, 2)
+
+
+def test_plan_instruction_carries_cast_style_and_shot_vocabulary():
+    from app import script
+    from worker import gemini_browser as gb
+    from worker.generator import PlanRequest
+    for name in ("FRAMINGS", "ANGLES", "MOVEMENTS", "LENSES", "POSITIONS", "MAX_SPOKEN_WORDS"):
+        assert getattr(gb, name) == getattr(script, name)  # Gemini and the editor use the same words
+    text = gb.plan_instruction(PlanRequest("j", "a kite story", "9:16", 3, cast=[
+        {"name": "Ali", "appearance": "tall man, beard", "outfit": "white kurta", "voice": "deep, calm"}],
+        style="Anime", language="Urdu"))
+    assert "- Ali: tall man, beard; white kurta. Voice: deep, calm" in text
+    assert "Visual style for every scene: Anime" in text and "All spoken lines are in Urdu." in text
+    assert "exactly 3 consecutive scenes" in text and "over-the-shoulder" in text and text.endswith("a kite story")
+    assert "Invent the characters" in gb.plan_instruction(PlanRequest("j", "x", "9:16", 1))
+
+
+def test_plan_job_passes_cast_and_style_to_gemini(api):
+    cast = [{"name": "Ali", "appearance": "tall", "voice": "deep", "extra": "dropped"}]
+    r = api.post("/plans", headers=AUTH, json={"prompt": "story", "aspect": "9:16", "scenes": 2, "cast": cast,
+                                               "style": "Anime", "language": "Urdu"})
+    assert r.status_code == 200
+    api.runner.tick()
+    req = api.runner.generator.calls[0]
+    assert req.cast == [{"name": "Ali", "appearance": "tall", "outfit": "", "voice": "deep", "personality": ""}]
+    assert (req.style, req.language) == ("Anime", "Urdu")
+
+
+@pytest.mark.parametrize("cast", ["Ali", [{"appearance": "no name"}], [{"name": "x"}] * 9])
+def test_plan_cast_validated(api, cast):
+    r = api.post("/plans", headers=AUTH, json={"prompt": "x", "aspect": "9:16", "scenes": 1, "cast": cast})
+    assert r.status_code == 400

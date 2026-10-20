@@ -38,6 +38,10 @@ class Generation(Base):
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     planned: Mapped[bool] = mapped_column(Boolean, default=False)  # Gemini split `prompt` into the scenes
+    review: Mapped[bool] = mapped_column(Boolean, default=False)  # stop at REVIEW once the script is drafted
+    cast_ids: Mapped[list] = mapped_column(JSON, default=list)  # Character ids the script may use
+    style: Mapped[str] = mapped_column(Text, default="")  # visual style for every clip
+    language: Mapped[str] = mapped_column(String(40), default="")  # language of the spoken lines
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     scenes: Mapped[list["Scene"]] = relationship(order_by="Scene.position", cascade="all, delete-orphan",
@@ -52,8 +56,41 @@ class Scene(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     generation_id: Mapped[int] = mapped_column(ForeignKey("generations.id", ondelete="CASCADE"), index=True)
     position: Mapped[int] = mapped_column(Integer)
-    prompt: Mapped[str] = mapped_column(Text)  # "" until Gemini has planned the scenes
+    prompt: Mapped[str] = mapped_column(Text)  # the clip prompt sent to Veo; "" until planned (and approved)
     clip_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # set once the clip is downloaded
+    # The script (app/script.py): `prompt` is compiled from these when they are set.
+    setting: Mapped[str] = mapped_column(Text, default="")
+    time_of_day: Mapped[str] = mapped_column(String(60), default="")
+    action: Mapped[str] = mapped_column(Text, default="")
+    sound: Mapped[str] = mapped_column(Text, default="")
+    shot: Mapped[dict] = mapped_column(JSON, default=dict)  # framing, angle, movement, lens
+    characters: Mapped[list] = mapped_column(JSON, default=list)  # [{id, name, position}]
+    dialogue: Mapped[list] = mapped_column(JSON, default=list)  # [{id, name, line}]
+
+    SCRIPT_FIELDS = ("setting", "time_of_day", "action", "sound", "shot", "characters", "dialogue")
+
+    def script(self) -> dict:
+        return {k: getattr(self, k) or ({} if k == "shot" else [] if k in ("characters", "dialogue") else "")
+                for k in self.SCRIPT_FIELDS}
+
+
+class Character(Base):
+    """A reusable cast member. Their words are copied into every clip they appear in."""
+
+    __tablename__ = "characters"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(60))
+    appearance: Mapped[str] = mapped_column(Text, default="")  # face, hair, age, build
+    outfit: Mapped[str] = mapped_column(Text, default="")
+    voice: Mapped[str] = mapped_column(Text, default="")  # gender, age, accent, pitch, pace, tone
+    personality: Mapped[str] = mapped_column(Text, default="")  # guides Gemini's script, not the clip prompt
+    image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # under var/characters
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    def sheet(self) -> dict:
+        return {"id": self.id, "name": self.name, "appearance": self.appearance, "outfit": self.outfit,
+                "voice": self.voice, "personality": self.personality, "image_path": self.image_path}
 
 
 class GoogleConnection(Base):

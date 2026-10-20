@@ -10,8 +10,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app.auth import (csrf_token, current_user, hash_password, require_page_user, require_post,
                       verify_password)
-from app.enums import ACTIVE
-from app.models import Generation, User
+from app import script as sc
+from app.enums import ACTIVE, GenStatus
+from app.models import Character, Generation, User
 from app.routes.views import cards_for, settings_context
 
 router = APIRouter()
@@ -31,9 +32,12 @@ def studio(request: Request, prompt_from: int | None = None, user=Depends(requir
             prefill = s.get(Generation, prompt_from)
         if prefill is not None and prefill.user_id != user.id:
             prefill = None
+    with st.db.session() as s:
+        characters = s.scalars(select(Character).where(Character.user_id == user.id).order_by(Character.name)).all()
     return render(request, "studio.html", cards=cards_for(request, user.id),
                   can_generate=st.providers.generator() is not None,
                   drive_connected=st.providers.connection(user.id) is not None,
+                  characters=characters, styles=sc.STYLES,
                   **_prefill(prefill),
                   prefill_aspect=prefill.aspect if prefill else "9:16")
 
@@ -41,12 +45,27 @@ def studio(request: Request, prompt_from: int | None = None, user=Depends(requir
 def _prefill(gen: Generation | None) -> dict:
     """Studio form values for "Use prompt again": one prompt + duration, or the user's own scenes."""
     if gen is None:
-        return {"prefill_prompt": "", "prefill_duration": None, "prefill_scenes": [""], "prefill_manual": False}
+        return {"prefill_prompt": "", "prefill_duration": None, "prefill_scenes": [""], "prefill_manual": False,
+                "prefill_cast": [], "prefill_style": "", "prefill_language": "", "prefill_review": True}
     manual = not gen.planned and len(gen.scenes) > 1
     return {"prefill_prompt": "" if manual else gen.prompt,
             "prefill_duration": max(len(gen.scenes), 1) * 10,
-            "prefill_scenes": [sc.prompt for sc in gen.scenes] if manual else [""],
-            "prefill_manual": manual}
+            "prefill_scenes": [s.action or s.prompt for s in gen.scenes] if manual else [""],
+            "prefill_manual": manual, "prefill_cast": gen.cast_ids or [], "prefill_style": gen.style or "",
+            "prefill_language": gen.language or "", "prefill_review": bool(gen.review)}
+
+
+@router.get("/generations/{gen_id}/script", response_class=HTMLResponse)
+def script_page(gen_id: int, request: Request, user=Depends(require_page_user)):
+    """The script editor: each scene's setting, camera, who is where, what they do and say."""
+    gen, library = request.app.state.service.script(gen_id, user.id)
+    scenes = [s.script() for s in gen.scenes]
+    return render(request, "script.html", g=gen, scenes=scenes, library=library,
+                  editable=gen.status == GenStatus.REVIEW,
+                  prompts=[s.prompt for s in gen.scenes],
+                  options={"framing": sc.FRAMINGS, "angle": sc.ANGLES, "movement": sc.MOVEMENTS, "lens": sc.LENSES,
+                           "position": sc.POSITIONS, "time_of_day": sc.TIMES_OF_DAY, "style": sc.STYLES},
+                  max_words=sc.MAX_SPOKEN_WORDS, max_prompt=sc.MAX_PROMPT)
 
 
 HISTORY_STATUSES = {"all": "All", "ready": "Ready", "in_progress": "In progress", "failed": "Failed",

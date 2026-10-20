@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Script #{{ g.id }} · VideoGeneration{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="script-top">
+    <div>
+      <h1>Script · video #{{ g.id }}</h1>
+      <p class="muted small">{{ g.aspect }} · {{ g.scenes | length }} scene{{ '' if g.scenes | length == 1 else 's' }} of 10 seconds</p>
+    </div>
+    <a class="button secondary" href="/">Back to Studio</a>
+  </div>
+  <p class="prompt">{{ g.prompt }}</p>
+  {% if editable %}
+    <p class="muted small">Check the script and change anything: who is in each shot and where they stand, the camera, the action and the lines. Each scene's clip prompt is built from these fields; open “Clip prompt” to see exactly what Veo will get. Changes are saved as you type.</p>
+  {% else %}
+    <p class="notice small">This script was approved; the clips were made from the prompts shown under each scene.</p>
+  {% endif %}
+  <div class="grid2">
+    <label>Visual style
+      <input type="text" id="script-style" maxlength="300" list="style-options" placeholder="e.g. Cinematic film, natural light"{% if not editable %} disabled{% endif %}>
+      <datalist id="style-options">{% for s in options.style %}<option value="{{ s }}">{% endfor %}</datalist>
+    </label>
+    <label>Spoken language
+      <input type="text" id="script-language" maxlength="40" placeholder="e.g. English, Urdu"{% if not editable %} disabled{% endif %}>
+    </label>
+  </div>
+  {% if not library %}<p class="hint">Tip: <a href="/characters">create characters</a> to keep the same face, outfit and voice in every scene.</p>{% endif %}
+</section>
+
+<div id="script-editor" data-id="{{ g.id }}" data-editable="{{ 'true' if editable else 'false' }}"></div>
+
+{% if editable %}
+<div class="script-actions">
+  <button type="button" class="secondary" id="add-shot">+ Add scene</button>
+  <span class="muted small" id="script-status"></span>
+  <span class="grow"></span>
+  <p class="error" id="script-error" hidden></p>
+  <button type="button" id="approve-script">Approve &amp; generate</button>
+</div>
+{% endif %}
+
+<datalist id="time-options">{% for t in options.time_of_day %}<option value="{{ t }}">{% endfor %}</datalist>
+{% for key in ("framing", "angle", "movement", "lens") %}
+<datalist id="{{ key }}-options">{% for o in options[key] %}<option value="{{ o }}">{% endfor %}</datalist>
+{% endfor %}
+<script type="application/json" id="script-data">{{ {"scenes": scenes, "prompts": prompts, "style": g.style or "", "language": g.language or "", "library": library | map(attribute="id") | list, "names": library | map(attribute="name") | list, "positions": options.position, "max_words": max_words, "max_prompt": max_prompt} | tojson }}</script>
+{% endblock %}

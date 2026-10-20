@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   clip_path TEXT,
   kind TEXT NOT NULL DEFAULT 'clip',         -- clip | plan (Gemini writes scene prompts)
   scene_count INTEGER,                       -- plan jobs: how many scene prompts to write
-  result TEXT,                               -- plan jobs: JSON list of scene prompts
+  result TEXT,                               -- plan jobs: JSON list of script scenes
+  options TEXT,                              -- plan jobs: JSON {cast, style, language}
   cancel_requested INTEGER NOT NULL DEFAULT 0,
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL
@@ -44,8 +45,8 @@ class JobStore:
             self._conn.executescript(SCHEMA)
             have = {r["name"] for r in self._conn.execute("PRAGMA table_info(jobs)")}
             for col, ddl in (("kind", "TEXT NOT NULL DEFAULT 'clip'"), ("scene_count", "INTEGER"),
-                             ("result", "TEXT")):
-                if col not in have:  # databases made before plan jobs existed
+                             ("result", "TEXT"), ("options", "TEXT")):
+                if col not in have:  # databases made before plan jobs (or their options) existed
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
         path.chmod(0o600)
 
@@ -55,12 +56,14 @@ class JobStore:
 
     # ---- jobs --------------------------------------------------------------
     def create(self, prompt: str, aspect: str, ref: str | None, images: list[str] | None = None,
-               job_id: str | None = None, kind: str = "clip", scene_count: int | None = None) -> str:
+               job_id: str | None = None, kind: str = "clip", scene_count: int | None = None,
+               options: dict | None = None) -> str:
         jid = job_id or uuid.uuid4().hex[:16]
         now = time.time()
-        self._x("INSERT INTO jobs (id, ref, prompt, aspect, images, status, kind, scene_count, created_at, updated_at) "
-                "VALUES (?,?,?,?,?, 'queued', ?, ?, ?, ?)",
-                (jid, ref, prompt, aspect, json.dumps(images or []), kind, scene_count, now, now))
+        self._x("INSERT INTO jobs (id, ref, prompt, aspect, images, status, kind, scene_count, options, created_at, "
+                "updated_at) VALUES (?,?,?,?,?, 'queued', ?, ?, ?, ?, ?)",
+                (jid, ref, prompt, aspect, json.dumps(images or []), kind, scene_count,
+                 json.dumps(options) if options else None, now, now))
         self.event(jid, "created")
         return jid
 
@@ -72,6 +75,7 @@ class JobStore:
         d["images"] = json.loads(d["images"])
         d["warnings"] = json.loads(d["warnings"])
         d["result"] = json.loads(d["result"]) if d.get("result") else None
+        d["options"] = json.loads(d["options"]) if d.get("options") else {}
         return d
 
     def update(self, jid: str, **fields) -> None:

@@ -8,6 +8,7 @@ class Aspect(StrEnum):
 
 class GenStatus(StrEnum):
     PLANNING = "PLANNING"  # Gemini (chat) is writing the scene prompts from the user's one prompt
+    REVIEW = "REVIEW"  # the script is drafted; waits for the user to edit and approve it
     GENERATING = "GENERATING"  # sent to the worker, waiting for the clip
     SAVING = "SAVING"  # clip downloaded, uploading to Drive
     READY = "READY"

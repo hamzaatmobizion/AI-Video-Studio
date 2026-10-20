@@ -78,9 +78,10 @@ def create_app(settings: Settings | None = None, transport: httpx.BaseTransport 
     async def _user_error(request: Request, exc: UserError):
         return JSONResponse({"detail": exc.message}, status_code=exc.status)
 
-    from app.routes import api, pages, settings_routes
+    from app.routes import api, characters, pages, settings_routes
 
     app.include_router(pages.router)
+    app.include_router(characters.router)
     app.include_router(api.router)
     app.include_router(settings_routes.router)
     return app

@@ -1,6 +1,9 @@
 """Generation lifecycle: [plan] → for each scene, submit → poll worker → download; then join → save → READY.
 
-Planning: when the user gives one prompt and a length, Gemini (chat) first writes one prompt per scene.
+Planning: when the user gives one prompt and a length, Gemini (chat) first writes a script: per scene the
+setting, camera, who is where and what they say (app/script.py). Each clip prompt is compiled from that script,
+with every library character described in their own words. With `review`, the video waits at REVIEW until the
+user has edited and approved the script.
 
 Scenes go to the worker one at a time, so a Gemini limit never fails a queue of them: the generation is
 PAUSED with its finished clips kept, and continues only when the user clicks Resume on that video.
@@ -19,7 +22,9 @@ from sqlalchemy import func, select
 from app.enums import ACTIVE, GenStatus
 from app.factories import Providers
 from app.interfaces import GeneratorError, StorageError
-from app.models import Generation, GoogleConnection, Scene, utcnow
+from app.models import Character, Generation, GoogleConnection, Scene, utcnow
+from app.script import (MAX_PROMPT, cast_sheet, compile_prompt, normalize_scene, scene_images, scene_warnings,
+                        clean_text)
 from app.video_join import JoinError, join_clips
 
 log = logging.getLogger("app.generation")
@@ -30,11 +35,12 @@ HISTORY_FILTERS = {
     "ready": [GenStatus.READY],
     "failed": [GenStatus.FAILED],
     "cancelled": [GenStatus.CANCELLED],
-    "in_progress": [GenStatus.PLANNING, GenStatus.GENERATING, GenStatus.SAVING, GenStatus.SAVE_FAILED,
-                    GenStatus.PAUSED],
+    "in_progress": [GenStatus.PLANNING, GenStatus.REVIEW, GenStatus.GENERATING, GenStatus.SAVING,
+                    GenStatus.SAVE_FAILED, GenStatus.PAUSED],
 }
 MAX_UPLOAD_ATTEMPTS = 10
 UPLOAD_RETRY = timedelta(seconds=30)
+MAX_SCENES = 12
 
 
 class UserError(Exception):
@@ -48,7 +54,7 @@ class UserError(Exception):
 
 def drive_name(gen: Generation, when: datetime) -> tuple[str, str]:
     """(subfolder, filename) → <YYYY-MM>/<date> <prompt> (<id>).mp4"""
-    text = gen.scenes[0].prompt if gen.scenes and not gen.planned else gen.prompt
+    text = gen.scenes[0].prompt if gen.scenes and not gen.planned and not gen.scenes[0].action else gen.prompt
     words = re.sub(r"[\\/:*?\"<>|\n\r\t]+", " ", text).strip()
     words = re.sub(r"\s+", " ", words)[:60].rstrip() or "video"
     return when.strftime("%Y-%m"), f"{when:%Y-%m-%d} {words} ({gen.id}).mp4"
@@ -62,21 +68,34 @@ class GenerationService:
 
     # ---- user actions ----------------------------------------------------
     def create(self, user_id: int, scenes: list[str], aspect: str, images: list[tuple[str, bytes]],
-               plan: int | None = None) -> int:
+               plan: int | None = None, cast_ids: list[int] | None = None, style: str = "", language: str = "",
+               review: bool = False) -> int:
         """`scenes`: one prompt per ~10 s clip, already validated. With `plan` = N, `scenes` is the user's
-        one prompt and Gemini first writes N scene prompts from it. `images` validated by content: [(ext, bytes)]."""
+        one prompt and Gemini first writes an N-scene script from it. `images` validated by content: [(ext, bytes)].
+        `cast_ids`: the user's characters to use; `review`: wait for the user to approve the script."""
         if self.p.generator() is None:
             raise UserError("Video generation is off: set WORKER_URL and WORKER_API_KEY in .env.", 503)
         if self.p.storage(user_id) is None:
             raise UserError("Connect Google Drive in Settings first, so the video has somewhere to go.", 503)
-        if plan:
-            prompt, scenes = scenes[0], [""] * plan
-        else:
-            prompt = scenes[0] if len(scenes) == 1 else "\n\n".join(f"Scene {i}: {p}" for i, p in enumerate(scenes, 1))
+        style, language = clean_text(style, 300), clean_text(language, 40)
         with self.db.session() as s:
+            library = self._library(s, user_id)
+            known = {c["id"] for c in library}
+            cast_ids = list(dict.fromkeys(cast_ids or []))
+            if any(cid not in known for cid in cast_ids):
+                raise UserError("One of the chosen characters doesn't exist any more. Reload the page.")
+            cast = [c for c in library if c["id"] in cast_ids]
+            if plan:
+                prompt, rows = scenes[0], [Scene(position=i, prompt="") for i in range(1, plan + 1)]
+            else:
+                prompt = scenes[0] if len(scenes) == 1 else "\n\n".join(f"Scene {i}: {p}" for i, p in enumerate(scenes, 1))
+                rows = [self._scene_row(i, {"action": text, "characters": [{"id": c["id"]} for c in cast]}, cast,
+                                        style, language, compile_now=not review)
+                        if cast or style or review else Scene(position=i, prompt=text)
+                        for i, text in enumerate(scenes, 1)]
             gen = Generation(user_id=user_id, prompt=prompt, aspect=aspect, ref_images=[], status=GenStatus.GENERATING,
                              poll_errors=0, upload_attempts=0, dismissed=False, planned=bool(plan),
-                             scenes=[Scene(position=i, prompt=p) for i, p in enumerate(scenes, 1)])
+                             review=review, cast_ids=cast_ids, style=style, language=language, scenes=rows)
             s.add(gen)
             s.flush()
             paths = []
@@ -100,6 +119,10 @@ class GenerationService:
                 gen.scenes.append(Scene(position=1, prompt=gen.prompt))
             unplanned = any(not sc.prompt for sc in gen.scenes)
             pending = _next_scene(gen) is not None
+            drafted = gen.review and any(sc.action or sc.dialogue for sc in gen.scenes)
+            if unplanned and drafted:  # the script is written; the user approves it, then the clips are made
+                gen.status, gen.worker_job_id, gen.submitted_at = GenStatus.REVIEW, None, None
+                return
         if unplanned:
             self._submit_plan(gen_id)
         elif pending:
@@ -115,7 +138,10 @@ class GenerationService:
             try:
                 if gen_client is None:
                     raise GeneratorError("Video generation is off: set WORKER_URL and WORKER_API_KEY.", final=True)
-                images = [Path(p) for p in gen.ref_images if Path(p).exists()]
+                paths = gen.ref_images
+                if scene.characters:  # the pictures of who is in this shot first, then the video's own uploads
+                    paths = scene_images(scene.script(), self._library(s, gen.user_id), gen.ref_images)
+                images = [Path(p) for p in paths if Path(p).exists()]
                 job_id = gen_client.submit(scene.prompt, gen.aspect,
                                            f"gen-{gen.id}-s{scene.position}-{uuid.uuid4().hex[:6]}", images)
             except GeneratorError as e:
@@ -139,8 +165,9 @@ class GenerationService:
             try:
                 if client is None:
                     raise GeneratorError("Video generation is off: set WORKER_URL and WORKER_API_KEY.", final=True)
+                cast = [cast_sheet(c) for c in self._library(s, gen.user_id) if c["id"] in (gen.cast_ids or [])]
                 job_id = client.plan(gen.prompt, gen.aspect, f"gen-{gen.id}-plan-{uuid.uuid4().hex[:6]}",
-                                     len(gen.scenes))
+                                     len(gen.scenes), cast=cast, style=gen.style or "", language=gen.language or "")
             except GeneratorError as e:
                 pause = _worker_pause(client)
                 if pause:
@@ -179,7 +206,7 @@ class GenerationService:
                     storage.delete(gen.drive_file_id)
                 except StorageError as e:
                     raise UserError(e.message, 502) from e
-            elif gen.status not in (GenStatus.SAVING, GenStatus.SAVE_FAILED, GenStatus.PAUSED):
+            elif gen.status not in (GenStatus.SAVING, GenStatus.SAVE_FAILED, GenStatus.PAUSED, GenStatus.REVIEW):
                 raise UserError("This video can't be cancelled now.")
             self._drop_temp(gen)
             self._drop_scenes(gen)
@@ -305,15 +332,21 @@ class GenerationService:
                     gen.status = GenStatus.FAILED
                     gen.error = f"Gemini couldn't plan the scenes: {st.error or 'no reason given.'}"
                 return
-            prompts = [p.strip() for p in (st.scenes or []) if isinstance(p, str) and p.strip()]
-            if len(prompts) < len(gen.scenes):
+            items = [x for x in (st.scenes or []) if isinstance(x, dict) or (isinstance(x, str) and x.strip())]
+            if len(items) < len(gen.scenes):
                 gen.status, gen.error = GenStatus.FAILED, "Gemini didn't write all the scenes. Retry it."
                 return
-            for scene, text in zip(gen.scenes, prompts):
-                scene.prompt = text[:2000]
+            cast = [c for c in self._library(s, gen.user_id) if c["id"] in (gen.cast_ids or [])]
+            for scene, item in zip(gen.scenes, items):
+                sc = normalize_scene(item, cast)
+                for key, value in sc.items():
+                    setattr(scene, key, value)
+                scene.prompt = "" if gen.review else compile_prompt(sc, cast, gen.style, gen.language)[:MAX_PROMPT]
             gen.worker_job_id, gen.submitted_at, gen.poll_errors = None, None, 0
-            gen.status = GenStatus.GENERATING
+            gen.status = GenStatus.REVIEW if gen.review else GenStatus.GENERATING
             log.info("generation %s planned", gen_id)
+            if gen.review:
+                return
         self._continue(gen_id)
 
     def _check(self, gen: Generation, client):
@@ -452,6 +485,64 @@ class GenerationService:
             gen.status, gen.error = GenStatus.READY, None
             self._drop_temp(gen)
             log.info("generation %s ready", gen_id)
+
+    # ---- script ----------------------------------------------------------
+    def script(self, gen_id: int, user_id: int) -> tuple[Generation, list[dict]]:
+        """The generation (with its scenes) and the user's character library, for the script editor."""
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            return gen, self._library(s, user_id)
+
+    def save_script(self, gen_id: int, user_id: int, scenes: list, style: str = "", language: str = "",
+                    approve: bool = False) -> list[dict]:
+        """Store the edited script of a video at REVIEW and return each scene's compiled prompt and warnings.
+        With `approve`, the prompts are fixed and the clips start."""
+        if not isinstance(scenes, list) or not 1 <= len(scenes) <= MAX_SCENES:
+            raise UserError(f"A script has 1 to {MAX_SCENES} scenes.")
+        style, language = clean_text(style, 300), clean_text(language, 40)
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            if gen.status != GenStatus.REVIEW:
+                raise UserError("This script can't be changed now.")
+            library = self._library(s, user_id)
+            script = [normalize_scene(raw, library) for raw in scenes]
+            prompts = [compile_prompt(sc, library, style, language) for sc in script]
+            if approve:
+                for i, (sc, prompt) in enumerate(zip(script, prompts), 1):
+                    if not (sc["action"] or sc["dialogue"]):
+                        raise UserError(f"Scene {i} is empty: describe what happens in it.")
+                    if len(prompt) > MAX_PROMPT:
+                        raise UserError(f"Scene {i}'s clip prompt is {len(prompt):,} characters; "
+                                        f"shorten it to under {MAX_PROMPT:,}.")
+            gen.style, gen.language = style, language
+            used = [p["id"] for sc in script for p in sc["characters"] + sc["dialogue"] if p["id"]]
+            gen.cast_ids = list(dict.fromkeys([*(gen.cast_ids or []), *used]))
+            while len(gen.scenes) > len(script):
+                gen.scenes.pop()
+            for i, (sc, prompt) in enumerate(zip(script, prompts), 1):
+                if i > len(gen.scenes):
+                    gen.scenes.append(Scene(position=i, prompt=""))
+                row = gen.scenes[i - 1]
+                for key, value in sc.items():
+                    setattr(row, key, value)
+                row.prompt = prompt if approve else ""
+            if approve:
+                gen.status, gen.error = GenStatus.GENERATING, None
+            out = [{"prompt": p, "length": len(p), "warnings": scene_warnings(sc, p)} for sc, p in zip(script, prompts)]
+        if approve:
+            log.info("generation %s script approved (%d scenes)", gen_id, len(script))
+            self._continue(gen_id)
+        return out
+
+    def _scene_row(self, position: int, raw: dict, cast: list[dict], style: str, language: str,
+                   compile_now: bool) -> Scene:
+        sc = normalize_scene(raw, cast)
+        prompt = compile_prompt(sc, cast, style, language)[:MAX_PROMPT] if compile_now else ""
+        return Scene(position=position, prompt=prompt, **sc)
+
+    def _library(self, s, user_id: int) -> list[dict]:
+        rows = s.scalars(select(Character).where(Character.user_id == user_id).order_by(Character.name)).all()
+        return [c.sheet() for c in rows]
 
     # ---- helpers ---------------------------------------------------------
     def _get(self, s, gen_id: int, user_id: int) -> Generation:

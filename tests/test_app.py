@@ -699,7 +699,7 @@ def test_one_prompt_gemini_plans_scenes_then_they_are_made(app, authed, drive_co
     g = gen(app, gid)
     assert g.status == GenStatus.PLANNING and g.planned and len(g.scenes) == 3
     assert net.worker.submits[0]["path"] == "/plans" and b'"scenes":3' in net.worker.submits[0]["body"]
-    assert "Gemini is writing 3 scenes" in authed.get("/api/generations").json()["cards"][0]["html"]
+    assert "Gemini is writing the script (3 scenes)" in authed.get("/api/generations").json()["cards"][0]["html"]
 
     net.worker.jobs["job1"].update(status="done", scenes=["dawn at the lighthouse", "noon storm", "night beam"])
     tick(app)

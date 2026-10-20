@@ -4,6 +4,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from app.auth import require_api_user, require_post
@@ -55,10 +56,17 @@ def list_generations(request: Request, user=Depends(require_api_user)):
 @router.post("/generations")
 async def create_generation(request: Request, user=Depends(require_post), prompt: str = Form(""),
                             duration: str = Form(""), scenes: list[str] = Form(default=[]),
-                            aspect: str = Form("9:16"), images: list[UploadFile] = File(default=[])):
-    """Either one `prompt` + `duration` (Gemini writes the scenes), or `scenes` written by the user.
-    An empty `duration` (Default) takes the length from the prompt, else 10 seconds."""
+                            aspect: str = Form("9:16"), images: list[UploadFile] = File(default=[]),
+                            cast: list[str] = Form(default=[]), style: str = Form(""), language: str = Form(""),
+                            review: str = Form("")):
+    """Either one `prompt` + `duration` (Gemini writes the script), or `scenes` written by the user.
+    An empty `duration` (Default) takes the length from the prompt, else 10 seconds.
+    `cast`: ids of the user's characters to use. `review`: stop for the user to edit and approve the script."""
     plan = None
+    review = review.strip().lower() in ("1", "on", "true", "yes")
+    if not all(c.strip().isdigit() for c in cast):
+        raise UserError("Pick characters from the list.")
+    cast_ids = [int(c) for c in cast]
     if not scenes:
         if duration.strip().lower() in ("", "auto"):
             duration = duration_from_prompt(prompt) or SCENE_SECONDS
@@ -73,8 +81,9 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
         if len(prompt) > MAX_IDEA:
             raise UserError(f"Keep the prompt under {MAX_IDEA:,} characters.")
         count = duration // SCENE_SECONDS
-        # Gemini's chat writes the clip prompts for a long video, and condenses a long prompt for one clip.
-        plan = count if count > 1 or len(prompt) > MAX_PROMPT else None
+        # Gemini's chat writes the script for a long video, condenses a long prompt for one clip, and
+        # drafts it as a script whenever there is a cast to direct or a script to review.
+        plan = count if count > 1 or len(prompt) > MAX_PROMPT or cast_ids or review else None
         scenes = [prompt]
     else:
         scenes = [s.strip() for s in scenes]
@@ -99,8 +108,24 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
         if kind is None:
             raise UserError(f"{f.filename} isn't a JPG, PNG or WebP image.")
         checked.append((kind, data))
-    gen_id = request.app.state.service.create(user.id, scenes, aspect, checked, plan=plan)
-    return {"id": gen_id}
+    gen_id = request.app.state.service.create(user.id, scenes, aspect, checked, plan=plan, cast_ids=cast_ids,
+                                              style=style, language=language, review=review)
+    return {"id": gen_id, "review": review}
+
+
+class ScriptBody(BaseModel):
+    scenes: list
+    style: str = ""
+    language: str = ""
+    approve: bool = False
+
+
+@router.post("/generations/{gen_id}/script")
+def save_script(gen_id: int, body: ScriptBody, request: Request, user=Depends(require_post)):
+    """Save the edited script (and get each scene's clip prompt back); `approve` starts the clips."""
+    scenes = request.app.state.service.save_script(gen_id, user.id, body.scenes, body.style, body.language,
+                                                   approve=body.approve)
+    return {"ok": True, "scenes": scenes}
 
 
 @router.post("/generations/{gen_id}/{action}")

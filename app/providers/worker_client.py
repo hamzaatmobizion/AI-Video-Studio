@@ -51,9 +51,13 @@ class WorkerClient:
             raise GeneratorError("The video worker didn't return a job id.", final=True)
         return str(job_id)
 
-    def plan(self, prompt: str, aspect: str, ref: str, scenes: int) -> str:
-        """Ask the worker to have Gemini split `prompt` into `scenes` clip prompts; returns a job id."""
-        r = self._request("POST", "/plans", json={"prompt": prompt, "aspect": aspect, "ref": ref, "scenes": scenes})
+    def plan(self, prompt: str, aspect: str, ref: str, scenes: int, cast: list[dict] | None = None,
+             style: str = "", language: str = "") -> str:
+        """Ask the worker to have Gemini write a `scenes`-scene script from `prompt`, using `cast`
+        ([{name, appearance, outfit, voice, personality}]); returns a job id."""
+        body = {"prompt": prompt, "aspect": aspect, "ref": ref, "scenes": scenes}
+        body.update({k: v for k, v in (("cast", cast), ("style", style), ("language", language)) if v})
+        r = self._request("POST", "/plans", json=body)
         if r.status_code >= 400:
             raise GeneratorError(_detail(r), final=True)
         job_id = r.json().get("job_id")

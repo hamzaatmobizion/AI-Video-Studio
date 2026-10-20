@@ -35,6 +35,10 @@ class Settings(BaseSettings):
         return self.VAR_DIR / "refs"
 
     @property
+    def characters_dir(self) -> Path:
+        return self.VAR_DIR / "characters"
+
+    @property
     def google_redirect_uri(self) -> str:
         return self.PUBLIC_BASE_URL.rstrip("/") + "/auth/google/callback"
 

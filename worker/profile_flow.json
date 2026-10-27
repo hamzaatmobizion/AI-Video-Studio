@@ -1,0 +1,14 @@
+{
+  "name": "flow-veo-lite",
+  "provider": "flow_browser",
+  "description": "Google Flow (labs.google), Veo 3.1 - Lite. One 8-second clip per job, paid with Flow credits.",
+  "max_clip_duration": 8,
+  "min_clip_duration": 8,
+  "aspects": ["9:16", "16:9"],
+  "resolution": "1280x720",
+  "fps": 24,
+  "has_audio": true,
+  "model_label": "Veo 3.1 - Lite",
+  "image_model_label": "Nano Banana 2.1",
+  "_note": "model_label / image_model_label are the entries picked in Flow's model menu for clips / first-frame stills (\"Lock characters\"); FLOW_MODEL_LABEL and FLOW_IMAGE_MODEL_LABEL in .env override them."
+}

@@ -26,7 +26,7 @@ SHOT_KEYS = ("framing", "angle", "movement", "lens")
 SHOT_OPTIONS = {"framing": FRAMINGS, "angle": ANGLES, "movement": MOVEMENTS, "lens": LENSES}
 
 MAX_PROMPT = 2000  # one clip prompt, as Gemini's video tool takes it
-MAX_SPOKEN_WORDS = 25  # about what fits in one 10-second clip
+MAX_SPOKEN_WORDS = 25  # about what fits in one 10-second clip (words_per_clip for other lengths)
 MAX_IN_SHOT = 6
 MAX_LINES = 8
 MAX_SCENE_IMAGES = 3  # reference pictures attached to one clip
@@ -36,7 +36,7 @@ CHARACTER_LIMITS = {"name": 60, "appearance": 1000, "outfit": 200, "voice": 150,
                     "never": 200}
 # The story bible Gemini writes with the script: what every scene shares. `characters` are the ones it invented.
 BIBLE_LIMITS = {"title": 120, "style": 300, "palette": 200, "setting": 400, "motif": 200}
-BIBLE_CHARACTER_LIMITS = {"name": 60, "look": 400, "never": 200}
+BIBLE_CHARACTER_LIMITS = {"name": 60, "look": 400, "never": 200, "voice": 150}
 # What the prompt itself says about a picked character; it wins over their saved fields, one field at a time
 BIBLE_CAST_LIMITS = {"name": 60, "age": 80, "look": 300, "outfit": 200, "voice": 150}
 MAX_AVOID = 300  # the "Avoid:" line of one clip prompt
@@ -71,7 +71,16 @@ GESTURE = re.compile(r"\b(gestur\w*|point\w*|wav\w*|clap\w*|thumbs?[- ]up|beckon
 REALISM = ("Realistic physics and natural anatomy: correct hands and fingers, feet planted on the ground, natural "
            "motion speed, stable background.")
 ANIMATED_REALISM = "Consistent proportions and smooth, natural motion."
-NO_TEXT = "No on-screen text, captions, subtitles, logos or watermarks."
+NO_TEXT = "No on-screen text, captions, subtitles, logos or watermarks; no written words on signs, flags or objects."
+NO_TEXT_AVOID = "lettering on signs, flags or banners"
+# Places where Veo paints a name or a sign unasked ("Biirya…" on a biryani stall's bunting)
+SIGNAGE_PLACES = re.compile(r"\b(shops?|stalls?|stores?|markets?|bazaars?|restaurants?|caf[eé]s?|dhabas?|carts?|"
+                            r"streets?|bunting|flags?|banners?|kiosks?|vendors?|hotels?|stations?)\b", re.I)
+# An animated video: a person with no reference picture is drawn just as cartoon-like as the pictured ones
+SAME_STYLE = "Everyone in the same {style} style, none more realistic."
+# Whose line is whose: Veo otherwise lets the wrong mouth say a line, or two people say it together
+SPEAKERS = "Each line is said only by the person named before it, in their voice; nobody else says or mouths it."
+SPEAKERS_IN_ORDER = "Lines in the order written."
 # Each clip would make up its own tune, so the music would jump at every cut of a multi-scene video.
 NO_MUSIC = "No background music: only the spoken lines and natural sound effects."
 MUSIC = re.compile(r"\b(music\w*|songs?|sings?|singing|melod\w*|soundtrack|beat|band|instrumental)\b", re.I)
@@ -84,6 +93,9 @@ ANIMATED = re.compile(r"\b(anim\w*|anime|cartoon\w*|pixar|3d|clay\w*|stop[- ]mot
 # The action asks for words on screen: a sign, a title, or text in quotes.
 ON_SCREEN_TEXT = re.compile(r"\b(text|signs?|signboard|titles?|captions?|banners?|posters?|logos?|written|"
                             r"writing|reads|labels?)\b|(^|\s)['\"][^'\"]{2,}['\"]", re.I)
+# A spoken line in the action ("Billa asks: "…""): words said aloud, not words on screen
+SPOKEN_LINE = re.compile(r"\b(?:says|said|asks|asked|replies|replied|answers|shouts|yells|whispers|exclaims|adds|cries|"
+                         r"calls|screams|mutters|sings|tells \w+)\s*:?\s*['\"“][^'\"”]{2,}['\"”]", re.I)
 
 
 def clean_text(value, limit: int, multiline: bool = False) -> str:
@@ -231,6 +243,17 @@ def aspect_from_prompt(prompt: str) -> str:
     return min(found)[2] if found else ""
 
 
+def _style_name(style: str) -> str:
+    """The video's style as a short name for SAME_STYLE ("Pixar-style, cartoon" → "Pixar-style cartoon")."""
+    name = re.sub(r"[.;]+.*$", "", (style or "").strip()).replace(", ", " ").strip()
+    return name[:60] if name else "cartoon"
+
+
+def wearing(outfit: str) -> str:
+    """An outfit as said after "wearing": a script's own "wearing a white kameez" isn't doubled."""
+    return re.sub(r"^\s*(?:is\s+)?wearing\s+", "", outfit or "", flags=re.I).strip()
+
+
 def animated(scene: dict, style: str = "") -> bool:
     """True for a cartoon or animated look, named in the style or in the scene itself."""
     return bool(ANIMATED.search(" ".join([style, scene.get("setting") or "", scene.get("action") or ""])))
@@ -239,8 +262,11 @@ def animated(scene: dict, style: str = "") -> bool:
 def quality_rules(scene: dict, style: str = "", music: bool = True) -> str:
     """The closing line of every clip prompt: one shot, the same people throughout, believable motion, no text,
     and (without `music`) no music, unless the scene itself asks for it."""
-    rules = [ONE_SHOT, CONTINUITY, ANIMATED_REALISM if animated(scene, style) else REALISM]
-    if not ON_SCREEN_TEXT.search(scene.get("action") or ""):
+    cartoon = animated(scene, style)
+    rules = [ONE_SHOT, CONTINUITY, ANIMATED_REALISM if cartoon else REALISM]
+    if cartoon and len(scene.get("characters") or []) > 1:
+        rules.append(SAME_STYLE.format(style=_style_name(style)))
+    if not ON_SCREEN_TEXT.search(SPOKEN_LINE.sub(" ", scene.get("action") or "")):
         rules.append(NO_TEXT)
     if not music and not MUSIC.search(" ".join([scene.get("action") or "", scene.get("sound") or ""])):
         rules.append(NO_MUSIC)
@@ -356,14 +382,17 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         # what the prompt says about a pictured character, after their picture (a new outfit replaces the picture's)
         said = "".join(x for x in (f", age: {told['age']}" if told.get("age") else "",
                                    f", {_fit(told['look'], 200)}" if told.get("look") else "",
-                                   f", wearing {told['outfit']}" if told.get("outfit") else ""))
+                                   f", wearing {wearing(told['outfit'])}" if told.get("outfit") else ""))
         locked = f"; always {sheet['locked'].rstrip(' .')}" if sheet.get("locked") else ""
         avoid.append(sheet.get("never") or "")
         look = "; ".join(x.strip(" .,;") for x in (sheet.get("appearance"), sheet.get("outfit"), sheet.get("look"))
                          if x and x.strip(" .,;"))
         if sheet.get("image_path") and pictured < MAX_SCENE_IMAGES:  # numbered as scene_images attaches them
             pictured += 1  # the picture carries their look, not their saved words (which could pull away from it)
-            same = "face, hair and style" if "outfit" in told else "face, hair, outfit and style"
+            # what the prompt describes (age or look → hair and build; outfit) comes from the prompt, not the picture
+            kept = ["face", *(["hair"] if not (told.get("age") or told.get("look")) else []),
+                    *(["outfit"] if not told.get("outfit") else []), "style"]
+            same = ", ".join(kept[:-1]) + " and " + kept[-1]
             if turns:  # the picture fixes who they are, not which way they face
                 people.append(_sentence(f"{p['name']}{where}: same person, {same.replace('face, ', '')} as reference "
                                         f"image {pictured}{said}; the picture only shows them from the front, so "
@@ -383,15 +412,20 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         tail.append(TURN_NOTE)
     lang = f" in {language}" if language else ""
     for d in scene.get("dialogue") or []:
-        voice = merged_sheet(by_id[d["id"]], bible).get("voice") if d.get("id") in by_id else ""
+        voice = merged_sheet(by_id[d["id"]], bible).get("voice") if d.get("id") in by_id \
+            else (invented.get(d["name"].lower()) or {}).get("voice") or ""
         who = d["name"] + (f" (voice: {voice})" if voice else "")
         tail.append(f"{who} says{lang}: '{d['line']}'")
     if scene.get("sound"):
         tail.append(f"Sound: {_sentence(scene['sound'])}")
     rules = quality_rules(scene, style, music)
     if scene.get("dialogue"):
+        speakers = {d["name"] for d in scene["dialogue"]}
         tail.append("Only the named characters speak, clearly and in sync with their lips."
-                    + ("" if NO_TEXT in rules else " No subtitles."))
+                    + ("" if NO_TEXT in rules else " No subtitles.") + " " + SPEAKERS
+                    + (" " + SPEAKERS_IN_ORDER if len(scene["dialogue"]) > 1 and len(speakers) > 1 else ""))
+    if NO_TEXT in rules and SIGNAGE_PLACES.search(" ".join([scene.get("setting") or "", action])):
+        avoid.append(NO_TEXT_AVOID)
     if _avoid(avoid):
         tail.append(_avoid(avoid))
     tail.append(rules)
@@ -404,8 +438,11 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
 
 def still_prompt(scene: dict, cast: list[dict], style: str = "", bible: dict | None = None) -> str:
     """What a scene's locked first frame shows: the look, the place, the camera, who is where (the pictured ones by
-    their picture's number, as scene_images orders them) and the first moment of the action."""
+    their picture's number, as scene_images orders them) and the first moment of the action. Everyone is described
+    as the clip prompt describes them (compile_prompt): what the prompt says about a person (age, look, outfit) wins
+    over their saved character and picture, so the frame and the clip agree and nothing changes mid-clip."""
     by_id, bible = {c["id"]: c for c in cast}, bible or {}
+    invented = {c["name"].lower(): c for c in bible.get("characters") or []}
     lines = [_sentence(x) for x in (style or bible.get("style") or "",
                                     f"Colour palette: {bible['palette']}" if bible.get("palette") else "") if x]
     place = ", ".join(x.rstrip(" .,;") for x in (scene.get("setting"), scene.get("time_of_day")) if x)
@@ -416,14 +453,21 @@ def still_prompt(scene: dict, cast: list[dict], style: str = "", bible: dict | N
         lines.append(_sentence(f"{framing} shot" if "shot" not in framing else framing))
     people, pictured = [], 0
     for p in scene.get("characters") or []:
-        sheet = by_id.get(p.get("id")) or {}
+        sheet = merged_sheet(by_id[p["id"]], bible) if p.get("id") in by_id else invented.get(p["name"].lower()) or {}
         where = f", {p['position']}" if p.get("position") else ""
+        locked = f"; always {sheet['locked'].rstrip(' .')}" if sheet.get("locked") else ""
         if sheet.get("image_path") and pictured < MAX_SCENE_IMAGES:
             pictured += 1
-            people.append(_sentence(f"{p['name']}{where} (picture {pictured})"))
+            told = sheet.get("from_prompt") or {}
+            said = "".join(x for x in (f", age: {told['age']}" if told.get("age") else "",
+                                       f", {_fit(told['look'], 200)}" if told.get("look") else "",
+                                       f", wearing {wearing(told['outfit'])} (not the clothes in the picture)"
+                                       if told.get("outfit") else ""))
+            people.append(_sentence(f"{p['name']}{where} (picture {pictured}){said}{locked}"))
         else:
-            look = "; ".join(x for x in (sheet.get("appearance"), sheet.get("outfit")) if x)
-            people.append(_sentence(p["name"] + (f" ({look})" if look else "") + where))
+            look = "; ".join(x.strip(" .,;") for x in (sheet.get("appearance"), sheet.get("outfit"), sheet.get("look"))
+                             if x and x.strip(" .,;"))
+            people.append(_sentence(p["name"] + (f" ({look})" if look else "") + where + locked))
     if people:
         lines.append("Characters: " + " ".join(people))
     first = re.split(r"(?<=[.!?])\s", (scene.get("action") or "").strip(), maxsplit=1)[0]
@@ -442,15 +486,21 @@ def busy_hands(scene: dict) -> bool:
     return bool(BOTH_HANDS.search(action) and GESTURE.search(action))
 
 
-def scene_warnings(scene: dict, prompt: str, cast: list[dict] = ()) -> list[str]:
+def words_per_clip(seconds: int = 10) -> int:
+    """About how many spoken words fit in a `seconds`-long clip: 25 in Gemini's 10 s, 20 in Flow's 8 s."""
+    return round(MAX_SPOKEN_WORDS * seconds / 10)
+
+
+def scene_warnings(scene: dict, prompt: str, cast: list[dict] = (), seconds: int = 10) -> list[str]:
     out = []
     if busy_hands(scene):
         out.append("Someone holds something in both hands and also points, waves or gestures: the video may grow "
                    "a third hand. Say which hand does what (e.g. 'holds the roti in her left hand, points with her "
                    "right').")
     words = spoken_words(scene)
-    if words > MAX_SPOKEN_WORDS:
-        out.append(f"{words} spoken words: about {MAX_SPOKEN_WORDS} fit in 10 seconds, so lines may be cut short.")
+    if words > words_per_clip(seconds):
+        out.append(f"{words} spoken words: about {words_per_clip(seconds)} fit in {seconds} seconds, so lines may be "
+                   "cut short.")
     if len(prompt) > MAX_PROMPT:
         out.append(f"The clip prompt is {len(prompt):,} characters and Gemini takes {MAX_PROMPT:,}, so the end of the "
                    f"action (about {len(prompt) - MAX_PROMPT + 1:,} characters) is cut when it's sent. Shorten the "

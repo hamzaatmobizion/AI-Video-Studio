@@ -13,11 +13,13 @@ def render_card(request: Request, gen: Generation) -> str:
     return tpl.render(g=gen, active=gen.status in ACTIVE)
 
 
-def cards_for(request: Request, user_id: int) -> list[dict]:
+def cards_for(request: Request, user_id: int, provider: str | None = None) -> list[dict]:
+    """The user's latest videos as cards; with `provider`, only those made there (each screen shows its own)."""
+    cond = [Generation.user_id == user_id, Generation.dismissed.is_(False)]
+    if provider:
+        cond.append(Generation.provider == provider)
     with request.app.state.db.session() as s:
-        gens = s.scalars(select(Generation)
-                         .where(Generation.user_id == user_id, Generation.dismissed.is_(False))
-                         .order_by(Generation.id.desc()).limit(50)).all()
+        gens = s.scalars(select(Generation).where(*cond).order_by(Generation.id.desc()).limit(50)).all()
     out = []
     for g in gens:
         html = render_card(request, g)
@@ -46,8 +48,8 @@ GOOGLE_RESULTS = {
 }
 
 
-def gemini_key(st: dict) -> str:
-    """Changes whenever the Gemini panel would render differently; the Settings page polls it."""
+def site_key(st: dict) -> str:
+    """Changes whenever the Gemini (or Flow) panel would render differently; the Settings page polls it."""
     return f"{st.get('state')}|{bool(st.get('login_window_open'))}|{bool(st.get('checking'))}|{st.get('checked_at')}"
 
 
@@ -57,6 +59,7 @@ def settings_context(request: Request, user_id: int) -> dict:
     client = st.providers.generator()
     health = client.ping() if client else None
     gemini = (health.details.get("gemini") or {}) if health and health.ok else {}
+    flow = (health.details.get("flow") or {}) if health and health.ok else {}
     conn = st.providers.connection(user_id)
     return {
         "worker_configured": client is not None,
@@ -65,7 +68,14 @@ def settings_context(request: Request, user_id: int) -> dict:
         "gemini_label": GEMINI_LABELS.get(gemini.get("state", "unknown"), "Unknown"),
         "pause": (health.details.get("account_paused") if health and health.ok else None),
         "login_window_open": bool(health and health.ok and health.details.get("login_window_open")),
-        "gemini_key": gemini_key(gemini),
+        "gemini_key": site_key(gemini),
+        "flow": flow,
+        "flow_label": GEMINI_LABELS.get(flow.get("state", "unknown"), "Unknown").replace("Limit reached",
+                                                                                         "Out of credits"),
+        "flow_pause": ((health.details.get("pauses") or {}).get("flow") if health and health.ok else None),
+        "flow_key": site_key(flow),
+        "flow_model": ((health.details.get("providers") or {}).get("flow") or {}).get("model")
+                      if health and health.ok else None,
         "google_configured": s.google_configured,
         "google_missing": [k for k in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TOKEN_ENCRYPTION_KEY")
                            if not getattr(s, k)],

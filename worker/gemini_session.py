@@ -67,12 +67,17 @@ class ProfileLock:
 
 
 class GeminiSession:
+    """The sign-in window and session check for one site on the shared profile: Gemini, or (with Flow's
+    `inspector`/`opener`, `status_key="flow_status"`, `pause_key="account_pause:flow"`) Google Flow."""
+
     def __init__(self, settings: WorkerSettings, store: JobStore, lock: ProfileLock,
                  inspector: Callable[[WorkerSettings], dict] | None = None,
-                 opener: Callable[[WorkerSettings], subprocess.Popen] | None = None):
+                 opener: Callable[[WorkerSettings], subprocess.Popen] | None = None,
+                 status_key: str = "gemini_status", pause_key: str = "account_pause", name: str = "Gemini"):
         self.settings = settings
         self.store = store
         self.lock = lock
+        self.status_key, self.pause_key, self.name = status_key, pause_key, name
         if inspector is None or opener is None:
             from worker import gemini_browser
 
@@ -132,15 +137,15 @@ class GeminiSession:
         if self.checking:
             return self.status()
         if self.window_open:
-            raise Busy("Quit the Gemini sign-in window first (⌘Q in that window).")
+            raise Busy(f"Quit the {self.name} sign-in window first (⌘Q in that window).")
         if self.lock.holder is not None or self.lock.held_by_other_process():
             raise Busy("The browser profile is busy (a video is being generated). Check again when it finishes.")
         self.check_in_background()
         return self.status()
 
     def status(self) -> dict:
-        st = dict(self.store.kv_get("gemini_status", {"state": "unknown", "message": "Not checked yet."}))
-        pause = self.store.kv_get("account_pause")
+        st = dict(self.store.kv_get(self.status_key, {"state": "unknown", "message": "Not checked yet."}))
+        pause = self.store.kv_get(self.pause_key)
         if pause:
             st["state"] = {"limit_reached": "limit_reached",
                            "authentication_required": "signed_out"}.get(pause["kind"], "needs_attention")
@@ -188,7 +193,7 @@ class GeminiSession:
 
     def check(self) -> dict:
         if self.window_open:
-            raise Busy("Quit the Gemini sign-in window first (⌘Q in that window).")
+            raise Busy(f"Quit the {self.name} sign-in window first (⌘Q in that window).")
         if not self.lock.try_acquire("session-check"):
             raise Busy("The browser profile is busy (a video is being generated). Check again when it finishes.")
         try:
@@ -201,7 +206,7 @@ class GeminiSession:
             result = {"state": "needs_attention", "model": None, "message": msg}
         finally:
             self.lock.release("session-check")
-        self.store.kv_set("gemini_status", {"state": result.get("state", "needs_attention"),
+        self.store.kv_set(self.status_key, {"state": result.get("state", "needs_attention"),
                                             "message": result.get("message", ""), "model": result.get("model"),
                                             "plan": result.get("plan"), "video": result.get("video"),
                                             "checked_at": time.time()})

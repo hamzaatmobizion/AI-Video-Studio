@@ -49,6 +49,7 @@ class Generation(Base):
     check_clips: Mapped[bool] = mapped_column(Boolean, default=False)  # Gemini checks each clip, one redo if off
     old_drive_file_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # trashed once a redo is saved
     job_kind: Mapped[str] = mapped_column(String(20), default="")  # what worker_job_id is: "" clip | still | check
+    provider: Mapped[str] = mapped_column(String(20), default="gemini")  # where the clips are made: gemini | flow
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     scenes: Mapped[list["Scene"]] = relationship(order_by="Scene.position", cascade="all, delete-orphan",

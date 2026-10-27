@@ -4,7 +4,7 @@ import math
 import re
 
 from app.script import ANIMATED, style_from_prompt
-from app.timeline import story_moments
+from app.timeline import bible_from_prompt, story_moments
 
 # A character who may read as a child to Gemini, in a moment its child-safety rules refuse: Gemini then declines
 # the clip, often only as "I encountered an error"
@@ -34,10 +34,11 @@ def prompt_checks(prompt: str, cast: list[dict], style: str = "", language: str 
     return [n["text"] for n in prompt_notes(prompt, cast, style, language, seconds)]
 
 
-def prompt_notes(prompt: str, cast: list[dict], style: str = "", language: str = "", seconds: int = 0) -> list[dict]:
+def prompt_notes(prompt: str, cast: list[dict], style: str = "", language: str = "", seconds: int = 0,
+                 clip: int = 10) -> list[dict]:
     """Notes for the user about `prompt`, the picked `cast` (library sheets), the chosen style and language, and the
-    video's length in `seconds`: [{"level": "error" | "warning", "text"}]. An error is something Gemini is likely to
-    refuse or fail on; a warning, something that may spoil the video."""
+    video's length in `seconds` made of `clip`-second clips: [{"level": "error" | "warning", "text"}]. An error is
+    something Gemini is likely to refuse or fail on; a warning, something that may spoil the video."""
     notes = []
 
     def note(level: str, text: str) -> None:
@@ -55,11 +56,11 @@ def prompt_notes(prompt: str, cast: list[dict], style: str = "", language: str =
                      "hitting. Gemini may take them for a child and refuse the clip, often only saying “I "
                      "encountered an error”. Make their age clear, e.g. “a chubby man in his 30s with a thick "
                      "mustache”.")
-    moments, clips = story_moments(prompt), max(math.ceil(seconds / 10), 1)
+    moments, clips = story_moments(prompt), max(math.ceil(seconds / clip), 1)
     if seconds and moments > clips * MOMENTS_PER_CLIP:
-        need = min(math.ceil(moments / MOMENTS_PER_CLIP), 12) * 10
+        need = min(math.ceil(moments / MOMENTS_PER_CLIP), 12) * clip
         note("warning", f"Your story sets out {moments} moments, but {seconds} seconds is {clips} clip"
-                     f"{'s' if clips > 1 else ''} of 10 seconds, so each clip has to fit about "
+                     f"{'s' if clips > 1 else ''} of {clip} seconds, so each clip has to fit about "
                      f"{math.ceil(moments / clips)} of them. That rushes the action: blurred hands, sudden camera "
                      f"changes and things vanishing are likely. Choose {need} seconds, or fewer moments.")
     wants = f"{prompt} {language}"
@@ -84,4 +85,13 @@ def prompt_notes(prompt: str, cast: list[dict], style: str = "", language: str =
         note("error", f"The video asks for a realistic look while pictures of {', '.join(pictured)} go with the clips. "
                      "Gemini often refuses clips that look like real people made from pictures. A cartoon style "
                      "(e.g. Pixar-style 3D animation) and cartoon portraits avoid that.")
+    # Picked characters the story never names, while it describes its own people: their pictures would go nowhere
+    own = [c["name"] for c in bible_from_prompt(prompt or "", cast)["characters"]]
+    unnamed = [c["name"] for c in cast if not re.search(rf"(?<!\w){re.escape(c['name'])}(?!\w)", prompt or "", re.I)]
+    if own and unnamed:
+        note("warning", f"You picked {', '.join(unnamed)}, but the prompt never names "
+                        f"{'them' if len(unnamed) > 1 else 'this character'}: its people are {', '.join(own)}. "
+                        f"Untick {'them' if len(unnamed) > 1 else 'it'}, or use "
+                        f"{'their names' if len(unnamed) > 1 else 'its name'} in the prompt for "
+                        f"{'their portraits' if len(unnamed) > 1 else 'its portrait'} to be used.")
     return notes

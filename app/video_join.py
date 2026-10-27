@@ -122,8 +122,10 @@ def last_frame(clip: Path, dest: Path) -> Path | None:
     if not shutil.which("ffmpeg") or not clip.exists():
         return None
     try:
-        r = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-sseof", "-0.25", "-i", str(clip),
-                            "-frames:v", "1", "-q:v", "2", "-update", "1", str(dest)],
+        # decode the clip's last half second and keep overwriting `dest`: what's left is the very last frame (taking
+        # the first frame after the seek would be ~0.25 s early, and the next scene would jump at the cut)
+        r = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-sseof", "-0.5", "-i", str(clip),
+                            "-q:v", "2", "-update", "1", str(dest)],
                            capture_output=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return None

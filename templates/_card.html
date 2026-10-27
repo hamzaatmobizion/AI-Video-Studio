@@ -24,7 +24,7 @@
   </div>
   <div class="body">
     <p class="prompt">{{ g.prompt }}</p>
-    <p class="meta">#{{ g.id }} · {{ g.aspect }}{% if total > 1 %} · {{ total }} scenes{% endif %} · {{ g.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</p>
+    <p class="meta">{% if g.provider == 'flow' %}<span class="badge flow">Flow</span> {% endif %}#{{ g.id }} · {{ g.aspect }}{% if total > 1 %} · {{ total }} scenes{% endif %} · {{ g.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</p>
     {% if g.error %}<p class="{{ 'muted' if active else 'error' }}">{{ g.error }}</p>{% endif %}
     <div class="actions">
       {% if g.status == "REVIEW" %}<a class="button" href="/generations/{{ g.id }}/script">Review script</a>{% endif %}

@@ -13,6 +13,8 @@ class ClipRequest:
     aspect: str
     images: list[Path] = field(default_factory=list)
     out_dir: Path = Path(".")
+    frame: int | None = None  # which of `images` is the scene's start frame (Flow's Frames to Video), if any
+    project_url: str = ""  # Flow: the video's project to work in (empty: a new one); set to the project used
 
 
 @dataclass
@@ -36,13 +38,16 @@ class PlanRequest:
 
 @dataclass
 class PortraitRequest:
-    """Ask Gemini (chat) for one image from a description: a character portrait, or a scene's first frame drawn
-    from the attached `images` (the characters' pictures, then the previous shot's last frame)."""
+    """Ask for one image from a description: a character portrait, or a scene's first frame drawn from the attached
+    `images` (the characters' pictures, then the previous shot's last frame). Gemini's chat draws it, or Google Flow's
+    Image mode for a Flow video (`aspect` is then the frame's shape)."""
 
     job_id: str
     prompt: str
     out_dir: Path = Path(".")
     images: list[Path] = field(default_factory=list)
+    aspect: str = ""
+    project_url: str = ""  # Flow: the video's project to work in (empty: a new one); set to the project used
 
 
 @dataclass
@@ -71,7 +76,7 @@ class SafetyRefusal(GeneratorError):
 
 
 class AccountStop(GeneratorError):
-    """Stops ALL generation (one shared account) until the owner resumes."""
+    """Stops the provider's generation (Gemini or Google Flow) until the owner resumes."""
 
     kind = "account_stop"
 

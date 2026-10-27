@@ -38,8 +38,14 @@ class WorkerClient:
             raise GeneratorError(_detail(r), final=False)
         return r
 
-    def submit(self, prompt: str, aspect: str, ref: str, images: list[Path]) -> str:
+    def submit(self, prompt: str, aspect: str, ref: str, images: list[Path], provider: str = "gemini",
+               frame: int | None = None) -> str:
+        """One clip, made by `provider` (gemini | flow); `frame`: which of `images` is the scene's start frame."""
         data = {"prompt": prompt, "aspect": aspect, "ref": ref}
+        if provider != "gemini":
+            data["provider"] = provider
+        if frame is not None:
+            data["frame"] = frame
         if images:
             files = [("images", (p.name, p.read_bytes(), "application/octet-stream")) for p in images]
             r = self._request("POST", "/videos", data=data, files=files)
@@ -53,12 +59,13 @@ class WorkerClient:
         return str(job_id)
 
     def plan(self, prompt: str, aspect: str, ref: str, scenes: int, cast: list[dict] | None = None,
-             style: str = "", language: str = "", rules: str = "") -> str:
+             style: str = "", language: str = "", rules: str = "", clip_seconds: int | None = None) -> str:
         """Ask the worker to have Gemini write a `scenes`-scene script from `prompt`, using `cast`
-        ([{name, appearance, outfit, voice, personality}]) and the video type's `rules`; returns a job id."""
+        ([{name, appearance, outfit, voice, personality}]) and the video type's `rules`, each scene `clip_seconds`
+        long (None: the worker's own clip length); returns a job id."""
         body = {"prompt": prompt, "aspect": aspect, "ref": ref, "scenes": scenes}
-        body.update({k: v for k, v in (("cast", cast), ("style", style), ("language", language), ("rules", rules))
-                     if v})
+        body.update({k: v for k, v in (("cast", cast), ("style", style), ("language", language), ("rules", rules),
+                                       ("clip_seconds", clip_seconds)) if v})
         r = self._request("POST", "/plans", json=body)
         if r.status_code >= 400:
             raise GeneratorError(_detail(r), final=True)
@@ -91,11 +98,14 @@ class WorkerClient:
         return str(job_id)
 
     def still(self, description: str, aspect: str, ref: str, images: list[Path], names: list[str],
-              previous: bool) -> str:
-        """Ask the worker to have Gemini draw a scene's first frame from the characters' pictures (`names`, in
-        order) and, when `previous`, the previous shot's last frame after them; returns a job id."""
-        return self._post_with_images("/stills", {"description": description, "aspect": aspect, "ref": ref,
-                                                  "names": names, "previous": previous}, images)
+              previous: bool, provider: str = "gemini") -> str:
+        """Ask the worker to draw a scene's first frame from the characters' pictures (`names`, in order) and, when
+        `previous`, the previous shot's last frame after them: by Gemini, or by Google Flow for a Flow video
+        (`provider`); returns a job id."""
+        body = {"description": description, "aspect": aspect, "ref": ref, "names": names, "previous": previous}
+        if provider != "gemini":
+            body["provider"] = provider
+        return self._post_with_images("/stills", body, images)
 
     def review_clip(self, names: list[str], action: str, lines: list[dict], ref: str, pictures: list[Path],
                     clip: Path, previous: Path | None = None, outfits: dict[str, str] | None = None,
@@ -190,9 +200,13 @@ class WorkerClient:
         body = r.json()
         return WorkerHealth(True, "Connected", body)
 
-    # ---- Gemini sign-in passthrough (Settings page) --------------------
-    def gemini(self, method: str, path: str) -> dict:
-        r = self._request(method, f"/gemini/{path}", timeout=180.0)
+    # ---- Gemini / Google Flow sign-in passthrough (Settings page) -------
+    def site(self, name: str, method: str, path: str) -> dict:
+        """`name`: "gemini" or "flow" (the worker's /gemini/… and /flow/… routes)."""
+        r = self._request(method, f"/{name}/{path}", timeout=180.0)
         if r.status_code >= 400:
             raise GeneratorError(_detail(r), final=True)
         return r.json()
+
+    def gemini(self, method: str, path: str) -> dict:
+        return self.site("gemini", method, path)

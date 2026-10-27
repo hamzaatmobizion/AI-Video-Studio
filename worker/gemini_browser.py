@@ -66,7 +66,7 @@ MOVEMENTS = ["static", "slow push-in", "pull-out", "pan left", "pan right", "til
              "dolly", "handheld", "orbit", "crane"]
 LENSES = ["24mm wide-angle lens", "35mm lens", "50mm lens", "85mm lens with shallow depth of field"]
 POSITIONS = ["frame left", "center", "frame right", "foreground", "background"]
-MAX_SPOKEN_WORDS = 25
+MAX_SPOKEN_WORDS = 25  # per 10 seconds (as app/script.py): a shorter clip gets proportionally fewer
 MAX_SCENE_IMAGES, MAX_IN_SHOT = 3, 6  # as app/script.py: pictures one clip takes, people one shot may hold
 _BIBLE_EXAMPLE = ('{"title": "...", "style": "...", "palette": "...", "setting": "...", "motif": "...", '
                   '"characters": [{"name": "...", "look": "...", "never": "..."}], '
@@ -131,8 +131,14 @@ def plan_instruction(req: PlanRequest) -> str:
         "falls in and keep every moment, shortened if needed, rather than dropping any.\n"
         "- Never drop anything the idea writes out: every scene, character, action and line of dialogue in it "
         f"must be in the script. When the idea has more scenes than these {req.scene_count}, put neighbouring ones "
-        "together in one scene, in order (two short moments can share a 10-second scene). Keep written lines word "
+        f"together in one scene, in order (two short moments can share a {req.clip_seconds}-second scene). Keep "
+        "written lines word "
         "for word, in their language and script.\n"
+        "- In every scene's action, say where each person is in relation to the main place or object and what their "
+        "role there is, so nobody swaps places or roles (e.g. 'the seller stands behind the counter; Chacha stands in "
+        "front of it as the customer'). Keep those places from scene to scene unless the story moves them.\n"
+        "- Each line of dialogue belongs to the person who says it in the idea: put it under exactly that name, never "
+        "give one person's line to another, and never merge two people's lines into one.\n"
         f"- At most {in_shot} people or animals in a shot.{spread} Give any group an exact count and keep it in every scene ('three "
         "friends', never 'a group of friends'), and describe extras briefly and in the same words each time.\n"
         "- In each scene's characters, list everyone who is seen in it, the ones you invented too, by the same "
@@ -171,7 +177,8 @@ def plan_instruction(req: PlanRequest) -> str:
         "the person facing one way and use movement 'orbit' instead of making them spin.\n"
         f"- framing is one of: {', '.join(FRAMINGS)}. angle is one of: {', '.join(ANGLES)}. movement is one of: "
         f"{', '.join(MOVEMENTS)}. lens is one of: {', '.join(LENSES)}. position is one of: {', '.join(POSITIONS)}.\n"
-        f"- Spoken lines must fit in {req.clip_seconds} seconds: at most about {MAX_SPOKEN_WORDS} words per scene "
+        f"- Spoken lines must fit in {req.clip_seconds} seconds: at most about "
+        f"{round(MAX_SPOKEN_WORDS * req.clip_seconds / 10)} words per scene "
         "in total, except lines the idea writes out, which are all kept. Leave dialogue empty when nobody speaks.\n"
         "- Put any on-screen text in the action of the scene where it appears, spelled exactly as in the idea.\n"
         "- Never put double quotes inside a value; write quotes as single quotes ('like this').\n"
@@ -248,7 +255,8 @@ def still_instruction(description: str, aspect: str, names: list[str], previous:
     shape = "Vertical 9:16" if aspect == "9:16" else "Widescreen 16:9"
     who = "; ".join(f"picture {i} is {n}" for i, n in enumerate(names, 1))
     refs = (f"- The attached pictures are the exact characters ({who}): the same faces, hair, clothes, colours and "
-            "style, redrawn in the scene, not pasted.\n" if names else "")
+            "style, redrawn in the scene, not pasted. Where the shot below says what someone wears or looks like, "
+            "that wins over their picture.\n" if names else "")
     if previous:
         refs += (f"- Picture {len(names) + 1} is the last frame of the previous shot: keep its place, light and "
                  "everyone's clothes and colours.\n")
@@ -659,6 +667,87 @@ def check_session(pg: Page, stop: StopText, prompt_timeout: float = 20.0) -> Non
                               "Run `python -m worker check-gemini`.")
 
 
+# ---- shared by the Gemini and Flow drivers -------------------------------------
+def run_in_browser(settings: WorkerSettings, ui: dict, jid: str, work, site: str = "Gemini",
+                   where: Callable[[], str] | None = None):
+    """Launch the profile, run `work(pg, ctx)`, always close the browser. `where()` names the step in progress, for
+    the message and the log when the browser fails."""
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        ctx = launch_context(p, settings)
+        try:
+            install_navigation_guard(ctx, ui["allowed_hosts"])
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
+            pg = Page(page, ui)
+            try:
+                return work(pg, ctx)
+            except (GeneratorError, Cancelled):
+                raise
+            except PlaywrightError as e:
+                pg.screenshot(settings, f"{jid}-browser-error")
+                step = where() if where else ""
+                # the error's first line names the call and selector (never page text, prompts or cookies)
+                log.warning("job %s browser error%s: %s: %s", jid, f" while {step}" if step else "", type(e).__name__,
+                            str(e).splitlines()[0][:200] if str(e) else "")
+                raise GenerationError(f"The browser hit an error while talking to {site}"
+                                      + (f" ({step})." if step else ".")) from e
+        finally:
+            try:
+                ctx.close()
+            except Exception:
+                pass
+
+
+def fetch_src(pg: Page, ctx, src: str) -> bytes | None:
+    """The bytes behind an image or video src: a blob is read inside the page, an https URL with the
+    signed-in session."""
+    if src.startswith("blob:"):
+        b64 = pg.page.evaluate(
+            """async (u) => { const r = await fetch(u); const b = await r.blob();
+               return await new Promise((res, rej) => { const fr = new FileReader();
+                 fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(b); }); }""",
+            src)
+        return base64.b64decode(b64) if b64 else None
+    if src.startswith("https://"):
+        r = ctx.request.get(src, timeout=180_000)
+        return r.body() if r.ok else None
+    return None
+
+
+def save_video(pg: Page, ctx, src: str, dest: Path, site: str = "Gemini", menu_key: str | None = None) -> None:
+    """Write the video behind `src` to `dest` (else click the page's download button, then its `menu_key` entry
+    when the button opens a menu), checked to be a video."""
+    part = dest.with_suffix(".part")
+    data = fetch_src(pg, ctx, src) if src else None
+    if data:
+        if len(data) > MAX_DOWNLOAD:
+            raise GenerationError(f"{site}'s video is larger than 500 MB.")
+        part.write_bytes(data)
+    else:
+        btn = pg.find("download_button", timeout=5)
+        if btn is None:
+            raise GenerationError(f"Couldn't download the video from {site}.")
+        with pg.page.expect_download(timeout=120_000) as d:
+            btn.click()
+            item = pg.find(menu_key, timeout=3) if menu_key else None
+            if item is not None:
+                item.click()
+        d.value.save_as(str(part))
+    with open(part, "rb") as f:
+        head = f.read(16)
+    if not (head[4:8] == b"ftyp" or head.startswith(b"\x1a\x45\xdf\xa3")):
+        part.unlink(missing_ok=True)
+        raise GenerationError(f"What {site} returned isn't a video file.")
+    os.replace(part, dest)
+
+
+def cancel_point(should_cancel) -> None:
+    if should_cancel():
+        raise Cancelled()
+
+
 # ---- generator -----------------------------------------------------------------
 class GeminiBrowserGenerator:
     def __init__(self, settings: WorkerSettings, ui: dict | None = None):
@@ -695,29 +784,13 @@ class GeminiBrowserGenerator:
         return out
 
     def _in_browser(self, jid: str, work):
-        """Launch the profile, run `work(pg, ctx)`, always close the browser."""
-        from playwright.sync_api import Error as PlaywrightError
-        from playwright.sync_api import sync_playwright
+        return run_in_browser(self.settings, self.ui, jid, work)
 
-        with sync_playwright() as p:
-            ctx = launch_context(p, self.settings)
-            try:
-                install_navigation_guard(ctx, self.ui["allowed_hosts"])
-                page = ctx.pages[0] if ctx.pages else ctx.new_page()
-                pg = Page(page, self.ui)
-                try:
-                    return work(pg, ctx)
-                except (GeneratorError, Cancelled):
-                    raise
-                except PlaywrightError as e:
-                    pg.screenshot(self.settings, f"{jid}-browser-error")
-                    log.warning("job %s browser error: %s", jid, type(e).__name__)
-                    raise GenerationError("The browser hit an error while talking to Gemini.") from e
-            finally:
-                try:
-                    ctx.close()
-                except Exception:
-                    pass
+    _fetch = staticmethod(fetch_src)
+    _cancel_point = staticmethod(cancel_point)
+
+    def _download(self, pg: Page, ctx, src: str, dest: Path) -> None:
+        save_video(pg, ctx, src, dest)
 
     # The fixed sequence. Do not add branches that depend on page content beyond stop detection.
     def _run(self, pg: Page, ctx, req: ClipRequest, should_cancel) -> Path:
@@ -898,22 +971,6 @@ class GeminiBrowserGenerator:
         pg.screenshot(self.settings, f"{jid}-portrait-timeout")
         raise GenerationError("Gemini didn't draw the portrait in time.")
 
-    @staticmethod
-    def _fetch(pg: Page, ctx, src: str) -> bytes | None:
-        """The bytes behind an image or video src: a blob is read inside the page, an https URL with the
-        signed-in session."""
-        if src.startswith("blob:"):
-            b64 = pg.page.evaluate(
-                """async (u) => { const r = await fetch(u); const b = await r.blob();
-                   return await new Promise((res, rej) => { const fr = new FileReader();
-                     fr.onload = () => res(String(fr.result).split(',')[1]); fr.onerror = rej; fr.readAsDataURL(b); }); }""",
-                src)
-            return base64.b64decode(b64) if b64 else None
-        if src.startswith("https://"):
-            r = ctx.request.get(src, timeout=180_000)
-            return r.body() if r.ok else None
-        return None
-
     def _send_prompt(self, pg: Page, text: str, jid: str) -> int:
         """Type `text` and send it; return how many responses were on the page before."""
         log.info("job %s step=prompt", jid)
@@ -959,6 +1016,10 @@ class GeminiBrowserGenerator:
                 responses = self._responses(pg)
                 n = responses.count()
                 if n <= before:
+                    # No reply yet: still thinking (Stop showing, Pro can think for minutes before its first word) is
+                    # progress, so keep waiting within PLAN_TIMEOUT rather than give up after PLAN_IDLE.
+                    if pg.find("reply_busy", timeout=0) is not None:
+                        idle_until = time.monotonic() + PLAN_IDLE
                     continue
                 try:
                     text = responses.nth(n - 1).inner_text(timeout=3000)
@@ -993,11 +1054,6 @@ class GeminiBrowserGenerator:
                     raise error
         pg.screenshot(self.settings, f"{jid}-plan-timeout")
         raise error or GenerationError(f"Gemini didn't finish {what} in time.")
-
-    @staticmethod
-    def _cancel_point(should_cancel) -> None:
-        if should_cancel():
-            raise Cancelled()
 
     def _raise_from_text(self, text: str, fallback: GeneratorError) -> None:
         kind = self.stop.classify(text)
@@ -1216,27 +1272,6 @@ class GeminiBrowserGenerator:
         """True when the reply holds a fully loaded picture (not an icon or a loading placeholder)."""
         imgs = reply.locator(REPLY_IMAGE)
         return any(imgs.nth(i).evaluate("el => el.complete && el.naturalWidth >= 256") for i in range(imgs.count()))
-
-    def _download(self, pg: Page, ctx, src: str, dest: Path) -> None:
-        part = dest.with_suffix(".part")
-        data = self._fetch(pg, ctx, src)
-        if data:
-            if len(data) > MAX_DOWNLOAD:
-                raise GenerationError("Gemini's video is larger than 500 MB.")
-            part.write_bytes(data)
-        else:
-            btn = pg.find("download_button", timeout=5)
-            if btn is None:
-                raise GenerationError("Couldn't download the video from Gemini.")
-            with pg.page.expect_download(timeout=120_000) as d:
-                btn.click()
-            d.value.save_as(str(part))
-        with open(part, "rb") as f:
-            head = f.read(16)
-        if not (head[4:8] == b"ftyp" or head.startswith(b"\x1a\x45\xdf\xa3")):
-            part.unlink(missing_ok=True)
-            raise GenerationError("What Gemini returned isn't a video file.")
-        os.replace(part, dest)
 
 
 def find_video_tool(pg: Page):

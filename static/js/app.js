@@ -71,18 +71,17 @@
     }
   });
 
-  // Settings: while the Gemini sign-in window is open or a check runs, reload when the worker's state changes
-  const watch = document.getElementById("gemini-watch");
-  if (watch) {
+  // Settings: while a sign-in window (Gemini or Flow) is open or a check runs, reload when the worker's state changes
+  document.querySelectorAll("[data-watch]").forEach((watch) => {
     const poll = async () => {
       try {
-        const st = await (await fetch("/settings/gemini/state")).json();
+        const st = await (await fetch(`/settings/${watch.dataset.watch}/state`)).json();
         if (st.key !== watch.dataset.key) return location.reload();
       } catch (_) {}
       setTimeout(poll, 3000);
     };
     setTimeout(poll, 3000);
-  }
+  });
 
   // Login
   const login = document.getElementById("login");
@@ -120,7 +119,8 @@
   const form = document.getElementById("new-video");
   const scenesBox = document.getElementById("scenes"), addScene = document.getElementById("add-scene");
   const autoMode = document.getElementById("auto-mode"), manualMode = document.getElementById("manual-mode");
-  const MAX_SCENES = 12, SCENE_SECONDS = 10;
+  // One scene = one clip: 10 s with Gemini, 8 s with Google Flow (SCENE_SECONDS in app/enums.py)
+  const MAX_SCENES = 12, SCENE_SECONDS = form ? Number(form.dataset.step) || 10 : 10;
   const manual = () => autoMode && autoMode.hidden;
   // Mirrors duration_from_prompt in app/routes/api.py (the server's answer is the one used)
   const WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
@@ -206,7 +206,7 @@
     }
   }
   // A note when the lines written in the prompt (in quotes) need more time than the length gives them
-  const WORDS_PER_CLIP = 25;  // MAX_SPOKEN_WORDS in app/script.py
+  const WORDS_PER_CLIP = Math.round(25 * SCENE_SECONDS / 10);  // words_per_clip in app/script.py: 25 per 10 s
   function syncTalk() {
     const note = document.getElementById("talk-note");
     if (!note || manual()) { if (note) note.hidden = true; return; }
@@ -245,7 +245,7 @@
       const text = [...form.querySelectorAll("textarea:not(:disabled)")].map((t) => t.value).join("\n");
       const field = (n) => (form.elements.namedItem(n) || {}).value || "";
       const body = { prompt: text, style: field("style"), language: field("language"),
-        seconds: manual() ? 0 : chosenDuration(),
+        seconds: manual() ? 0 : chosenDuration(), provider: form.dataset.provider || "",
         cast: [...form.querySelectorAll("input[name=cast]:checked")].map((b) => Number(b.value)) };
       let notes = [];
       try { notes = text.trim() ? (await post("/api/prompt-check", body)).notes : []; } catch (_) { return; }
@@ -289,7 +289,8 @@
   async function refresh() {
     if (!cards) return;
     let data;
-    try { data = await (await fetch("/api/generations")).json(); } catch (_) { return schedule(true); }
+    const provider = cards.dataset.provider ? `?provider=${encodeURIComponent(cards.dataset.provider)}` : "";
+    try { data = await (await fetch(`/api/generations${provider}`)).json(); } catch (_) { return schedule(true); }
     const seen = new Set();
     let prev = null;
     for (const c of data.cards) {
@@ -554,7 +555,7 @@
       const count = el("span", { class: "muted small" });
       const updateCount = () => {
         const n = words(sc);
-        count.textContent = n ? `${n} spoken word${n === 1 ? "" : "s"}${n > data.max_words ? ` (about ${data.max_words} fit in 10 seconds)` : ""}` : "";
+        count.textContent = n ? `${n} spoken word${n === 1 ? "" : "s"}${n > data.max_words ? ` (about ${data.max_words} fit in ${data.seconds || 10} seconds)` : ""}` : "";
         count.className = n > data.max_words ? "warn" : "muted small";
       };
       function drawCast() {
@@ -589,7 +590,7 @@
       const prompt = el("pre", { class: "prompt-text", text: data.prompts[i] || "" });
       const warns = el("div", { class: "warnings" });
       return el("article", { class: "shot-card" },
-        el("header", {}, el("h2", { text: `Scene ${i + 1}` }), el("span", { class: "muted small", text: `${i * 10}–${i * 10 + 10} s` }),
+        el("header", {}, el("h2", { text: `Scene ${i + 1}` }), el("span", { class: "muted small", text: `${i * (data.seconds || 10)}–${(i + 1) * (data.seconds || 10)} s` }),
           editable && !data.failed && scenes.length > 1 ? el("button", { type: "button", class: "link", text: "Remove scene",
             onclick: () => { if (confirm(`Remove scene ${i + 1}?`)) { scenes.splice(i, 1); draw(); changed(); } } }) : ""),
         el("div", { class: "grid2" },

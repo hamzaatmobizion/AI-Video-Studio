@@ -1,0 +1,194 @@
+{
+  "_note": "All Google Flow UI knowledge lives here (mapped against Flow's page on 2026-10-26). When Flow changes its page, edit this file (run `python -m worker check-flow` to see what matches). Each selector key is a list of candidates; the first visible match wins. {name} and {label} are filled in by the worker. Clips are made in Flow's direct mode (the Agent toggle off), never through its agent.",
+  "app_url": "https://labs.google/fx/tools/flow",
+  "allowed_hosts": [
+    "labs.google",
+    "flow.google.com",
+    "accounts.google.com",
+    "consent.google.com",
+    "www.google.com"
+  ],
+  "aspect_names": {
+    "9:16": "9:16",
+    "16:9": "16:9"
+  },
+  "clip_settings": {
+    "kind": "Video",
+    "resolution": "720p",
+    "duration": "8s",
+    "count": "x1"
+  },
+  "image_settings": {
+    "kind": "Image",
+    "count": "x1"
+  },
+  "modes": {
+    "text": "Frames",
+    "frames": "Frames",
+    "ingredients": "Ingredients"
+  },
+  "max_images": 3,
+  "selectors": {
+    "new_project": [
+      "button:has-text('New project')",
+      "a:has-text('New project')"
+    ],
+    "prompt_input": [
+      "div[role='textbox'][aria-label='What do you want to create?']",
+      "div[contenteditable='true'][role='textbox']"
+    ],
+    "send_button": [
+      "button[aria-label='Start generation']"
+    ],
+    "sign_in_button": [
+      "button:has-text('Sign in')",
+      "a:has-text('Sign in')",
+      "a[href*='accounts.google.com/ServiceLogin']"
+    ],
+    "account_button": [
+      "a[aria-label*='Google Account' i]"
+    ],
+    "agent_panel": [
+      "button[aria-label='Start new session']"
+    ],
+    "agent_panel_close": [
+      "button[aria-label='Close']:right-of(button[aria-label='Start new session'])"
+    ],
+    "agent_toggle": [
+      "button.agent-mode-chip",
+      "button:has(> span:text-is('Agent'))"
+    ],
+    "settings_trigger": [
+      "button[aria-label='Settings trigger']"
+    ],
+    "settings_radio": [
+      "[role='radio']:has-text('{name}')"
+    ],
+    "model_switch": [
+      "button[aria-label='Select model family']"
+    ],
+    "model_option": [
+      "[role='menuitem']:has-text('{label}')"
+    ],
+    "remove_input": [
+      "div.frame-trigger button:has-text('cancel')",
+      "button:has(mat-icon:text-is('cancel'))",
+      "button[aria-label*='Remove' i]"
+    ],
+    "start_frame": [
+      "div.frame-trigger:has-text('Start') button",
+      "button.empty-chip:text-is('Start')"
+    ],
+    "start_frame_set": [
+      "div.frame-trigger:first-of-type img",
+      "div.frame-trigger img"
+    ],
+    "add_image": [
+      "button[aria-label='Add ingredients to the prompt box']"
+    ],
+    "upload_media": [
+      "button:has-text('Upload media')"
+    ],
+    "rights_notice": [
+      "[role='dialog']:has-text('Rights to use this image')",
+      "mat-dialog-container:has-text('Rights to use this image')"
+    ],
+    "rights_agree": [
+      "[role='dialog']:has-text('Rights to use this image') button:has-text('I agree')",
+      "mat-dialog-container:has-text('Rights to use') button:has-text('I agree')",
+      "button:has-text('I agree')"
+    ],
+    "add_to_prompt": [
+      "button:has-text('Add to prompt')"
+    ],
+    "result_tile": [
+      "flow-video-tile img[alt='Generated video thumbnail']",
+      "flow-video-tile img.thumbnail"
+    ],
+    "result_image": [
+      "flow-image-tile img",
+      "flow-tile-container img[alt*='Generated' i]:not([alt*='video' i])"
+    ],
+    "result_video": [
+      "flow-video-tile video"
+    ],
+    "failed_tile": [
+      "flow-tile-container:has-text('Failed')",
+      "[class*='tile' i]:has(mat-icon:text-is('warning')):has-text('Failed')"
+    ],
+    "alert": [
+      "[role='alert']",
+      "[role='status']",
+      "mat-snack-bar-container",
+      "[role='dialog']"
+    ],
+    "download_button": [
+      "button[aria-label='Download media']",
+      "button[aria-label*='Download' i]"
+    ],
+    "image_download_option": [
+      "[role='menuitem']:has-text('2K')",
+      "[role='menuitem']:has-text('Original')",
+      "[role='menuitem']:has-text('1K')"
+    ],
+    "download_option": [
+      "[role='menuitem']:has-text('720p')",
+      "[role='menuitem']:has-text('Original')"
+    ],
+    "dismiss": [
+      "button[aria-label='Got it, dismiss onboarding message']",
+      "button:has-text('Got it')"
+    ],
+    "captcha": [
+      "iframe[src*='recaptcha'][src*='bframe']",
+      "iframe[title*='challenge' i][src*='recaptcha']",
+      "form#captcha-form"
+    ]
+  },
+  "patterns": {
+    "verification": [
+      "unusual activity",
+      "unusual traffic",
+      "verify (that )?it'?s you",
+      "confirm (that )?it'?s you",
+      "are you a robot"
+    ],
+    "limit": [
+      "out of (ai )?credits",
+      "(not enough|insufficient) (ai )?credits",
+      "run out of (ai )?credits",
+      "credit limit",
+      "reached your (daily |monthly )?(generation )?limit"
+    ],
+    "no_subscription": [
+      "upgrade to (google ai )?(pro|ultra) to",
+      "isn'?t available (in your country|for your account)",
+      "not available (in your country|for your account)"
+    ],
+    "real_people": [
+      "prominent (people|person|figures?)",
+      "real (people|person)",
+      "identifiable (people|person)"
+    ],
+    "safety": [
+      "might violate",
+      "violates? (our|google'?s) (\\w+ )?polic(y|ies)",
+      "against (our|google'?s) (\\w+ )?polic(y|ies)",
+      "safety (filter|reasons|guidelines)"
+    ],
+    "busy": [
+      "high demand",
+      "at capacity",
+      "too many requests"
+    ],
+    "error": [
+      "failed to generate",
+      "generation failed",
+      "something went wrong",
+      "couldn'?t generate"
+    ],
+    "signed_out": [
+      "sign in to (continue|use flow)"
+    ]
+  }
+}

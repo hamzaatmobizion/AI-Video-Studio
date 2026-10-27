@@ -9,7 +9,7 @@ from app.auth import require_api_user, require_page_user, require_post
 from app.interfaces import GeneratorError, StorageError
 from app.models import GoogleConnection
 from app.providers.drive_storage import MissingScopeError
-from app.routes.views import gemini_key
+from app.routes.views import site_key
 from app.services.generation import UserError
 
 router = APIRouter()
@@ -27,31 +27,50 @@ def worker_test(request: Request, user=Depends(require_post)):
 
 @router.get("/settings/gemini/state")
 def gemini_state(request: Request, user=Depends(require_api_user)):
-    """Tiny status for the Settings page to poll while the sign-in window is open or a check runs."""
+    return _site_state("gemini", request)
+
+
+@router.get("/settings/flow/state")
+def flow_state(request: Request, user=Depends(require_api_user)):
+    return _site_state("flow", request)
+
+
+def _site_state(site: str, request: Request) -> dict:
+    """Tiny status for the Settings page to poll while a sign-in window is open or a check runs (Gemini or Flow:
+    the worker's two sign-in sites on the same browser profile)."""
     client = request.app.state.providers.generator()
     if client is None:
         return {"key": "off", "busy": False}
     try:
-        st = client.gemini("GET", "status")
+        st = client.site(site, "GET", "status")
     except GeneratorError:
         return {"key": "unreachable", "busy": False}
-    return {"key": gemini_key(st), "busy": bool(st.get("login_window_open") or st.get("checking"))}
+    return {"key": site_key(st), "busy": bool(st.get("login_window_open") or st.get("checking"))}
 
 
-GEMINI_ACTIONS = {"login": ("POST", "login"), "done": ("POST", "login/done"),
-                  "check": ("POST", "check?background=true"), "resume": ("POST", "resume")}
+SITE_ACTIONS = {"login": ("POST", "login"), "done": ("POST", "login/done"),
+                "check": ("POST", "check?background=true"), "resume": ("POST", "resume")}
 
 
 @router.post("/settings/gemini/{action}")
 def gemini_action(action: str, request: Request, user=Depends(require_post)):
-    if action not in GEMINI_ACTIONS:
+    return _site_action("gemini", action, request)
+
+
+@router.post("/settings/flow/{action}")
+def flow_action(action: str, request: Request, user=Depends(require_post)):
+    return _site_action("flow", action, request)
+
+
+def _site_action(site: str, action: str, request: Request):
+    if action not in SITE_ACTIONS:
         return JSONResponse({"detail": "Unknown action."}, status_code=404)
     client = request.app.state.providers.generator()
     if client is None:
         raise UserError("Set WORKER_URL and WORKER_API_KEY in .env first.")
-    method, path = GEMINI_ACTIONS[action]
+    method, path = SITE_ACTIONS[action]
     try:
-        return client.gemini(method, path)
+        return client.site(site, method, path)
     except GeneratorError as e:
         raise UserError(e.message, 502) from e
 

@@ -5,7 +5,11 @@ setting, camera, who is where and what they say (app/script.py). Each clip promp
 with every library character described in their own words. With `review`, the video waits at REVIEW until the
 user has edited and approved the script.
 
-Scenes go to the worker one at a time, so a Gemini limit never fails a queue of them: the generation is
+Clips are made by the video's provider: Gemini (10-second scenes from its daily video limit) or Google Flow
+(8-second scenes, Veo 3.1 - Lite, paid with Flow credits). The script and clip checks are Gemini's chat either way;
+a Flow video never draws a Gemini still, so it spends no Gemini video or image.
+
+Scenes go to the worker one at a time, so a limit never fails a queue of them: the generation is
 PAUSED with its finished clips kept, and continues only when the user clicks Resume on that video.
 Driven by `tick()` (scheduler every 5 s, never overlapping). All state is in the DB, so a restart
 simply continues; temp files in var/generated survive restarts.
@@ -19,10 +23,10 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 
-from app.enums import ACTIVE, GenStatus
+from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.factories import Providers
 from app.genres import plan_rules, valid_genre
-from app.timeline import script_from_timeline
+from app.timeline import bible_from_prompt, script_from_timeline
 from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
 from app.script import (CONTINUE_FROM, MAX_PROMPT, MAX_SCENE_IMAGES, STARTS_FROM, cast_sheet, is_structured,
@@ -82,12 +86,13 @@ class GenerationService:
     def create(self, user_id: int, scenes: list[str], aspect: str, images: list[tuple[str, bytes]],
                plan: int | None = None, cast_ids: list[int] | None = None, style: str = "", language: str = "",
                review: bool = False, genre: str = "", music: tuple[str, bytes] | None = None,
-               lock_frames: bool = False, check_clips: bool = False) -> int:
+               lock_frames: bool = False, check_clips: bool = False, provider: str = Provider.GEMINI) -> int:
         """`scenes`: one prompt per ~10 s clip, already validated. With `plan` = N, `scenes` is the user's
         one prompt and Gemini first writes an N-scene script from it. `images` validated by content: [(ext, bytes)].
         `cast_ids`: the user's characters to use; `review`: wait for the user to approve the script;
         `genre`: the video type (app/genres.py), read from the prompt when it isn't one. `music`: (ext, bytes) of
-        one track laid under the whole video; `lock_frames`, `check_clips`: the slower consistency options."""
+        one track laid under the whole video; `lock_frames`, `check_clips`: the slower consistency options.
+        `provider`: where the clips are made (gemini | flow), so how long each scene is."""
         if self.p.generator() is None:
             raise UserError("Video generation is off: set WORKER_URL and WORKER_API_KEY in .env.", 503)
         if self.p.storage(user_id) is None:
@@ -117,7 +122,8 @@ class GenerationService:
             gen = Generation(user_id=user_id, prompt=prompt, aspect=aspect, ref_images=[], status=GenStatus.GENERATING,
                              poll_errors=0, upload_attempts=0, dismissed=False, planned=bool(plan),
                              review=review, cast_ids=cast_ids, style=style, language=language, genre=genre,
-                             bible={}, scenes=rows, lock_frames=lock_frames, check_clips=check_clips)
+                             bible={}, scenes=rows, lock_frames=lock_frames, check_clips=check_clips,
+                             provider=Provider(provider))
             s.add(gen)
             s.flush()
             paths = []
@@ -162,6 +168,7 @@ class GenerationService:
         with self.db.session() as s:
             gen = s.get(Generation, gen_id)
             scene = _next_scene(gen)
+            lane = gen.provider  # which of the worker's queues this goes to: the clip's, or Gemini's chat (a still)
             try:
                 if gen_client is None:
                     raise GeneratorError("Video generation is off: set WORKER_URL and WORKER_API_KEY.", final=True)
@@ -174,11 +181,13 @@ class GenerationService:
                 frame = self._previous_frame(gen, scene)
                 ref = f"gen-{gen.id}-s{scene.position}-{uuid.uuid4().hex[:6]}"
                 if gen.lock_frames and scene.still_path is None and frame is None and 0 < pictured < MAX_SCENE_IMAGES:
+                    # A Flow video's still is drawn in Flow (its credits), so it uses no Gemini image
+                    lane = "flow" if gen.provider == Provider.FLOW else "chat"
                     # "Lock characters", first scene: draw its opening frame from the pictures, then animate it. Later
                     # scenes start from the previous clip's real last frame: a redraw of it would change things.
                     images = [Path(p) for p in paths[:pictured]] + ([frame] if frame else [])
                     job_id = gen_client.still(still_prompt(scene.script(), library, gen.style, gen.bible), gen.aspect,
-                                              ref, images, names, previous=bool(frame))
+                                              ref, images, names, previous=bool(frame), provider=gen.provider)
                     gen.worker_job_id, gen.job_kind, gen.submitted_at, gen.poll_errors = \
                         job_id, f"still:{scene.position}", utcnow(), 0
                     gen.status = GenStatus.GENERATING
@@ -187,20 +196,32 @@ class GenerationService:
                 extra = []  # lines added now; the scene's action is shortened to make room, never these
                 start = Path(scene.still_path) if scene.still_path and Path(scene.still_path).exists() else None
                 lead = start or frame  # the scene's own first frame, else the previous clip's last one
-                if lead and pictured < MAX_SCENE_IMAGES:
+                if lead and gen.provider == Provider.FLOW:
+                    # Flow starts the clip exactly from this frame (its Frames mode), which takes no other pictures:
+                    # the frame already shows everyone, and the prompt describes them in words, never "picture N"
+                    paths, pictured = [str(lead)], 0
+                    if is_structured(scene.script()):
+                        prompt = compile_prompt(scene.script(), [dict(c, image_path=None) for c in library], gen.style,
+                                                gen.language, gen.aspect, fit=True, **_prompt_options(gen))
+                    extra.append(STARTS_FROM.format(n=1))
+                elif lead and pictured < MAX_SCENE_IMAGES:
                     paths = [*paths[:pictured], str(lead), *paths[pictured:]][:MAX_SCENE_IMAGES]
                     extra.append((STARTS_FROM if start or gen.lock_frames else CONTINUE_FROM).format(n=pictured + 1))
                 if scene.redos and scene.check_note.startswith("Remade once: "):  # say what went wrong last time
                     extra.append(f"Fix from the last try: {_fit_text(scene.check_note[13:].rstrip('.'), 300)}.")
                 room = MAX_PROMPT - len("\n".join(extra)) - 1
                 if extra and len(prompt) > room:
-                    prompt = compile_prompt(scene.script(), library, gen.style, gen.language, gen.aspect, fit=True,
-                                            room=room, **_prompt_options(gen))
+                    worded = paths == [str(lead)] and gen.provider == Provider.FLOW  # as above: no pictures but the frame
+                    prompt = compile_prompt(scene.script(),
+                                            [dict(c, image_path=None) for c in library] if worded else library,
+                                            gen.style, gen.language, gen.aspect, fit=True, room=room,
+                                            **_prompt_options(gen))
                 prompt = "\n".join([prompt, *extra])[:MAX_PROMPT]
                 images = [Path(p) for p in paths if Path(p).exists()]
-                job_id = gen_client.submit(prompt, gen.aspect, ref, images)
+                start_at = images.index(Path(lead)) if lead and Path(lead) in images else None
+                job_id = gen_client.submit(prompt, gen.aspect, ref, images, provider=gen.provider, frame=start_at)
             except GeneratorError as e:
-                pause = _worker_pause(gen_client)
+                pause = _worker_pause(gen_client, lane)
                 if pause:
                     self._pause(gen, pause)
                 else:
@@ -258,9 +279,10 @@ class GenerationService:
                 cast = [cast_sheet(c) for c in self._library(s, gen.user_id) if c["id"] in (gen.cast_ids or [])]
                 job_id = client.plan(gen.prompt, gen.aspect, f"gen-{gen.id}-plan-{uuid.uuid4().hex[:6]}",
                                      len(gen.scenes), cast=cast, style=gen.style or "", language=gen.language or "",
-                                     rules=plan_rules(gen.genre or "general", len(gen.scenes)))
+                                     rules=plan_rules(gen.genre or "general", len(gen.scenes)),
+                                     clip_seconds=scene_seconds(gen))
             except GeneratorError as e:
-                pause = _worker_pause(client)
+                pause = _worker_pause(client, "chat")
                 if pause:
                     self._pause(gen, pause)
                 else:
@@ -271,10 +293,12 @@ class GenerationService:
             log.info("generation %s planning %d scenes as %s", gen_id, len(gen.scenes), job_id)
 
     def _pause(self, gen: Generation, pause: dict) -> None:
-        """Gemini stopped the whole account: keep finished scenes and wait until the user resumes this video."""
+        """Gemini or Flow stopped: keep finished scenes and wait until the user resumes this video."""
         done, total = _scene_counts(gen)
         gen.status, gen.worker_job_id, gen.submitted_at, gen.poll_errors = GenStatus.PAUSED, None, None, 0
-        if pause.get("kind") == "limit_reached":
+        if pause.get("kind") == "limit_reached" and pause.get("provider") == Provider.FLOW:
+            gen.error = "Google Flow is out of credits. Click Resume on this video once you have Flow credits again."
+        elif pause.get("kind") == "limit_reached":
             gen.error = "Gemini's video limit has been reached. Click Resume on this video once the limit resets."
         else:
             gen.error = (pause.get("message") or "Gemini stopped generating.") + " Then click Resume on this video."
@@ -326,9 +350,12 @@ class GenerationService:
                 raise UserError("Only paused videos can be resumed.")
             if client is None:
                 raise UserError("Video generation is off: set WORKER_URL and WORKER_API_KEY in .env.", 503)
-            if _worker_pause(client):  # lift the worker's pause too, so one click is enough
+            # lift the worker's pauses this video waits on too (its clips', Gemini's chat), so one click is enough
+            stopped = {(p.get("provider") or Provider.GEMINI) for p in (_worker_pause(client, gen.provider),
+                                                                      _worker_pause(client, "chat")) if p}
+            for site in sorted(stopped):
                 try:
-                    client.gemini("POST", "resume")
+                    client.site(site, "POST", "resume")
                 except GeneratorError as e:
                     raise UserError(e.message, 502) from e
             gen.status, gen.error = GenStatus.GENERATING, None
@@ -472,20 +499,21 @@ class GenerationService:
                 return
             cast = [c for c in self._library(s, gen.user_id) if c["id"] in (gen.cast_ids or [])]
             if st.status == "failed":
-                pause = _worker_pause(client)
+                pause = _worker_pause(client, "chat")
                 if pause:
                     self._pause(gen, pause)
                     return
                 # Gemini's chat failed on every attempt: a prompt that already sets out its timeline is split into
                 # the scenes here, so the video still gets made. A refusal is never worked around.
                 refused = re.search(r"safety|declined|real people", st.error or "", re.I)
-                own = None if refused else script_from_timeline(gen.prompt, len(gen.scenes), cast)
+                own = None if refused else script_from_timeline(gen.prompt, len(gen.scenes), cast,
+                                                                          clip_seconds=scene_seconds(gen))
                 if own is None:
                     gen.status = GenStatus.FAILED
                     gen.error = f"Gemini couldn't plan the scenes: {st.error or 'no reason given.'}"
                     return
                 log.info("generation %s: Gemini's planner failed; using the prompt's own timeline", gen_id)
-                st.scenes, st.bible = own, {}
+                st.scenes, st.bible = own, bible_from_prompt(gen.prompt, cast)
             items = [x for x in (st.scenes or []) if isinstance(x, dict) or (isinstance(x, str) and x.strip())]
             if len(items) < len(gen.scenes):
                 gen.status, gen.error = GenStatus.FAILED, "Gemini didn't write all the scenes. Retry it."
@@ -558,7 +586,7 @@ class GenerationService:
             if st.final_prompt:
                 gen.final_prompt = st.final_prompt
             if st.status == "failed":
-                pause = _worker_pause(client)
+                pause = _worker_pause(client, gen.provider)
                 if pause:
                     self._pause(gen, pause)
                     return
@@ -570,8 +598,10 @@ class GenerationService:
                     gen.worker_job_id, gen.submitted_at, gen.poll_errors = None, None, 0
                     log.info("generation %s scene %d remake failed: keeping the first version", gen_id, scene.position)
                     return  # the next tick carries on from here
-                if "comes from Gemini" in message:  # its plain error twice in a row on one scene
-                    message += (" If this scene keeps failing, Gemini may be refusing it without saying so (it does "
+                site = "Google Flow" if "comes from Google Flow" in message else \
+                    "Gemini" if "comes from Gemini" in message else None
+                if site:  # its plain error twice in a row on one scene
+                    message += (f" If this scene keeps failing, {site} may be refusing it without saying so (it does "
                                 "this e.g. when a character could be taken for a child): see the notes under the "
                                 "prompt in the Studio.")
                 if "real people" in message:  # say whose pictures went with the clip, so the user knows whom to fix
@@ -623,7 +653,7 @@ class GenerationService:
                 return
             gen.worker_job_id, gen.job_kind, gen.submitted_at, gen.poll_errors = None, "", None, 0
             if st.status == "failed":
-                pause = _worker_pause(client)
+                pause = _worker_pause(client, "flow" if step == "still" and gen.provider == Provider.FLOW else "chat")
                 if pause:
                     self._pause(gen, pause)
                     return
@@ -778,7 +808,7 @@ class GenerationService:
                     if failed else prompt if approve else ""
             if approve and not failed:
                 gen.status, gen.error = GenStatus.GENERATING, None
-            out = [{"prompt": p, "length": len(p), "warnings": scene_warnings(sc, p, library)}
+            out = [{"prompt": p, "length": len(p), "warnings": scene_warnings(sc, p, library, scene_seconds(gen))}
                    for sc, p in zip(script, prompts)]
         if approve and failed:
             log.info("generation %s script edited after failing: retrying", gen_id)
@@ -865,9 +895,20 @@ def _scene_error(gen: Generation, scene: Scene | None, message: str) -> str:
     return f"Scene {scene.position}: {message}" if scene and len(gen.scenes) > 1 else message
 
 
-def _worker_pause(client) -> dict | None:
-    """The worker's account pause (limit reached, signed out, …), or None if it isn't paused or can't be asked."""
+def _worker_pause(client, lane: str = Provider.GEMINI) -> dict | None:
+    """The worker's pause (limit reached, out of credits, signed out, …) that stops `lane`: a provider's clips
+    (gemini | flow) or Gemini's "chat" (scripts, stills, checks). None if it isn't paused or can't be asked."""
     if client is None:
         return None
     health = client.ping()
-    return (health.details.get("account_paused") or None) if health.ok else None
+    if not health.ok:
+        return None
+    pauses = health.details.get("pauses")
+    if pauses is None:  # a worker from before Flow: one pause for everything
+        return health.details.get("account_paused") or None
+    return pauses.get(lane) or None
+
+
+def scene_seconds(gen: Generation) -> int:
+    """How long each of the video's scenes (one clip) is: 10 s with Gemini, 8 s with Google Flow."""
+    return SCENE_SECONDS.get(gen.provider or Provider.GEMINI, 10)

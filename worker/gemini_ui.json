@@ -109,6 +109,8 @@
     "reply_busy": [
       "button[aria-label*='Stop response' i]",
       "button[aria-label='Stop']",
+      "button[aria-label*='Stop generating' i]",
+      "button.send-button.stop",
       "button:has-text('Answer now')"
     ],
     "response_video": [

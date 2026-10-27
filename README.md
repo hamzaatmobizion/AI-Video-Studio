@@ -30,6 +30,41 @@ Then open http://localhost:8000 (or your `APP_PORT`), click **Create one** to si
 4. **Studio:** write a prompt, choose 9:16 or 16:9, then click Generate.
 
 Other commands: `./run.sh test`, `./run.sh doctor`, `./run.sh help`.
+
+## Google Flow (second screen)
+The **Flow** screen (`/flow`) is the same Studio (prompt, duration, characters, review, lock characters, clip
+checks), but every clip is made in **Google Flow** (labs.google/fx/tools/flow) with **Veo 3.1 - Lite**, paid with
+your Flow credits. You pick the platform per video: Studio makes Gemini videos, Flow makes Flow videos, and each
+screen lists only its own.
+- **8-second scenes.** Flow clips are 8 s, so durations go in 8-second steps (8 s to 1:36). Gemini's chat still
+  writes the script, in 8-second scenes. That uses none of Gemini's daily video limit.
+- **No Gemini quota.** With "Lock characters", the first scene's opening frame is drawn in Flow's Image mode
+  (`Nano Banana 2.1`, `FLOW_IMAGE_MODEL_LABEL` to change it; one Flow image per video), not by Gemini, and later
+  scenes start from the previous clip's last frame, as with Gemini.
+- **Direct mode, one model, one clip.** Each clip opens a new Flow project, switches Flow's **Agent** toggle off (the
+  prompt goes straight to the model, never through Flow's agent), and sets Video · `Veo 3.1 - Lite` · 720p · 8 s ·
+  the aspect · **x1** (about 10 credits per clip). `FLOW_MODEL_LABEL` changes the model. If any setting can't be
+  set, the clip fails rather than spend other credits.
+- **Same sign-in.** Flow uses the worker's browser profile, so the Google account is Gemini's. Settings → Google Flow
+  opens a Flow window and checks the session.
+- **Pictures.** A scene with a first frame (the locked still, or the previous clip's last frame) starts exactly
+  from it in Flow's *Frames* mode (the Start slot), so place, people and style carry on; the prompt then describes
+  the characters in words, and what the prompt says about them (outfit, look) wins over their saved character. A
+  scene without one gets the character pictures as *Ingredients* (**+ → Upload media**). The worker clicks **I agree**
+  on Flow's "Rights to use this image" notice for you (approved by the account owner, like Gemini's upload consent).
+  It agrees to nothing else: a CAPTCHA or "confirm it's you" check pauses Flow until you complete it by hand in the
+  Flow window (Settings → Google Flow), then Resume Flow.
+- **Separate pause.** Running out of Flow credits (or a Flow sign-out) pauses only Flow videos; Gemini keeps going.
+  Gemini's video limit pauses only Gemini clips, so Flow videos still get their scripts. Resume each in Settings,
+  or with Resume on the paused video.
+- **One project per video.** A video's first Flow clip (or locked still) opens a new Flow project; its later clips and
+  stills go back into that same project (cleared of the last clip's pictures), so a video adds one project to your
+  Flow account, not one per scene. If it can't be reused, a new one is opened.
+- **Calibrate the page.** `.venv/bin/python -m worker check-flow` is read-only: it loads Flow's home page and checks the
+  sign-in. Only after Flow changes its page, `check-flow --project` also opens an empty project (no credits) to show
+  which selectors in `worker/flow_ui.json` match. Keep these runs rare: every automated visit is activity on the
+  account.
+
 To reset a forgotten password: `.venv/bin/python -m app.create_user` (same email, new password).
 
 **Accounts:** anyone who can reach the app can sign up. Each account has its own videos and its own
@@ -55,6 +90,8 @@ Videos made before accounts existed belong to the first account.
 | `STUDIO_API_KEY` | (none) | Worker Bearer key, at least 24 characters |
 | `GEMINI_MODEL_LABEL` | (unset; see `profile.json`) | Model to pick in Gemini's picker; empty = keep the current one |
 | `GEMINI_PLAN_MODELS` | `Flash,Pro` | Chat model(s) that write scene plans, comma-separated and tried in turn on retries; empty = keep the current one |
+| `FLOW_MODEL_LABEL` | (unset; see `profile_flow.json`) | Model picked in Google Flow's menu, default `Veo 3.1 - Lite` |
+| `FLOW_IMAGE_MODEL_LABEL` | (unset; see `profile_flow.json`) | Image model for a Flow video's locked first frame, default `Nano Banana 2.1` |
 | `GENERATION_TIMEOUT_SECONDS` | `900` | Maximum wait for Gemini to finish one clip |
 | `MAX_RETRIES` | `1` | Extra attempts after a QC or Gemini error |
 | `RETRY_DELAY_SECONDS` | `90` | Wait before a retry; other queued jobs run meanwhile |
@@ -79,15 +116,18 @@ Cancel on a finished video moves it to the Drive trash. Dismiss only hides the c
 
 ## Worker contract (the app polls; the worker never calls back)
 ```
-POST   /videos          {"prompt","aspect","ref"} JSON, or multipart with up to 3 images → {"job_id"}
+POST   /videos          {"prompt","aspect","ref","provider"?,"frame"?} JSON, or multipart with up to 3 images → {"job_id"}
+                          provider: gemini (default) | flow; frame: index of the image that is the start frame
+POST   /plans           {"prompt","aspect","ref","scenes","cast"?,"style"?,"language"?,"rules"?,"clip_seconds"?}
 POST   /stills          multipart: body={"description","aspect","names","previous"} + up to 4 images → {"job_id"}
 POST   /checks          multipart: body={"names","previous","frames"} + pictures, previous frame, clip frames → {"job_id"}
 GET    /videos/{id}     → {"status": queued|running|done|failed, "error", "video_url", "final_prompt"}
                           (+ "image_url" for portraits and stills, "check": {"ok","problems"} for checks)
 GET    /videos/{id}/file → MP4 (Bearer)
 DELETE /videos/{id}     → best-effort cancel
-GET    /health          → {"account_paused", "queued", "running", "gemini", ...}
+GET    /health          → {"account_paused", "pauses": {gemini, flow, chat}, "queued", "running", "gemini", "flow", ...}
 GET    /gemini/status · POST /gemini/login · /gemini/login/done · /gemini/check · /gemini/resume
+GET    /flow/status   · POST /flow/login   · /flow/login/done   · /flow/check   · /flow/resume
 ```
 - `error` is human-readable and shown verbatim.
 - A 4xx is a final failure. A 5xx or network error is retried on the next poll, and the job fails after 10 in a row.
@@ -95,9 +135,10 @@ GET    /gemini/status · POST /gemini/login · /gemini/login/done · /gemini/che
 
 ## Account safety (non-negotiable)
 - **Fixed sequence:** open, session check, Video tool, model, attach images, type, send, poll every 4 s, download.
-- **Navigation:** top-level navigation only to gemini.google.com, accounts.google.com, consent.google.com and www.google.com.
+- **Navigation:** top-level navigation only to gemini.google.com (Flow: labs.google), accounts.google.com, consent.google.com and www.google.com.
 - **No evasion:** no stealth, fingerprinting, proxies, CAPTCHA solving or account rotation.
-- **Stops:** a limit, sign-out, verification/CAPTCHA or "upgrade required" page stops all generation with a clear message.
+- **Stops:** a limit (Flow: out of credits), sign-out, verification/CAPTCHA or "upgrade required" page stops that
+  provider's generation (Gemini or Flow) with a clear message.
   Queued jobs fail with that message. Resume is manual (Settings → Resume generation).
 - **Safety refusals** fail the job at once. The prompt is never reworded.
 - **The browser profile is a credential:** owner-only (0700), never copied, backed up or moved. On a new machine, sign in again.

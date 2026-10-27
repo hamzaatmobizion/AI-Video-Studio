@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -37,9 +38,12 @@ def _plan_options(body: dict) -> dict:
     cast = [{k: str(c.get(k) or "").strip()[:n] for k, n in CAST_LIMITS.items()} for c in cast]
     if any(not c["name"] for c in cast):
         raise HTTPException(400, "Every cast member needs a name.")
+    seconds = body.get("clip_seconds")
+    if seconds is not None and (not isinstance(seconds, int) or isinstance(seconds, bool) or not 4 <= seconds <= 10):
+        raise HTTPException(400, "clip_seconds must be a number from 4 to 10.")
     opts = {"cast": cast, "style": str(body.get("style") or "").strip()[:300],
             "language": str(body.get("language") or "").strip()[:40],
-            "rules": str(body.get("rules") or "").strip()[:MAX_RULES]}
+            "rules": str(body.get("rules") or "").strip()[:MAX_RULES], "clip_seconds": seconds}
     return {k: v for k, v in opts.items() if v}
 
 
@@ -103,8 +107,20 @@ def _image_ext(head: bytes) -> str | None:
     return None
 
 
+def _check_flow_after(gemini: GeminiSession, flow: GeminiSession, stop: threading.Event,
+                      wait: float = 180.0) -> None:
+    """Check Flow's session at worker start, after Gemini's own check (both open the one browser profile)."""
+    stop.wait(2.0)
+    deadline = time.monotonic() + wait
+    while gemini.checking and time.monotonic() < deadline and not stop.is_set():
+        stop.wait(1.0)
+    if not stop.is_set():
+        flow.check_in_background()
+
+
 def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, session: GeminiSession,
-               start_background: bool = True) -> FastAPI:
+               start_background: bool = True, flow_session: GeminiSession | None = None) -> FastAPI:
+    """`session`: Gemini's sign-in window and check; `flow_session`: Google Flow's (same profile), if Flow is on."""
     stop = threading.Event()
 
     @asynccontextmanager
@@ -117,6 +133,9 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
             thread = threading.Thread(target=runner.run_forever, args=(stop,), name="runner", daemon=True)
             thread.start()
             session.check_in_background()  # fresh Gemini status after every start (headless, no window)
+            if flow_session is not None:  # then Flow's, once Gemini's check has let go of the browser profile
+                threading.Thread(target=_check_flow_after, args=(session, flow_session, stop), name="flow-check",
+                                 daemon=True).start()
         yield
         stop.set()
 
@@ -136,9 +155,7 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
     # ---- /videos (the web app's contract) ---------------------------------
     @app.post("/videos", dependencies=[Depends(auth)])
     async def create_video(request: Request):
-        pause = runner.paused()
-        if pause:
-            raise HTTPException(409, pause["message"])
+        """One clip. `provider`: gemini (default) or flow; `frame`: which image is the start frame (Flow)."""
         ctype = request.headers.get("content-type", "")
         uploads = []
         if ctype.startswith("application/json"):
@@ -150,17 +167,26 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
                 raise HTTPException(400, "Body must be a JSON object.")
         elif ctype.startswith("multipart/form-data"):
             form = await request.form(max_files=3, max_fields=10)
-            body = {k: form.get(k) for k in ("prompt", "aspect", "ref")}
+            body = {k: form.get(k) for k in ("prompt", "aspect", "ref", "provider", "frame")}
             uploads = [f for f in form.getlist("images") if hasattr(f, "read")]
         else:
             raise HTTPException(415, "Send JSON or multipart/form-data.")
         prompt = str(body.get("prompt") or "").strip()
         aspect = str(body.get("aspect") or "")
         ref = str(body.get("ref") or "")[:100] or None
+        provider = str(body.get("provider") or "gemini")
+        profile = runner.profile_for(provider)
+        if profile is None:
+            raise HTTPException(400, f"Provider must be one of {', '.join(runner.generators)}.")
+        pause = runner.lane_pause(provider)
+        if pause:
+            raise HTTPException(409, pause["message"])
+        frame = body.get("frame")
+        frame = int(frame) if isinstance(frame, int) or (isinstance(frame, str) and frame.isdigit()) else None
         if not prompt or len(prompt) > MAX_PROMPT:
             raise HTTPException(400, f"The prompt must be 1–{MAX_PROMPT} characters.")
-        if aspect not in runner.profile["aspects"]:
-            raise HTTPException(400, f"Aspect must be one of {', '.join(runner.profile['aspects'])}.")
+        if aspect not in profile["aspects"]:
+            raise HTTPException(400, f"Aspect must be one of {', '.join(profile['aspects'])}.")
         if len(uploads) > 3:
             raise HTTPException(400, "At most 3 reference images.")
         images = []
@@ -181,14 +207,15 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
                 p = d / f"upload-{i}.{ext}"
                 p.write_bytes(data)
                 paths.append(str(p))
-        store.create(prompt, aspect, ref, paths, job_id=jid)
-        log.info("job %s created (images=%d)", jid, len(paths))
+        store.create(prompt, aspect, ref, paths, job_id=jid, provider=provider,
+                     options={"frame": frame} if frame is not None and frame < len(paths) else None)
+        log.info("job %s created (%s, images=%d)", jid, provider, len(paths))
         return {"job_id": jid}
 
     @app.post("/plans", dependencies=[Depends(auth)])
     async def create_plan(request: Request):
         """Queue a job in which Gemini (chat) writes a `scenes`-scene script from one idea."""
-        pause = runner.paused()
+        pause = runner.lane_pause("chat")
         if pause:
             raise HTTPException(409, pause["message"])
         try:
@@ -256,30 +283,36 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
 
     @app.post("/stills", dependencies=[Depends(auth)])
     async def create_still(request: Request):
-        """Queue a job in which Gemini (chat) draws one scene's first frame from `description`, with the attached
-        pictures (characters, then the previous shot's last frame) as the exact look."""
-        pause = runner.paused()
+        """Queue a job in which one scene's first frame is drawn from `description`, with the attached pictures
+        (characters, then the previous shot's last frame) as the exact look: by Gemini's chat, or with `provider`
+        flow by Google Flow's Image mode (a Flow video, so no Gemini image is used)."""
+        body, images, _, _ = await _form_with_images(request, 4)
+        provider = str(body.get("provider") or "gemini")
+        profile = runner.profile_for(provider)
+        if profile is None:
+            raise HTTPException(400, f"Provider must be one of {', '.join(runner.generators)}.")
+        pause = runner.lane_pause("flow" if provider == "flow" else "chat")
         if pause:
             raise HTTPException(409, pause["message"])
-        body, images, _, _ = await _form_with_images(request, 4)
         description = str(body.get("description") or "").strip()
         aspect = str(body.get("aspect") or "")
         if not description or len(description) > MAX_PROMPT:
             raise HTTPException(400, f"The description must be 1–{MAX_PROMPT} characters.")
-        if aspect not in runner.profile["aspects"]:
-            raise HTTPException(400, f"Aspect must be one of {', '.join(runner.profile['aspects'])}.")
+        if aspect not in profile["aspects"]:
+            raise HTTPException(400, f"Aspect must be one of {', '.join(profile['aspects'])}.")
         names = [str(n)[:60] for n in body.get("names") or []][:3]
         jid = uuid.uuid4().hex[:16]
         store.create(still_instruction(description, aspect, names, bool(body.get("previous"))), aspect,
-                     str(body.get("ref") or "")[:100] or None, _save_images(jid, images), job_id=jid, kind="portrait")
-        log.info("job %s created (still, images=%d)", jid, len(images))
+                     str(body.get("ref") or "")[:100] or None, _save_images(jid, images), job_id=jid, kind="portrait",
+                     provider=provider)
+        log.info("job %s created (still, %s, images=%d)", jid, provider, len(images))
         return {"job_id": jid}
 
     @app.post("/checks", dependencies=[Depends(auth)])
     async def create_check(request: Request):
         """Queue a job in which Gemini (chat, text only) watches a new clip, sound included, and checks it against
         the characters' pictures, the previous clip and what the scene should show and say."""
-        pause = runner.paused()
+        pause = runner.lane_pause("chat")
         if pause:
             raise HTTPException(409, pause["message"])
         body, images, videos, stills = await _form_with_images(request, 3, 2, 4)
@@ -316,7 +349,7 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
     @app.post("/portraits", dependencies=[Depends(auth)])
     async def create_portrait(request: Request):
         """Queue a job in which Gemini (chat) draws one character portrait of `description` in `style`."""
-        pause = runner.paused()
+        pause = runner.lane_pause("chat")
         if pause:
             raise HTTPException(409, pause["message"])
         try:
@@ -387,6 +420,11 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
         return {
             "ok": True,
             "account_paused": pause,
+            # what stops each lane: a provider's clips, or Gemini's chat (plans, stills, checks)
+            "pauses": {name: runner.lane_pause(name) for name in (*runner.generators, "chat")},
+            "providers": {name: {"max_clip_duration": g.profile.get("max_clip_duration"),
+                                 "model": g.profile.get("model_label")} for name, g in runner.generators.items()},
+            "flow": flow_session.status() if flow_session is not None else None,
             "queued": store.count("queued"),
             "running": store.count("running"),
             "gemini": session.status(),
@@ -415,5 +453,33 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
     def gemini_resume():
         runner.resume()
         return session.status()
+
+    # ---- Google Flow (same profile, its own status and pause) ---------------
+    def _flow() -> GeminiSession:
+        if flow_session is None:
+            raise HTTPException(404, "Google Flow isn't set up in this worker.")
+        return flow_session
+
+    @app.get("/flow/status", dependencies=[Depends(auth)])
+    def flow_status():
+        return _flow().status()
+
+    @app.post("/flow/login", dependencies=[Depends(auth)])
+    def flow_login():
+        return _flow().open_window()
+
+    @app.post("/flow/login/done", dependencies=[Depends(auth)])
+    def flow_login_done():
+        return _flow().done(background=True)
+
+    @app.post("/flow/check", dependencies=[Depends(auth)])
+    def flow_check(background: bool = False):
+        return _flow().start_check() if background else _flow().check()
+
+    @app.post("/flow/resume", dependencies=[Depends(auth)])
+    def flow_resume():
+        _flow()
+        runner.resume("flow")
+        return flow_session.status()
 
     return app

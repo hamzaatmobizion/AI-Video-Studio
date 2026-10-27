@@ -624,9 +624,18 @@ def test_portrait_needs_a_description(api):
 
 
 def test_portrait_refused_while_paused(api):
-    api.runner.pause("limit_reached", "Gemini's limit has been reached.")
+    api.runner.pause("authentication_required", "Gemini is signed out.")
     r = api.post("/portraits", headers=AUTH, json={"description": "x"})
     assert r.status_code == 409
+
+
+def test_video_limit_leaves_gemini_chat_free(api):
+    """Gemini's video limit stops its clips, not its chat: Flow videos still get their scripts."""
+    api.runner.pause("limit_reached", "Gemini's video limit has been reached.")
+    assert api.post("/videos", headers=AUTH, json={"prompt": "x", "aspect": "9:16"}).status_code == 409
+    assert api.post("/portraits", headers=AUTH, json={"description": "x"}).status_code == 200
+    api.runner.pause("limit_reached", "Limit.", chat=True)  # the chat itself hit it
+    assert api.post("/portraits", headers=AUTH, json={"description": "x"}).status_code == 409
 
 
 def test_image_limit_fails_the_portrait_without_pausing(ws, store, lock):
@@ -999,3 +1008,433 @@ def test_planner_keeps_objects_and_pace():
     assert "in which hand" in text and "doors and windows" in text and "At most one fast movement" in text
     assert "even a 'young man'), they are an adult and must look" in text and "late 20s or older" in text
     assert "never list a beard, mustache or stubble under 'never'" in text
+
+
+# ---- Google Flow -----------------------------------------------------------------
+@pytest.fixture
+def flow_api(ws, store, lock):
+    runner = Runner(ws, store, TestPatternGenerator(), lock,
+                    flow=TestPatternGenerator(profile="profile_flow.json"))
+    session = make_session(ws, store, lock)
+    flow = GeminiSession(ws, store, lock, inspector=lambda s: {"state": "connected", "message": "ok", "model": None},
+                         opener=lambda s: FakeProc(), status_key="flow_status", pause_key="account_pause:flow",
+                         name="Google Flow")
+    app = create_app(ws, store, runner, session, start_background=False, flow_session=flow)
+    with TestClient(app) as c:
+        c.runner = runner
+        yield c
+
+
+def test_flow_clip_goes_to_flow(flow_api, store):
+    r = flow_api.post("/videos", headers=AUTH, data={"prompt": "a boat", "aspect": "9:16", "provider": "flow",
+                                                     "frame": "1"},
+                      files=[("images", ("a.png", PNG, "image/png")), ("images", ("b.jpg", JPG, "image/jpeg"))])
+    jid = r.json()["job_id"]
+    flow_api.runner.tick()
+    gemini, flow = flow_api.runner.generators["gemini"], flow_api.runner.generators["flow"]
+    assert store.get(jid)["status"] == "done" and store.get(jid)["provider"] == "flow"
+    assert not gemini.calls and len(flow.calls) == 1 and flow.calls[0].frame == 1
+    assert len(flow.calls[0].images) == 2
+    health = flow_api.get("/health", headers=AUTH).json()
+    assert health["providers"]["flow"] == {"max_clip_duration": 8, "model": "Veo 3.1 - Lite"}
+
+
+def test_unknown_provider_refused(api, flow_api):
+    assert api.post("/videos", headers=AUTH, json={"prompt": "x", "aspect": "9:16", "provider": "flow"}).status_code == 400
+    assert flow_api.post("/videos", headers=AUTH,
+                         json={"prompt": "x", "aspect": "9:16", "provider": "sora"}).status_code == 400
+    assert api.get("/flow/status", headers=AUTH).status_code == 404
+
+
+def test_flow_out_of_credits_pauses_flow_only(flow_api, store):
+    from worker.flow_browser import stop_error as flow_stop
+    runner = flow_api.runner
+    runner.generators["flow"].script = [flow_stop("limit")]
+    a = store.create("a", "9:16", None, provider="flow")
+    b = store.create("b", "9:16", None, provider="flow")
+    c = store.create("c", "9:16", None)
+    plan = store.create("idea", "9:16", None, kind="plan", scene_count=2)
+    runner.tick()
+    assert store.get(a)["status"] == "failed" and "out of credits" in store.get(a)["error"]
+    assert store.get(b)["status"] == "failed"  # the Flow queue fails with the same message
+    assert runner.paused("flow")["kind"] == "limit_reached" and runner.paused() is None
+    runner.tick()
+    runner.tick()
+    assert store.get(c)["status"] == "done" and store.get(plan)["status"] == "done"  # Gemini carries on
+    health = flow_api.get("/health", headers=AUTH).json()
+    assert health["account_paused"] is None and health["pauses"]["flow"]["kind"] == "limit_reached"
+    assert health["flow"]["state"] == "limit_reached"
+    r = flow_api.post("/videos", headers=AUTH, json={"prompt": "d", "aspect": "9:16", "provider": "flow"})
+    assert r.status_code == 409 and "out of credits" in r.json()["detail"]
+    assert flow_api.post("/videos", headers=AUTH, json={"prompt": "d", "aspect": "9:16"}).status_code == 200
+    flow_api.post("/flow/resume", headers=AUTH)
+    assert runner.paused("flow") is None
+    assert flow_api.post("/videos", headers=AUTH, json={"prompt": "d", "aspect": "9:16", "provider": "flow"}).status_code == 200
+
+
+def test_gemini_pause_leaves_flow_clips_running(flow_api, store):
+    runner = flow_api.runner
+    runner.pause("authentication_required", "Gemini is signed out.")
+    jid = store.create("a", "9:16", None, provider="flow")
+    runner.tick()
+    assert store.get(jid)["status"] == "done"
+
+
+def test_plan_takes_clip_seconds(flow_api, store):
+    r = flow_api.post("/plans", headers=AUTH, json={"prompt": "idea", "aspect": "9:16", "scenes": 3, "clip_seconds": 8})
+    flow_api.runner.tick()
+    assert store.get(r.json()["job_id"])["status"] == "done"
+    assert flow_api.runner.generators["gemini"].calls[0].clip_seconds == 8
+    bad = flow_api.post("/plans", headers=AUTH, json={"prompt": "idea", "aspect": "9:16", "scenes": 3,
+                                                      "clip_seconds": 30})
+    assert bad.status_code == 400
+
+
+def test_flow_ui_and_stop_text():
+    from worker.flow_browser import _without, load_ui as flow_ui, stop_error as flow_stop
+    ui = flow_ui()
+    assert "labs.google" in ui["allowed_hosts"] and "gemini.google.com" not in ui["allowed_hosts"]
+    stop = StopText(ui)
+    assert stop.classify("You're out of AI credits. Get more to keep creating.") == "limit"
+    assert stop.classify("This prompt might violate our policies.") == "safety"
+    assert stop.classify("Failed to generate. Try again.") == "error"
+    prompt = "two real people talking"
+    assert stop.classify(_without(f"Your prompt: {prompt}", prompt)) is None  # the prompt is never Flow's answer
+    assert isinstance(flow_stop("limit"), LimitReached) and "Flow" in flow_stop("signed_out").user_message
+
+
+def test_flow_navigation_guard_blocks_other_hosts():
+    from worker.flow_browser import load_ui as flow_ui
+
+    class Ctx:
+        def route(self, pattern, fn):
+            self.fn = fn
+
+    class Req:
+        def __init__(self, url):
+            self.url, self.frame = url, type("F", (), {"parent_frame": None})()
+
+        def is_navigation_request(self):
+            return True
+
+    class Route:
+        def __init__(self):
+            self.result = None
+
+        def abort(self):
+            self.result = "abort"
+
+        def continue_(self):
+            self.result = "continue"
+
+    ctx = Ctx()
+    install_navigation_guard(ctx, flow_ui()["allowed_hosts"])
+    for url, want in (("https://labs.google/fx/tools/flow", "continue"), ("https://evil.example/", "abort"),
+                      ("https://gemini.google.com/app", "abort")):
+        route = Route()
+        ctx.fn(route, Req(url))
+        assert route.result == want, url
+
+
+def test_flow_mode_for_pictures(ws):
+    from worker.flow_browser import FlowBrowserGenerator
+    from worker.generator import ClipRequest
+    pics = []
+    for i in range(4):
+        p = ws.data / f"p{i}.png"
+        p.write_bytes(PNG)
+        pics.append(p)
+    gen = FlowBrowserGenerator(ws)
+    assert gen.profile["model_label"] == "Veo 3.1 - Lite"
+    assert gen._mode_for(ClipRequest("j", 1, "x", "9:16")) == ("text", [])
+    assert gen._mode_for(ClipRequest("j", 1, "x", "9:16", images=pics)) == ("ingredients", pics[:3])
+    assert gen.ui["modes"] == {"text": "Frames", "frames": "Frames", "ingredients": "Ingredients"}
+    # a scene with a first frame starts exactly from it (Frames mode), the frame alone
+    assert gen._mode_for(ClipRequest("j", 1, "x", "9:16", images=pics[:2], frame=1)) == ("frames", [pics[1]])
+    assert gen._mode_for(ClipRequest("j", 1, "x", "9:16", images=pics[:2], frame=5)) == ("ingredients", pics[:2])
+    assert gen.ui["clip_settings"] == {"kind": "Video", "resolution": "720p", "duration": "8s", "count": "x1"}
+    ws2 = WorkerSettings(_env_file=None, STUDIO_DATA_PATH=ws.data, STUDIO_API_KEY=KEY, FLOW_MODEL_LABEL="Veo 3.1 - Fast")
+    assert ws2.flow_profile()["model_label"] == "Veo 3.1 - Fast"
+
+
+def test_flow_hidden_recaptcha_is_not_a_verification():
+    """Flow loads an invisible reCAPTCHA on every page: only a challenge on screen stops Flow."""
+    from worker.flow_browser import check_session as flow_session, load_ui as flow_ui
+
+    class Pg:
+        def __init__(self, challenge):
+            self.page = type("P", (), {"url": "https://labs.google/fx/tools/flow"})()
+            self.challenge = challenge
+
+        def matches(self, key):
+            return "iframe[src*='recaptcha']" if key == "captcha" else None  # always in the page
+
+        def find(self, key, timeout=5.0, **fmt):
+            if key == "captcha":
+                return object() if self.challenge else None
+            return object() if key == "new_project" else None
+
+        def body_text(self):
+            return "Google Flow  Flow Music  Flow TV  New project"
+
+    stop = StopText(flow_ui())
+    flow_session(Pg(challenge=False), stop)  # signed in: no error
+    with pytest.raises(VerificationRequired):
+        flow_session(Pg(challenge=True), stop)
+
+
+def test_flow_agrees_to_its_rights_notice_only(ws):
+    """The owner approved Flow's "Rights to use this image" notice: I agree is clicked, nothing else."""
+    from worker.flow_browser import FlowBrowserGenerator
+
+    class Btn:
+        def __init__(self, pg):
+            self.pg = pg
+
+        def click(self):
+            self.pg.agreed += 1
+            self.pg.notice = False
+
+    class Pg:
+        def __init__(self, notice, button=True):
+            self.notice, self.button, self.agreed = notice, button, 0
+            self.page = type("P", (), {"wait_for_timeout": lambda self, ms: None})()
+
+        def find(self, key, timeout=5.0, **fmt):
+            if key == "rights_notice":
+                return object() if self.notice else None
+            if key == "rights_agree":
+                return Btn(self) if self.notice and self.button else None
+            return None
+
+        def screenshot(self, settings, name):
+            return None
+
+    gen = FlowBrowserGenerator(ws)
+    assert gen._accept_rights_notice(Pg(notice=False)) is False
+    pg = Pg(notice=True)
+    assert gen._accept_rights_notice(pg) is True and pg.agreed == 1
+    with pytest.raises(GenerationError):
+        gen._accept_rights_notice(Pg(notice=True, button=False))
+    assert "I agree" in gen.ui["selectors"]["rights_agree"][0] and "Rights to use" in gen.ui["selectors"]["rights_agree"][0]
+
+
+def test_flow_still_is_drawn_in_flow(flow_api, store):
+    """A Flow video's locked first frame goes to Flow's Image mode, never to Gemini."""
+    import json as _json
+    body = {"description": "Ali at the river", "aspect": "9:16", "names": ["Ali"], "previous": False,
+            "provider": "flow"}
+    r = flow_api.post("/stills", headers=AUTH, data={"body": _json.dumps(body)},
+                      files=[("images", ("ali.png", PNG, "image/png"))])
+    jid = r.json()["job_id"]
+    job = store.get(jid)
+    assert job["kind"] == "portrait" and job["provider"] == "flow"
+    flow_api.runner.tick()
+    gemini, flow = flow_api.runner.generators["gemini"], flow_api.runner.generators["flow"]
+    assert store.get(jid)["status"] == "done" and not gemini.calls
+    assert len(flow.calls) == 1 and flow.calls[0].aspect == "9:16" and len(flow.calls[0].images) == 1
+    assert flow_api.get(f"/videos/{jid}", headers=AUTH).json()["image_url"]
+
+
+def test_flow_still_stops_only_flow(flow_api, store):
+    from worker.flow_browser import stop_error as flow_stop
+    from worker.jobs import lane
+    runner = flow_api.runner
+    runner.generators["flow"].script = [flow_stop("limit")]
+    still = store.create("frame", "9:16", None, kind="portrait", provider="flow")
+    portrait = store.create("draw", "3:4", None, kind="portrait")
+    assert lane(store.get(still)) == "flow" and lane(store.get(portrait)) == "chat"
+    runner.tick()
+    assert store.get(still)["status"] == "failed" and runner.paused("flow")["kind"] == "limit_reached"
+    assert runner.paused() is None
+    runner.tick()
+    assert store.get(portrait)["status"] == "done"  # Gemini's chat carries on
+    body = {"description": "x", "aspect": "9:16", "provider": "flow"}
+    import json as _json
+    r = flow_api.post("/stills", headers=AUTH, data={"body": _json.dumps(body)},
+                      files=[("images", ("a.png", PNG, "image/png"))])
+    assert r.status_code == 409 and "out of credits" in r.json()["detail"]
+
+
+def test_plan_instruction_sizes_lines_for_the_clip_length():
+    import worker.gemini_browser as gb
+    from worker.generator import PlanRequest
+    eight = gb.plan_instruction(PlanRequest("j", "x", "9:16", 3, clip_seconds=8))
+    assert "at most about 20 words per scene" in eight and "share a 8-second scene" in eight
+    assert "10-second" not in eight
+    ten = gb.plan_instruction(PlanRequest("j", "x", "9:16", 3))
+    assert "at most about 25 words per scene" in ten and "share a 10-second scene" in ten
+
+
+def test_plan_waits_while_gemini_thinks_before_its_first_word(ws, monkeypatch):
+    """Gemini (Pro) can think for minutes with Stop showing before any reply appears: that's progress, not a stall."""
+    import worker.gemini_browser as gb
+    monkeypatch.setattr(gb, "PLAN_IDLE", 0.05)
+    monkeypatch.setattr(gb, "PLAN_TIMEOUT", 5)
+
+    class Responses:
+        def __init__(self, pg):
+            self.pg = pg
+
+        def count(self):
+            return 1 if self.pg.polls > 6 else 0  # the reply appears only after the idle limit has long passed
+
+        def nth(self, i):
+            return type("R", (), {"inner_text": lambda _self, timeout=0: "the script"})()
+
+    class Pg:
+        polls = 0
+
+        def __init__(self):
+            pg = self
+
+            class P:
+                url = "https://gemini.google.com/app"
+
+                def wait_for_timeout(self, ms):
+                    pg.polls += 1
+                    time.sleep(0.02)
+            self.page = P()
+
+        def matches(self, key):
+            return None
+
+        def body_text(self):
+            return ""
+
+        def find(self, key, timeout=0):
+            return object() if key == "reply_busy" and self.polls <= 6 else None
+
+        def screenshot(self, *a):
+            return None
+
+    gen = gb.GeminiBrowserGenerator(ws)
+    gen.ui = dict(gen.ui, ab_survey=None)
+    pg = Pg()
+    gen._responses = lambda _pg: Responses(pg)
+    out = gen._wait_for_plan(pg, 0, 1, lambda: False, "j", parse=lambda text: {"scenes": [text]})
+    assert out == {"scenes": ["the script"]}
+
+
+def test_flow_unusual_activity_pauses_flow():
+    """Flow's "We noticed some unusual activity" failure is a flag on the browser: Flow stops (no retry, no waiting the
+    whole timeout), like a verification."""
+    from worker.flow_browser import load_ui as flow_ui, stop_error as flow_stop
+    stop = StopText(flow_ui())
+    text = ("Failed We noticed some unusual activity. Note that browser extensions that modify the page may cause "
+            "issues. Please visit the Help Center for more information.")
+    assert stop.classify(text) == "verification"
+    err = flow_stop("verification")
+    assert isinstance(err, VerificationRequired) and "unusual activity" in err.user_message
+
+
+def test_flow_failed_tile_stops_the_wait_at_once(ws):
+    from worker.flow_browser import FlowBrowserGenerator
+
+    class Loc:
+        def __init__(self, n, text=""):
+            self.n, self.text = n, text
+
+        def count(self):
+            return self.n
+
+        @property
+        def last(self):
+            return self
+
+        def inner_text(self, timeout=0):
+            return self.text
+
+    class Pg:
+        def __init__(self, n, text):
+            self.n, self.text = n, text
+            self.page = type("P", (), {"locator": lambda _s, sel: Loc(self.n, self.text)})()
+
+        def screenshot(self, *a):
+            return None
+
+    gen = FlowBrowserGenerator(ws)
+    gen._failed_before = 0
+    gen._raise_if_failed(Pg(0, ""), "p", "j")  # nothing failed: carry on waiting
+    with pytest.raises(VerificationRequired):
+        gen._raise_if_failed(Pg(1, "Failed We noticed some unusual activity."), "p", "j")
+    with pytest.raises(GenerationError) as e:
+        gen._raise_if_failed(Pg(1, "Failed Something about the input image."), "p", "j")
+    assert "Google Flow failed this clip: Something about the input image." in e.value.user_message
+    gen._failed_before = 1
+    gen._raise_if_failed(Pg(1, "Failed old one"), "p", "j")  # a failure from before this prompt doesn't count
+
+
+def test_plan_retries_soon(ws, store, lock):
+    from worker.pipeline import PLAN_RETRY_DELAY
+    s = WorkerSettings(_env_file=None, STUDIO_DATA_PATH=ws.data, STUDIO_API_KEY=KEY, RETRY_DELAY_SECONDS=90)
+    runner = Runner(s, store, TestPatternGenerator([GenerationError("Gemini's chat answered with an error.")]), lock)
+    jid = store.create("idea", "9:16", None, kind="plan", scene_count=2)
+    started = time.time()
+    runner.tick()
+    job = store.get(jid)
+    assert job["status"] == "queued" and job["not_before"] - started <= PLAN_RETRY_DELAY + 1
+
+
+def test_one_flow_project_per_video(ws, store, lock):
+    """A video's later Flow clips and stills go back into the project its first one opened, never another video's."""
+    from tests.fakes import make_clip
+    seen = []
+
+    def in_flow(req, should_cancel):
+        seen.append(req.project_url)
+        req.project_url = req.project_url or f"https://flow.google.com/project/{req.job_id}"
+        return make_clip(req.out_dir / f"attempt-{req.attempt}.mp4", 8.0)
+
+    flow = TestPatternGenerator([in_flow, in_flow, in_flow], profile="profile_flow.json")
+    runner = Runner(ws, store, TestPatternGenerator(), lock, flow=flow)
+    a1 = store.create("scene 1", "9:16", "gen-80-s1-aaaaaa", provider="flow")
+    store.create("scene 2", "9:16", "gen-80-s2-bbbbbb", provider="flow")
+    store.create("other video", "9:16", "gen-81-s1-cccccc", provider="flow")
+    runner.tick(); runner.tick(); runner.tick()
+    assert seen == ["", f"https://flow.google.com/project/{a1}", ""]  # video 80 reuses its project; 81 gets its own
+    gemini = store.create("gemini clip", "9:16", "gen-80-s3-dddddd")
+    runner.tick()
+    assert store.get(gemini)["status"] == "done"  # Gemini jobs never touch Flow projects
+
+
+def test_old_flow_project_isnt_reused(ws, store, lock):
+    runner = Runner(ws, store, TestPatternGenerator(), lock, flow=TestPatternGenerator(profile="profile_flow.json"))
+    job = {"ref": "gen-90-s2-ffffff", "provider": "flow"}
+    store.kv_set("flow_project:gen-90", {"url": "https://flow.google.com/project/x", "at": time.time() - 25 * 3600})
+    assert runner._flow_project(job) == ""
+    runner._remember_flow_project(job, "https://flow.google.com/project/y")
+    assert runner._flow_project(job) == "https://flow.google.com/project/y"
+    assert runner._flow_project({"ref": "portrait-x", "provider": "flow"}) == ""
+
+
+def test_flow_project_urls_stay_on_flow():
+    from worker.flow_browser import _project_url_ok
+    assert _project_url_ok("https://flow.google.com/project/df3a9326")
+    assert not _project_url_ok("https://evil.example/project/1")
+    assert not _project_url_ok("http://flow.google.com/project/1") and not _project_url_ok("https://flow.google.com/")
+    assert not _project_url_ok("")
+
+
+def test_flow_prompt_box_is_cleared_before_reuse(ws):
+    from worker.flow_browser import FlowBrowserGenerator
+    gen = FlowBrowserGenerator(ws)
+
+    class Btn:
+        def __init__(self, pg):
+            self.pg = pg
+
+        def click(self):
+            self.pg.pictures -= 1
+
+    class Pg:
+        def __init__(self, pictures, removable=True):
+            self.pictures, self.removable = pictures, removable
+            self.page = type("P", (), {"wait_for_timeout": lambda _s, ms: None})()
+
+        def find(self, key, timeout=0, **fmt):
+            return Btn(self) if key == "remove_input" and self.removable and self.pictures else None
+
+    gen._composer_pictures = lambda pg: pg.pictures
+    assert gen._clear_inputs(Pg(0)) and gen._clear_inputs(Pg(2))
+    assert not gen._clear_inputs(Pg(1, removable=False))  # won't go: a new project instead

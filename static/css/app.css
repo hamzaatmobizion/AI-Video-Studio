@@ -94,6 +94,7 @@ input[type=search] { padding:8px 10px; border:1px solid var(--line); border-radi
 .pill.failed, .pill.save_failed { background:color-mix(in srgb, var(--bad) 18%, transparent); color:var(--bad); }
 .pill.planning, .pill.generating, .pill.saving, .pill.paused { background:color-mix(in srgb, var(--accent) 18%, transparent); color:var(--accent); }
 .badge { font-size:.85em; }
+.badge.flow { padding:1px 7px; border-radius:999px; border:1px solid var(--accent); color:var(--accent); font-weight:600; }
 .pager { display:flex; justify-content:space-between; align-items:center; margin-top:16px; }
 .empty p { margin:0; }
 .history-link { margin-top:16px; }

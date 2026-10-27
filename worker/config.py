@@ -23,6 +23,8 @@ class WorkerSettings(BaseSettings):
     # spells of erroring on every plan while the other answered (Flash hung on 22 Oct, Pro failed on 23 Oct), so a
     # retry switches model.
     GEMINI_PLAN_MODELS: str = "Flash,Pro"
+    FLOW_MODEL_LABEL: str | None = None  # None → profile_flow.json ("Veo 3.1 - Lite"); the model picked in Flow
+    FLOW_IMAGE_MODEL_LABEL: str | None = None  # None → profile_flow.json ("Nano Banana 2.1"): Flow's first-frame stills
     GENERATION_TIMEOUT_SECONDS: int = 900
     MAX_RETRIES: int = 1
     RETRY_DELAY_SECONDS: int = 90  # wait before retrying: Gemini's "I encountered an error" fails again at once
@@ -71,6 +73,14 @@ class WorkerSettings(BaseSettings):
         prof = json.loads((HERE / "profile.json").read_text())
         if self.GEMINI_MODEL_LABEL is not None:
             prof["model_label"] = self.GEMINI_MODEL_LABEL or None
+        return prof
+
+    def flow_profile(self) -> dict:
+        prof = json.loads((HERE / "profile_flow.json").read_text())
+        if self.FLOW_MODEL_LABEL:
+            prof["model_label"] = self.FLOW_MODEL_LABEL
+        if self.FLOW_IMAGE_MODEL_LABEL:
+            prof["image_model_label"] = self.FLOW_IMAGE_MODEL_LABEL
         return prof
 
     def problems(self) -> list[str]:

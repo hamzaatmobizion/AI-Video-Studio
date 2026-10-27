@@ -10,7 +10,7 @@ from starlette.background import BackgroundTask
 
 from app.auth import require_api_user, require_post
 from app.checks import prompt_notes
-from app.enums import Aspect, GenStatus
+from app.enums import SCENE_SECONDS, Aspect, GenStatus, Provider
 from app.interfaces import StorageError
 from app.media import MAX_IMAGE_BYTES, MAX_IMAGES, MAX_MUSIC_BYTES, audio_kind, image_kind
 from app.models import Character, Generation
@@ -21,8 +21,7 @@ from app.services.generation import UserError, drive_name
 router = APIRouter()
 MAX_SCENE_TEXT = TEXT_LIMITS["action"]  # one scene's words; the clip prompt adds the format and quality rules
 MAX_IDEA = 10000  # one prompt that Gemini's chat turns into scene prompts
-MAX_SCENES = 12  # × ~10 s ≈ 2 minutes
-SCENE_SECONDS = 10
+MAX_SCENES = 12  # × 10 s = 2 minutes with Gemini, × 8 s = 1:36 with Google Flow
 
 _WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
           "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "half a": 0.5, "half an": 0.5}
@@ -34,9 +33,10 @@ _LENGTH = re.compile(r"\b(\d+(?:\.\d+)?|half an?|an?|one|two|three|four|five|six
 _CLOCK = re.compile(r"\b([0-2]):([0-5]\d)\b(?!\s*[ap]\.?m\b)", re.I)
 
 
-def duration_from_prompt(text: str) -> int | None:
+def duration_from_prompt(text: str, step: int = 10) -> int | None:
     """The video length the prompt asks for (e.g. "30 second", "1 minute", "1:30"), as a valid duration:
-    rounded up to whole scenes, 10 s to 2 minutes. The largest length mentioned wins; None if there's none."""
+    rounded up to whole `step`-second scenes, one scene to MAX_SCENES. The largest length mentioned wins; None if
+    there's none."""
     found = []
     for num, unit in _LENGTH.findall(text):
         n = _WORDS.get(" ".join(num.lower().split()))
@@ -46,13 +46,21 @@ def duration_from_prompt(text: str) -> int | None:
     longest = max((f for f in found if f > 0), default=None)
     if longest is None:
         return None
-    scenes = math.ceil(longest / SCENE_SECONDS)
-    return min(max(scenes, 1), MAX_SCENES) * SCENE_SECONDS
+    scenes = math.ceil(longest / step)
+    return min(max(scenes, 1), MAX_SCENES) * step
+
+
+def _provider(value: str) -> Provider:
+    try:
+        return Provider(value.strip().lower() or Provider.GEMINI)
+    except ValueError:
+        raise UserError("Choose Gemini or Google Flow.") from None
 
 
 @router.get("/api/generations")
-def list_generations(request: Request, user=Depends(require_api_user)):
-    cards = cards_for(request, user.id)
+def list_generations(request: Request, provider: str = "", user=Depends(require_api_user)):
+    """The cards of one screen: Studio (gemini) or Flow; every video without `provider`."""
+    cards = cards_for(request, user.id, _provider(provider) if provider else None)
     return {"cards": cards, "active": any(c["active"] for c in cards)}
 
 
@@ -62,13 +70,16 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
                             aspect: str = Form("9:16"), images: list[UploadFile] = File(default=[]),
                             cast: list[str] = Form(default=[]), style: str = Form(""), language: str = Form(""),
                             review: str = Form(""), genre: str = Form(""), music: UploadFile | None = File(None),
-                            lock_frames: str = Form(""), check_clips: str = Form("")):
+                            lock_frames: str = Form(""), check_clips: str = Form(""), provider: str = Form("")):
     """Either one `prompt` + `duration` (Gemini writes the script), or `scenes` written by the user.
     An empty `duration` (Default) takes the length from the prompt, else 10 seconds.
     `cast`: ids of the user's characters to use. `review`: stop for the user to edit and approve the script.
     `genre`: the video type (app/genres.py); empty (Auto) reads it from the prompt. `music`: one track under the
-    whole video. `lock_frames`: each scene starts from a still made first; `check_clips`: Gemini checks each clip."""
+    whole video. `lock_frames`: each scene starts from a still made first; `check_clips`: Gemini checks each clip.
+    `provider`: where the clips are made, gemini (10-second scenes) or flow (Google Flow, 8-second scenes)."""
     plan = None
+    provider = _provider(provider)
+    step = SCENE_SECONDS[provider]
     review = review.strip().lower() in ("1", "on", "true", "yes")
     if not all(c.strip().isdigit() for c in cast):
         raise UserError("Pick characters from the list.")
@@ -77,18 +88,19 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
         raise UserError(f"Pick at most {MAX_CAST} characters for one video.")
     if not scenes:
         if duration.strip().lower() in ("", "auto"):
-            duration = duration_from_prompt(prompt) or SCENE_SECONDS
+            duration = duration_from_prompt(prompt, step) or step
         else:
             duration = int(duration) if duration.strip().isdigit() else 0
-        if duration % SCENE_SECONDS or not SCENE_SECONDS <= duration <= MAX_SCENES * SCENE_SECONDS:
-            raise UserError(f"Duration must be {SCENE_SECONDS} seconds to {MAX_SCENES * SCENE_SECONDS // 60} minutes, "
-                            f"in steps of {SCENE_SECONDS} seconds.")
+        if duration % step or not step <= duration <= MAX_SCENES * step:
+            longest = MAX_SCENES * step
+            most = f"{longest // 60} minutes" if not longest % 60 else f"{longest // 60}:{longest % 60:02d}"
+            raise UserError(f"Duration must be {step} seconds to {most}, in steps of {step} seconds.")
         prompt = prompt.strip()
         if not prompt:
             raise UserError("Write the prompt first.")
         if len(prompt) > MAX_IDEA:
             raise UserError(f"Keep the prompt under {MAX_IDEA:,} characters.")
-        count = duration // SCENE_SECONDS
+        count = duration // step
         # Gemini's chat writes the script for a long video, condenses a long prompt for one clip, and
         # drafts it as a script whenever there is a cast to direct or a script to review.
         plan = count if count > 1 or len(prompt) > MAX_SCENE_TEXT or cast_ids or review else None
@@ -129,7 +141,8 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
     on = lambda v: v.strip().lower() in ("1", "on", "true", "yes")  # noqa: E731
     gen_id = request.app.state.service.create(user.id, scenes, aspect, checked, plan=plan, cast_ids=cast_ids,
                                               style=style, language=language, review=review, genre=genre,
-                                              music=track, lock_frames=on(lock_frames), check_clips=on(check_clips))
+                                              music=track, lock_frames=on(lock_frames), check_clips=on(check_clips),
+                                              provider=provider)
     return {"id": gen_id, "review": review}
 
 
@@ -139,6 +152,7 @@ class CheckBody(BaseModel):
     style: str = ""
     language: str = ""
     seconds: int = 0
+    provider: str = ""
 
 
 @router.post("/api/prompt-check")
@@ -147,8 +161,9 @@ def prompt_check(body: CheckBody, request: Request, user=Depends(require_api_use
     with request.app.state.db.session() as s:
         cast = [c.sheet() for c in s.scalars(select(Character).where(Character.user_id == user.id,
                                                                     Character.id.in_(body.cast[:MAX_CAST])))]
+    step = SCENE_SECONDS[_provider(body.provider)]
     return {"notes": prompt_notes(body.prompt[:MAX_IDEA], cast, body.style[:300], body.language[:40],
-                                   max(0, min(body.seconds, MAX_SCENES * SCENE_SECONDS)))}
+                                   max(0, min(body.seconds, MAX_SCENES * step)), clip=step)}
 
 
 class ScriptBody(BaseModel):

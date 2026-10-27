@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   interruptions INTEGER NOT NULL DEFAULT 0,  -- worker restarts while running
   clip_path TEXT,
   kind TEXT NOT NULL DEFAULT 'clip',         -- clip | plan (Gemini writes scene prompts)
+  provider TEXT NOT NULL DEFAULT 'gemini',   -- clip jobs: gemini | flow (where the clip is made)
   scene_count INTEGER,                       -- plan jobs: how many scene prompts to write
   result TEXT,                               -- plan jobs: JSON {bible, scenes} (older: a list of scenes)
   options TEXT,                              -- plan jobs: JSON {cast, style, language, rules}
@@ -35,6 +36,18 @@ CREATE TABLE IF NOT EXISTS events (
 """
 
 
+# Which queue a job waits in: anything Google Flow makes (clips, a Flow video's first-frame stills) in Flow's, a Gemini
+# clip in Gemini's, everything else (plans, portraits, checks) in Gemini's chat. Each can be paused on its own.
+LANE_SQL = "(CASE WHEN provider='flow' THEN 'flow' WHEN kind='clip' THEN provider ELSE 'chat' END)"
+
+
+def lane(job: dict) -> str:
+    provider = job.get("provider") or "gemini"
+    if provider == "flow":
+        return "flow"
+    return provider if job.get("kind", "clip") == "clip" else "chat"
+
+
 class JobStore:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,7 +59,8 @@ class JobStore:
             self._conn.executescript(SCHEMA)
             have = {r["name"] for r in self._conn.execute("PRAGMA table_info(jobs)")}
             for col, ddl in (("kind", "TEXT NOT NULL DEFAULT 'clip'"), ("scene_count", "INTEGER"),
-                             ("result", "TEXT"), ("options", "TEXT"), ("not_before", "REAL")):
+                             ("result", "TEXT"), ("options", "TEXT"), ("not_before", "REAL"),
+                             ("provider", "TEXT NOT NULL DEFAULT 'gemini'")):
                 if col not in have:  # databases made before plan jobs (or their options) existed
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
         path.chmod(0o600)
@@ -58,12 +72,12 @@ class JobStore:
     # ---- jobs --------------------------------------------------------------
     def create(self, prompt: str, aspect: str, ref: str | None, images: list[str] | None = None,
                job_id: str | None = None, kind: str = "clip", scene_count: int | None = None,
-               options: dict | None = None) -> str:
+               options: dict | None = None, provider: str = "gemini") -> str:
         jid = job_id or uuid.uuid4().hex[:16]
         now = time.time()
-        self._x("INSERT INTO jobs (id, ref, prompt, aspect, images, status, kind, scene_count, options, created_at, "
-                "updated_at) VALUES (?,?,?,?,?, 'queued', ?, ?, ?, ?, ?)",
-                (jid, ref, prompt, aspect, json.dumps(images or []), kind, scene_count,
+        self._x("INSERT INTO jobs (id, ref, prompt, aspect, images, status, kind, provider, scene_count, options, "
+                "created_at, updated_at) VALUES (?,?,?,?,?, 'queued', ?, ?, ?, ?, ?, ?)",
+                (jid, ref, prompt, aspect, json.dumps(images or []), kind, provider, scene_count,
                  json.dumps(options) if options else None, now, now))
         self.event(jid, "created")
         return jid
@@ -90,10 +104,14 @@ class JobStore:
     def set_images(self, jid: str, images: list[str]) -> None:
         self._x("UPDATE jobs SET images=? WHERE id=?", (json.dumps(images), jid))
 
-    def next_queued(self) -> dict | None:
+    def next_queued(self, skip_lanes: tuple[str, ...] = ()) -> dict | None:
+        """The oldest runnable queued job, leaving out the lanes (see `lane`) that are paused."""
+        skip = ",".join("?" * len(skip_lanes))
         row = self._x("SELECT id FROM jobs WHERE status='queued' AND cancel_requested=0 "
-                      "AND (not_before IS NULL OR not_before <= ?) ORDER BY created_at LIMIT 1",
-                      (time.time(),)).fetchone()
+                      "AND (not_before IS NULL OR not_before <= ?) "
+                      + (f"AND {LANE_SQL} NOT IN ({skip}) " if skip_lanes else "")
+                      + "ORDER BY created_at LIMIT 1",
+                      (time.time(), *skip_lanes)).fetchone()
         return self.get(row["id"]) if row else None
 
     def by_status(self, status: str) -> list[dict]:

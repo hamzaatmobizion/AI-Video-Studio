@@ -3,12 +3,12 @@
 {% block content %}
 <section class="panel rules">
   <h1>How to write a prompt for the best video</h1>
-  <p class="muted">Videos are made in 10-second clips that are joined together, and Gemini makes each clip on its own. The app already does most of the work of keeping them consistent; a few things only you can do.</p>
+  <p class="muted">Videos are made in short clips that are joined together: 10-second clips in the Studio (Gemini), 8-second clips on the Flow screen (Google Flow). Each clip is made on its own. The app already does most of the work of keeping them consistent; a few things only you can do.</p>
 
   <h2>The app does this for you</h2>
   <p class="muted small">No need to write these in your prompt.</p>
   <ul>
-    <li>Splits your story into 10-second clips, keeping every timed moment and every line you wrote.</li>
+    <li>Splits your story into clips (10 seconds with Gemini, 8 with Google Flow), keeping every timed moment and every line you wrote.</li>
     <li>Keeps faces, clothes, places and objects the same from clip to clip: your characters' portraits, a story bible, and each clip starting from the previous one's last frame.</li>
     <li>Gives each picked character the part that fits them, and tells you on the script page if one had no part.</li>
     <li>Tells Gemini the rules it often breaks: one action at a time, two hands each, things keep their state, no on-screen text, no crowds or fast fights in close-up.</li>
@@ -23,9 +23,9 @@
   <table class="rules-table">
     <thead><tr><th>Rule</th><th>Example</th></tr></thead>
     <tbody>
-      <tr><td><strong>At most 2 moments per 10 seconds.</strong> A moment is one action and its reaction or line. Give running, chasing, jumping or fighting its own 10 seconds.</td>
+      <tr><td><strong>At most 2 moments per clip</strong> (10 seconds with Gemini, 8 with Flow). A moment is one action and its reaction or line. Give running, chasing, jumping or fighting its own clip.</td>
           <td>10 s → 2 moments, 20 s → 4, 30 s → 6</td></tr>
-      <tr><td><strong>Keep lines short:</strong> about 20–25 spoken words per 10 seconds, everyone together.</td>
+      <tr><td><strong>Keep lines short:</strong> about 25 spoken words per 10-second Gemini clip, 20 per 8-second Flow clip, everyone together.</td>
           <td>Split a long speech across two clips.</td></tr>
       <tr><td><strong>Use characters with good portraits:</strong> full body, in the same style as the video. Name them in the prompt as they're named in your library.</td>
           <td>A Pixar-style 3D portrait for a cartoon video.</td></tr>

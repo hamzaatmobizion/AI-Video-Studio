@@ -5,9 +5,9 @@
   <div class="script-top">
     <div>
       <h1>Script · video #{{ g.id }}</h1>
-      <p class="muted small">{{ g.aspect }} · {{ g.scenes | length }} scene{{ '' if g.scenes | length == 1 else 's' }} of 10 seconds</p>
+      <p class="muted small">{{ g.aspect }} · {{ g.scenes | length }} scene{{ '' if g.scenes | length == 1 else 's' }} of {{ seconds }} seconds{% if g.provider == 'flow' %} · made in Google Flow{% endif %}</p>
     </div>
-    <a class="button secondary" href="/">Back to Studio</a>
+    <a class="button secondary" href="{{ '/flow' if g.provider == 'flow' else '/' }}">Back to {{ 'Flow' if g.provider == 'flow' else 'Studio' }}</a>
   </div>
   <p class="prompt">{{ g.prompt }}</p>
   {% if failed %}
@@ -72,5 +72,5 @@
 {% for key in ("framing", "angle", "movement", "lens") %}
 <datalist id="{{ key }}-options">{% for o in options[key] %}<option value="{{ o }}">{% endfor %}</datalist>
 {% endfor %}
-<script type="application/json" id="script-data">{{ {"scenes": scenes, "prompts": prompts, "style": g.style or "", "language": g.language or "", "genre": g.genre or "general", "bible": g.bible or {}, "library": library | map(attribute="id") | list, "names": library | map(attribute="name") | list, "positions": options.position, "max_words": max_words, "max_prompt": max_prompt, "clips": clips, "can_redo": can_redo, "checks": g.scenes | map(attribute="check_note") | list, "failed": failed} | tojson }}</script>
+<script type="application/json" id="script-data">{{ {"scenes": scenes, "prompts": prompts, "style": g.style or "", "language": g.language or "", "genre": g.genre or "general", "bible": g.bible or {}, "library": library | map(attribute="id") | list, "names": library | map(attribute="name") | list, "positions": options.position, "max_words": max_words, "seconds": seconds, "max_prompt": max_prompt, "clips": clips, "can_redo": can_redo, "checks": g.scenes | map(attribute="check_note") | list, "failed": failed} | tojson }}</script>
 {% endblock %}

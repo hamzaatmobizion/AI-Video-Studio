@@ -1,14 +1,21 @@
 {% extends "base.html" %}
+{% block title %}{{ 'Flow · ' if provider == 'flow' }}VideoGeneration{% endblock %}
 {% block content %}
 <section class="panel">
+  {% if provider == 'flow' %}
+  <h1>New video with Google Flow</h1>
+  <p class="muted">Every clip is made in Google Flow with <strong>Veo 3.1 - Lite</strong>, using your Flow credits, not Gemini's daily video limit. Its duration (up to 1:36) comes from your prompt unless you pick one. Gemini's chat writes the script in 8-second scenes (that uses no Gemini video); Flow makes them one by one and they're joined into one video. Your <a href="/characters">characters</a> work just as they do in Studio.</p>
+  {% else %}
   <h1>New video</h1>
   <p class="muted">Describe your video. Its duration (up to 2 minutes) comes from your prompt, e.g. “a 30-second video…”, unless you pick one. Gemini splits it into 10-second scenes, which are made one by one and joined into one video.</p>
+  {% endif %}
   {% if not can_generate %}
     <p class="notice">Video generation is off: set <code>WORKER_URL</code> and <code>WORKER_API_KEY</code> in <code>.env</code>.</p>
   {% elif not drive_connected %}
     <p class="notice">Connect Google Drive in <a href="/settings">Settings</a> first, so finished videos have somewhere to go.</p>
   {% endif %}
-  <form id="new-video">
+  <form id="new-video" data-step="{{ step }}" data-provider="{{ provider }}">
+    <input type="hidden" name="provider" value="{{ provider }}">
     <div id="auto-mode"{% if prefill_manual %} hidden{% endif %}>
       <p class="small prompt-help"><a href="/rules">How to write a prompt for the best video</a> · copy a ready-made format for any AI chat</p>
       <label>Prompt
@@ -17,7 +24,7 @@
       <label class="length">Duration
         <select name="duration" id="duration"{% if prefill_manual %} disabled{% endif %}>
           <option value=""{% if not prefill_duration %} selected{% endif %}>Default (from prompt)</option>
-          {% for s in range(10, 130, 10) %}
+          {% for s in range(step, step * 12 + 1, step) %}
           <option value="{{ s }}"{% if s == prefill_duration %} selected{% endif %}>{{ '%d seconds' | format(s) if s < 60 else '%d:%02d' | format(s // 60, s % 60) }}</option>
           {% endfor %}
         </select>
@@ -28,7 +35,7 @@
         {% for text in prefill_scenes %}
         <div class="scene">
           <label><span class="scene-label">Scene {{ loop.index }}</span>
-            <textarea name="scenes" rows="3" maxlength="1500" required placeholder="What happens in these 10 seconds"{% if not prefill_manual %} disabled{% endif %}>{{ text }}</textarea>
+            <textarea name="scenes" rows="3" maxlength="1500" required placeholder="What happens in these {{ step }} seconds"{% if not prefill_manual %} disabled{% endif %}>{{ text }}</textarea>
           </label>
           <button type="button" class="link remove-scene" aria-label="Remove scene"{% if prefill_scenes | length == 1 %} hidden{% endif %}>Remove</button>
         </div>
@@ -58,8 +65,13 @@
         {% endif %}
       </div>
       <label class="check"><input type="checkbox" name="review" value="1" {% if prefill_review %}checked{% endif %}> Let me review and edit the script (shots, dialogue, who is in each scene) before the clips are made</label>
+      {% if provider == 'flow' %}
+      <label class="check"><input type="checkbox" name="lock_frames" value="1" {% if prefill_lock %}checked{% endif %}> Lock characters (slower): draw the first scene's opening frame from the character pictures and start from it; every later scene starts exactly from the previous scene's last frame. The frame is drawn in Google Flow (Nano Banana, one Flow image per video), not Gemini.</label>
+      <label class="check"><input type="checkbox" name="check_clips" value="1" {% if prefill_check %}checked{% endif %}> Check each clip (slower): Gemini's chat watches each clip and compares it with the pictures, the previous scene and the script, and remakes it once in Flow if something is wrong. Adds 1–3 minutes per scene; a remake uses more Flow credits.</label>
+      {% else %}
       <label class="check"><input type="checkbox" name="lock_frames" value="1" {% if prefill_lock %}checked{% endif %}> Lock characters (slower): draw the first scene's opening frame from the character pictures and start from it; every later scene starts exactly from the previous scene's last frame. Uses one Gemini image per video.</label>
       <label class="check"><input type="checkbox" name="check_clips" value="1" {% if prefill_check %}checked{% endif %}> Check each clip (slower): Gemini watches each clip with its sound and compares it with the pictures, the previous scene and the script (people, clothes, place, hands, story, who speaks, lip-sync, voice), and remakes it once if something is wrong. Adds 1–3 minutes per scene; a remake uses another Gemini video.</label>
+      {% endif %}
     </fieldset>
     <div class="row">
       <fieldset class="aspect">
@@ -79,13 +91,13 @@
     <p class="warn" id="talk-note" hidden></p>
     <div class="prompt-notes" id="prompt-notes" hidden></div>
     <p class="error" id="new-error" hidden></p>
-    <button type="submit" id="generate" {% if not can_generate or not drive_connected %}disabled{% endif %}>Generate 10-second video</button>
-    <p class="muted small scene-hint">Each 10-second scene uses one Gemini video from your daily limit.</p>
+    <button type="submit" id="generate" {% if not can_generate or not drive_connected %}disabled{% endif %}>Generate {{ step }}-second video</button>
+    <p class="muted small scene-hint">{% if provider == 'flow' %}Each 8-second scene is one Google Flow clip (Veo 3.1 - Lite), paid with your Flow credits.{% else %}Each 10-second scene uses one Gemini video from your daily limit.{% endif %}</p>
   </form>
 </section>
-<section id="cards" class="cards">
+<section id="cards" class="cards" data-provider="{{ provider }}">
   {% for c in cards %}<div class="card-wrap" data-id="{{ c.id }}" data-hash="{{ c.hash }}">{{ c.html | safe }}</div>{% endfor %}
 </section>
-<p class="muted history-link"><a href="/history">See all your videos in History →</a></p>
+<p class="muted history-link">{% if provider == 'flow' %}Only videos made with Google Flow are shown here; Gemini ones are in <a href="/">Studio</a>. {% endif %}<a href="/history">See all your videos in History →</a></p>
 <script>window.STUDIO_ACTIVE = {{ 'true' if cards | selectattr('active') | list else 'false' }};</script>
 {% endblock %}

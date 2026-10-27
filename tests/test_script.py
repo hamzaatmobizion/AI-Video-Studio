@@ -48,7 +48,7 @@ def test_compile_repeats_library_words_camera_and_voice():
         "Ali hands Sara a red kite.",
         "Ali (voice: deep, calm, slow) says in Urdu: 'Hold it tight.'",
         "Sound: Wind, kite string humming.",
-        "Only the named characters speak, clearly and in sync with their lips.",
+        "Only the named characters speak, clearly and in sync with their lips. " + script.SPEAKERS,
         " ".join([script.ONE_SHOT, script.CONTINUITY, script.REALISM, script.NO_TEXT]),
     ]
 
@@ -440,7 +440,7 @@ def test_normalize_bible_keeps_known_bounded_fields():
         {"name": "Fiona", "look": "cream bunny, ears down", "never": "upright ears"}, {"name": "fiona", "look": "x"},
         {"name": "Empty"}, "junk"]})
     assert b["title"] == "Fiona" and "extra" not in b and b["style"] == ""
-    assert b["characters"] == [{"name": "Fiona", "look": "cream bunny, ears down", "never": "upright ears"}]
+    assert b["characters"] == [{"name": "Fiona", "look": "cream bunny, ears down", "never": "upright ears", "voice": ""}]
     assert script.normalize_bible(None)["characters"] == []
 
 
@@ -548,8 +548,8 @@ TIMED = ("Setting: A cozy kitchen at night.\n0–5 seconds: Ali walks in and say
 def test_script_from_timeline_splits_into_ten_second_scenes():
     from app.timeline import script_from_timeline
     scenes = script_from_timeline(TIMED, 2, [{"name": "Ali"}, {"name": "Sara"}, {"name": "Omar"}])
-    assert [s["action"] for s in scenes] == ['Ali walks in and says: "Hello!". Then Sara waves.',
-                                             "Ali laughs. Then They hug."]
+    assert [s["action"] for s in scenes] == ["Ali walks in and says. Then Sara waves.", "Ali laughs. Then They hug."]
+    assert scenes[0]["dialogue"] == [{"name": "Ali", "line": "Hello!"}]  # a spoken line, not words in the action
     assert scenes[0]["setting"] == "A cozy kitchen at night."
     assert [[c["name"] for c in s["characters"]] for s in scenes] == [["Ali", "Sara"], ["Ali"]]
     numbered = "Scene 1: A boat sails.\nScene 2: It docks.\nScene 3: Gulls fly.\nScene 4: Night falls."
@@ -557,6 +557,16 @@ def test_script_from_timeline_splits_into_ten_second_scenes():
                                                                            "Gulls fly. Then Night falls."]
     assert script_from_timeline("A paper boat on a rainy street.", 2, []) is None  # no timeline
     assert script_from_timeline("0–5 seconds: a boat.", 2, []) is None  # scene 2 would be empty
+
+
+def test_timeline_shorter_than_the_flow_scenes_is_spread_over_them():
+    """A 20-second timeline in three 8-second Flow scenes (24 s): nothing starts after 16 s, so by time the last
+    scene would be empty; its moments are spread in order instead."""
+    from app.timeline import script_from_timeline
+    scenes = script_from_timeline(TIMED, 3, [], clip_seconds=8)
+    assert [s["action"] for s in scenes] == ["Ali walks in and says. Then Sara waves.", "Ali laughs.", "They hug."]
+    assert scenes[0]["dialogue"] == [{"name": "Ali", "line": "Hello!"}]
+    assert script_from_timeline(TIMED, 5, [], clip_seconds=8) is None  # 4 moments can't fill 5 scenes
 
 
 def test_failed_plan_falls_back_to_the_prompts_timeline(app, authed, drive_connected, net):
@@ -939,3 +949,148 @@ def test_prompt_rules_page(authed):
     assert 'data-copy="#prompt-maker"' in page.text and 'id="prompt-format"' in page.text
     assert 'href="/rules"' in authed.get("/").text  # in the menu and above the prompt
 
+
+
+def test_spoken_words_fit_the_clip_length():
+    assert script.words_per_clip(10) == 25 and script.words_per_clip(8) == 20
+    scene = {"dialogue": [{"name": "Ali", "line": " ".join(["word"] * 22)}]}
+    assert not any("spoken words" in w for w in script.scene_warnings(scene, "p"))  # 22 fit in 10 s
+    assert any("about 20 fit in 8 seconds" in w for w in script.scene_warnings(scene, "p", seconds=8))
+
+
+def test_still_prompt_describes_people_as_the_clip_does():
+    """The locked first frame shows everyone as the clip will: what the prompt says (outfit, look) wins over the saved
+    character and their picture, and a person with no picture gets the bible's look, so nothing changes mid-clip."""
+    cast = [{"id": 1, "name": "Ali", "appearance": "slim man in his 30s", "outfit": "orange qameez",
+             "image_path": "var/characters/1.jpg"}]
+    bible = {"cast": [{"name": "Ali", "outfit": "white shalwar kameez and a colorful turban"}],
+             "characters": [{"name": "Seller", "look": "thick mustache, brown kameez and a Sindhi topi"}]}
+    scene = {"setting": "village street", "characters": [{"id": 1, "name": "Ali", "position": "frame left"},
+                                                         {"id": None, "name": "Seller", "position": "frame right"}],
+             "action": "Ali smiles. He runs."}
+    text = script.still_prompt(scene, cast, "cartoon", bible)
+    assert "Ali, frame left (picture 1), wearing white shalwar kameez and a colorful turban (not the clothes in the " \
+           "picture)" in text
+    assert "Seller (thick mustache, brown kameez and a Sindhi topi), frame right" in text
+    assert "orange qameez" not in text
+    plain = script.still_prompt(scene, cast, "cartoon", {})
+    assert "Ali, frame left (picture 1)." in plain  # nothing in the prompt: the picture carries their look
+
+
+
+# A prompt written out in full (people with looks and voices, timed lines, closing sound note), as in video #76
+WRITTEN = ("A 16-second Pakistani Punjabi village comedy, Pixar-style 3D cartoon animation.\n\n"
+           "Setting: A rural Punjabi village courtyard in daylight, a charpai and a clay water pot.\n\n"
+           "Shinda: A man in his 30s, thick black mustache, wearing a mustard shalwar kameez and red turban. "
+           "Voice: Overconfident, lively.\n\n"
+           "Billa: A man in his 30s, short black hair, stubble, wearing a blue shalwar kameez and brown waistcoat. "
+           "Voice: Teasing, deep.\n\n"
+           "0–8 seconds: Shinda proudly shows his phone to Billa. Shinda says: \"I'm a mobile expert now!\"\n\n"
+           "8–16 seconds: The phone rings and Shinda panics. Billa laughs and asks: \"Why don't you answer?\" "
+           "Shinda replies: \"Who knows who's inside it!\"\n\n"
+           "Sound: Phone ringtone, birds chirping, hearty laughter. No background music, no on-screen text.")
+
+
+def test_backup_script_keeps_the_prompts_people_lines_and_sound():
+    """When Gemini's script fails, the prompt's own one keeps who everyone is (look and voice), every spoken line as
+    dialogue, and the closing sound note in every scene, so each clip prompt describes them and asks for lip-sync."""
+    from app.timeline import bible_from_prompt, script_from_timeline
+    bible = script.normalize_bible(bible_from_prompt(WRITTEN, []))
+    assert [(c["name"], c["voice"]) for c in bible["characters"]] == [("Shinda", "Overconfident, lively"),
+                                                                     ("Billa", "Teasing, deep")]
+    assert "mustard shalwar kameez and red turban" in bible["characters"][0]["look"]
+    scenes = script_from_timeline(WRITTEN, 2, [], clip_seconds=8)
+    assert [[(d["name"], d["line"]) for d in s["dialogue"]] for s in scenes] == [
+        [("Shinda", "I'm a mobile expert now!")],
+        [("Billa", "Why don't you answer?"), ("Shinda", "Who knows who's inside it!")]]
+    assert all(s["sound"].startswith("Phone ringtone") for s in scenes)
+    assert all('"' not in s["action"] for s in scenes) and "Sound:" not in scenes[1]["action"]
+    sc = script.ensure_cast(script.normalize_scene(scenes[1], []), [], bible)
+    text = script.compile_prompt(sc, [], "cartoon", aspect="9:16", fit=True, bible=bible, music=False)
+    assert "Billa (A man in his 30s, short black hair" in text and "brown waistcoat" in text
+    assert "Billa (voice: Teasing, deep) says: 'Why don't you answer?'" in text
+    assert "in sync with their lips" in text and script.NO_TEXT in text
+
+
+def test_a_picked_character_the_prompt_describes_gets_its_words():
+    from app.timeline import bible_from_prompt
+    b = bible_from_prompt(WRITTEN, [{"name": "Billa"}])
+    assert [c["name"] for c in b["characters"]] == ["Shinda"] and b["cast"][0]["name"] == "Billa"
+    assert "brown waistcoat" in b["cast"][0]["look"] and b["cast"][0]["voice"] == "Teasing, deep"
+
+
+def test_spoken_lines_are_not_on_screen_text():
+    spoken = {"action": 'Billa laughs and asks: "Why don\'t you answer?"'}
+    assert script.NO_TEXT in script.quality_rules(spoken)
+    sign = {"action": 'A sign above the shop reads "Biryani House".'}
+    assert script.NO_TEXT not in script.quality_rules(sign)
+
+
+def test_note_when_picked_characters_are_not_in_the_prompt():
+    from app.checks import prompt_notes
+    notes = [n["text"] for n in prompt_notes(WRITTEN, [{"name": "Engineer"}], seconds=16, clip=8)]
+    assert any("You picked Engineer, but the prompt never names this character: its people are Shinda, Billa"
+               in n for n in notes)
+    assert not any("You picked" in n for n in prompt_notes(WRITTEN, [{"name": "Billa"}], seconds=16, clip=8))
+    assert not any("You picked" in n["text"] for n in prompt_notes("A man flies a kite.", [{"name": "Ali"}]))
+
+
+
+# ---- rules from reviewing a Flow video (#77): roles, prompt-described looks, lettering, one style, whose line ------
+CHACHA = {"id": 7, "name": "Chacha", "appearance": "50 man, white hairs, fatty body",
+          "outfit": "qameez, shalwar, parna and pagh", "image_path": "var/characters/7.jpg"}
+SELLER_BIBLE = {"cast": [{"name": "Chacha", "age": "in his 50s", "look": "thick black mustache, round face",
+                          "outfit": "wearing a white shalwar kameez and green turban"}],
+                "characters": [{"name": "Biryani Seller", "look": "a man in his 30s, trimmed beard, blue shalwar kameez"}]}
+STALL = {"setting": "A Punjabi village street with a biryani stall",
+         "characters": [{"id": 7, "name": "Chacha", "position": "frame left"},
+                        {"id": None, "name": "Biryani Seller", "position": "frame right"}],
+         "action": "Chacha grabs a plate. The seller holds out his hand.",
+         "dialogue": [{"id": 7, "name": "Chacha", "line": "Free biryani!"},
+                      {"id": None, "name": "Biryani Seller", "line": "Pay first!"}]}
+
+
+def test_prompt_described_look_takes_only_the_face_from_the_picture():
+    text = script.compile_prompt(STALL, [CHACHA], "Pixar-style, cartoon", bible=SELLER_BIBLE)
+    assert "Chacha, frame left, the same face and style as reference image 1, age: in his 50s, thick black " \
+           "mustache, round face, wearing a white shalwar kameez and green turban." in text
+    assert "wearing wearing" not in text
+
+
+def test_whose_line_is_whose_and_in_order():
+    text = script.compile_prompt(STALL, [CHACHA], "Pixar-style, cartoon", bible=SELLER_BIBLE)
+    assert script.SPEAKERS in text and script.SPEAKERS_IN_ORDER in text
+    one = dict(STALL, dialogue=STALL["dialogue"][:1])
+    assert script.SPEAKERS_IN_ORDER not in script.compile_prompt(one, [CHACHA], bible=SELLER_BIBLE)
+
+
+def test_no_lettering_and_one_style_for_everyone():
+    text = script.compile_prompt(STALL, [CHACHA], "Pixar-style, cartoon", bible=SELLER_BIBLE)
+    assert "no written words on signs, flags or objects" in text and "lettering on signs, flags or banners" in text
+    assert "Everyone in the same Pixar-style cartoon style, none more realistic." in text
+    alone = script.compile_prompt({"setting": "a quiet bedroom", "action": "Ali sleeps."}, [], "cartoon")
+    assert "lettering on signs" not in alone and "same cartoon style" not in alone  # no signage place, one person
+
+
+def test_planner_asks_for_places_roles_and_whose_line():
+    import worker.gemini_browser as gb
+    from worker.generator import PlanRequest
+    text = gb.plan_instruction(PlanRequest("j", "x", "9:16", 1, clip_seconds=8))
+    assert "say where each person is in relation to the main place or object and what their role there is" in text
+    assert "never give one person's line to another" in text
+
+
+def test_next_scene_starts_from_the_very_last_frame(tmp_path):
+    """Scene 2 continues from scene 1's final frame (8.0 s of 8), not one a quarter second earlier."""
+    import subprocess
+    from app.video_join import last_frame
+    clip = tmp_path / "scene-1.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=red:s=320x568:r=24:d=7.88",
+                    "-f", "lavfi", "-i", "color=c=blue:s=320x568:r=24:d=0.12",
+                    "-filter_complex", "[0][1]concat=n=2:v=1:a=0", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    str(clip)], check=True)  # red, then only its last 3 frames blue
+    frame = last_frame(clip, tmp_path / "scene-1-last.jpg")
+    rgb = subprocess.run(["ffmpeg", "-v", "error", "-i", str(frame), "-vf", "scale=1:1", "-f", "rawvideo",
+                          "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+    r, g, b = rgb[:3]
+    assert b > 150 and r < 100, (r, g, b)  # the blue final frame

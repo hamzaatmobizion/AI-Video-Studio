@@ -13,7 +13,7 @@ from app.auth import (csrf_token, current_user, hash_password, require_page_user
                       verify_password)
 from app import script as sc
 from app.genres import GENRE_LABELS
-from app.enums import ACTIVE, GenStatus
+from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.models import Character, Generation, User
 from app.routes.views import cards_for, settings_context
 
@@ -27,6 +27,16 @@ def render(request: Request, name: str, **ctx) -> HTMLResponse:
 
 @router.get("/", response_class=HTMLResponse)
 def studio(request: Request, prompt_from: int | None = None, user=Depends(require_page_user)):
+    return _studio(request, user, prompt_from, Provider.GEMINI)
+
+
+@router.get("/flow", response_class=HTMLResponse)
+def flow_studio(request: Request, prompt_from: int | None = None, user=Depends(require_page_user)):
+    """The same Studio, with every clip made in Google Flow (Veo 3.1 - Lite, Flow credits, 8-second scenes)."""
+    return _studio(request, user, prompt_from, Provider.FLOW)
+
+
+def _studio(request: Request, user, prompt_from: int | None, provider: Provider) -> HTMLResponse:
     st = request.app.state
     prefill = None
     if prompt_from is not None:  # "Use prompt again" from History
@@ -36,7 +46,8 @@ def studio(request: Request, prompt_from: int | None = None, user=Depends(requir
             prefill = None
     with st.db.session() as s:
         characters = s.scalars(select(Character).where(Character.user_id == user.id).order_by(Character.name)).all()
-    return render(request, "studio.html", cards=cards_for(request, user.id),
+    return render(request, "studio.html", cards=cards_for(request, user.id, provider), provider=provider,
+                  step=SCENE_SECONDS[provider],
                   can_generate=st.providers.generator() is not None,
                   drive_connected=st.providers.connection(user.id) is not None,
                   characters=characters, styles=sc.STYLES, max_cast=sc.MAX_CAST, genres=GENRE_LABELS,
@@ -52,7 +63,7 @@ def _prefill(gen: Generation | None) -> dict:
                 "prefill_genre": "", "prefill_lock": False, "prefill_check": False}
     manual = not gen.planned and len(gen.scenes) > 1
     return {"prefill_prompt": "" if manual else gen.prompt,
-            "prefill_duration": max(len(gen.scenes), 1) * 10,
+            "prefill_duration": max(len(gen.scenes), 1) * SCENE_SECONDS.get(gen.provider, 10),
             "prefill_scenes": [s.action or s.prompt for s in gen.scenes] if manual else [""],
             "prefill_manual": manual, "prefill_cast": gen.cast_ids or [], "prefill_style": gen.style or "",
             "prefill_language": gen.language or "", "prefill_review": bool(gen.review),
@@ -76,7 +87,8 @@ def script_page(gen_id: int, request: Request, user=Depends(require_page_user)):
                   prompts=[s.prompt for s in gen.scenes],
                   options={"framing": sc.FRAMINGS, "angle": sc.ANGLES, "movement": sc.MOVEMENTS, "lens": sc.LENSES,
                            "position": sc.POSITIONS, "time_of_day": sc.TIMES_OF_DAY, "style": sc.STYLES},
-                  max_words=sc.MAX_SPOKEN_WORDS, max_prompt=sc.MAX_PROMPT)
+                  max_words=sc.words_per_clip(SCENE_SECONDS.get(gen.provider, 10)), max_prompt=sc.MAX_PROMPT,
+                  seconds=SCENE_SECONDS.get(gen.provider, 10))
 
 
 HISTORY_STATUSES = {"all": "All", "ready": "Ready", "in_progress": "In progress", "failed": "Failed",

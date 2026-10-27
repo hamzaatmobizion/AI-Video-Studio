@@ -42,7 +42,7 @@
       <button data-post="/settings/gemini/resume" data-reload>Resume generation</button>
     {% endif %}
     {% if login_window_open or gemini.checking %}
-      <div id="gemini-watch" data-key="{{ gemini_key }}" hidden></div>
+      <div id="gemini-watch" data-key="{{ gemini_key }}" data-watch="gemini" hidden></div>
     {% endif %}
     {% if login_window_open %}
       <p class="notice">A Gemini window is open. Sign in to Google there (to switch accounts, sign out of Gemini
@@ -60,6 +60,39 @@
       {% endif %}
       <button class="secondary" data-post="/settings/gemini/check" data-reload>Check session</button>
     {% endif %}
+  {% else %}
+    <p class="muted">Available once the worker is connected.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Google Flow (Veo 3.1 - Lite)</h2>
+  {% if worker_configured and health.ok and flow %}
+    <p class="muted">Videos made on the <a href="/flow">Flow</a> screen are made in Google Flow with
+      {{ flow_model or 'Veo 3.1 - Lite' }}, using your Flow credits (8 seconds per scene). They use none of Gemini's
+      daily video limit. Flow uses the same browser profile and Google account as Gemini.</p>
+    <p><span class="dot {{ 'ok' if flow.state == 'connected' else 'bad' }}"></span>
+      <strong>{{ flow_label }}</strong>{% if flow.model %} · {{ flow.model }}{% endif %}</p>
+    {% if flow.message %}<p class="muted">{{ flow.message }}</p>{% endif %}
+    {% if flow_pause %}
+      <p class="error">Flow generation is paused: {{ flow_pause.message }}</p>
+      <button data-post="/settings/flow/resume" data-reload>Resume Flow</button>
+    {% endif %}
+    {% if flow.login_window_open or flow.checking %}
+      <div id="flow-watch" data-key="{{ flow_key }}" data-watch="flow" hidden></div>
+    {% endif %}
+    {% if flow.login_window_open %}
+      <p class="notice">A Google Flow window is open. Sign in there and accept Flow's terms if it asks, then
+        <strong>quit that window with ⌘Q</strong>. This page then checks Flow and updates by itself.</p>
+      <p class="muted"><button class="link" data-post="/settings/flow/done" data-reload>Close it for me</button></p>
+    {% elif flow.checking %}
+      <p class="notice"><span class="spinner"></span> Checking Google Flow… This page updates by itself.</p>
+    {% else %}
+      <button {% if flow.state == 'connected' %}class="secondary" {% endif %}data-post="/settings/flow/login" data-reload>Open Google Flow window</button>
+      <button class="secondary" data-post="/settings/flow/check" data-reload>Check Flow</button>
+    {% endif %}
+  {% elif worker_configured and health.ok %}
+    <p class="muted">This worker doesn't have Google Flow set up. Restart it with <code>./run.sh</code>.</p>
   {% else %}
     <p class="muted">Available once the worker is connected.</p>
   {% endif %}

@@ -29,8 +29,9 @@ class TestPatternGenerator:
 
     __test__ = False
 
-    def __init__(self, script: list | None = None, seconds: float = 8.0, size: str = "720x1280"):
-        self.profile = json.loads((Path(__file__).parent.parent / "worker" / "profile.json").read_text())
+    def __init__(self, script: list | None = None, seconds: float = 8.0, size: str = "720x1280",
+                 profile: str = "profile.json"):
+        self.profile = json.loads((Path(__file__).parent.parent / "worker" / profile).read_text())
         self.script = list(script or [])  # items: Exception instance, "ok", ("short", secs), callable
         self.seconds, self.size = seconds, size
         self.calls: list[ClipRequest] = []
@@ -82,6 +83,9 @@ class FakeWorker:
         self.video_bytes: bytes | None = None
         self.clips: dict[str, bytes] = {}  # per-job video bytes, overriding video_bytes
         self.paused: dict | None = None  # /health "account_paused"
+        self.pauses: dict | None = None  # /health "pauses" per lane (gemini, flow, chat); None: a pre-Flow worker
+        self.flow: dict = {"state": "connected", "model": "Veo 3.1 - Lite"}
+        self.resumed_sites: list[str] = []
         self.seq = 0
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -129,9 +133,22 @@ class FakeWorker:
         if m:
             return httpx.Response(200, content=self.clips.get(m.group(1), self.video_bytes or b""))
         if path == "/health":
-            return httpx.Response(200, json={"ok": True, "account_paused": self.paused,
-                                             "login_window_open": self.gemini.get("login_window_open", False),
-                                             "gemini": self.gemini})
+            body = {"ok": True, "account_paused": self.paused,
+                    "login_window_open": self.gemini.get("login_window_open", False), "gemini": self.gemini}
+            if self.pauses is not None:
+                body.update(pauses=self.pauses, flow=self.flow,
+                            providers={"gemini": {"max_clip_duration": 10, "model": None},
+                                       "flow": {"max_clip_duration": 8, "model": "Veo 3.1 - Lite"}})
+            return httpx.Response(200, json=body)
+        m = re.fullmatch(r"/(gemini|flow)/resume", path)
+        if m and request.method == "POST" and self.pauses is not None:
+            self.resumed_sites.append(m.group(1))
+            for lane, pause in list(self.pauses.items()):
+                if pause and (pause.get("provider") or "gemini") == m.group(1):
+                    self.pauses[lane] = None
+            return httpx.Response(200, json=self.flow if m.group(1) == "flow" else self.gemini)
+        if path == "/flow/status":
+            return httpx.Response(200, json=self.flow)
         if path == "/gemini/resume" and request.method == "POST":
             self.resumed = getattr(self, "resumed", 0) + 1
             self.paused = None

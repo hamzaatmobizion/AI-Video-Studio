@@ -283,6 +283,19 @@
     finally { btn.disabled = false; }
   });
 
+  // Times are stored in UTC; show them in the viewer's own timezone (the page keeps UTC without JavaScript)
+  function localTimes(root) {
+    const pad = (n) => String(n).padStart(2, "0");
+    root.querySelectorAll("time.local-time").forEach((t) => {
+      const d = new Date(t.dateTime);
+      if (isNaN(d)) return;
+      const h = d.getHours() % 12 || 12, ampm = d.getHours() < 12 ? "a.m." : "p.m.";
+      t.textContent = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${h}:${pad(d.getMinutes())} ${ampm}`;
+      t.title = `${t.dateTime.replace("T", " ").replace("Z", "")} UTC`;
+    });
+  }
+  localTimes(document);
+
   // Card polling: every 5 s while anything is in progress
   const cards = document.getElementById("cards");
   let timer = null;
@@ -301,7 +314,7 @@
         wrap.className = "card-wrap"; wrap.dataset.id = c.id;
         prev ? prev.after(wrap) : cards.prepend(wrap);
       }
-      if (wrap.dataset.hash !== c.hash) { wrap.innerHTML = c.html; wrap.dataset.hash = c.hash; }
+      if (wrap.dataset.hash !== c.hash) { wrap.innerHTML = c.html; wrap.dataset.hash = c.hash; localTimes(wrap); }
       prev = wrap;
     }
     cards.querySelectorAll(".card-wrap").forEach((w) => { if (!seen.has(w.dataset.id)) w.remove(); });

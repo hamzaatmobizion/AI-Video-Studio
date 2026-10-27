@@ -19,8 +19,13 @@ class WorkerSettings(BaseSettings):
     API_PORT: int = 8100
     STUDIO_API_KEY: str = ""
     GEMINI_MODEL_LABEL: str | None = None  # None → profile.json; "" → whatever is selected in Gemini
+    # Chat models that write scene plans, one per attempt in turn; "" → whatever is selected in Gemini. Each has had
+    # spells of erroring on every plan while the other answered (Flash hung on 22 Oct, Pro failed on 23 Oct), so a
+    # retry switches model.
+    GEMINI_PLAN_MODELS: str = "Flash,Pro"
     GENERATION_TIMEOUT_SECONDS: int = 900
     MAX_RETRIES: int = 1
+    RETRY_DELAY_SECONDS: int = 90  # wait before retrying: Gemini's "I encountered an error" fails again at once
     BROWSER_HEADLESS: bool = True
     BROWSER_CHANNEL: str = ""  # "" = Playwright Chromium, or "chrome"
 
@@ -52,6 +57,15 @@ class WorkerSettings(BaseSettings):
     @property
     def diagnostics_dir(self) -> Path:
         return self.data / "diagnostics"
+
+    def plan_model(self, attempt: int, last_good: str = "") -> str:
+        """The chat model for a plan's `attempt` (1, 2, …): the GEMINI_PLAN_MODELS labels in turn, starting from
+        `last_good` (the one that wrote the last plan) when it's one of them."""
+        labels = [x.strip() for x in self.GEMINI_PLAN_MODELS.split(",") if x.strip()]
+        if last_good in labels:
+            i = labels.index(last_good)
+            labels = labels[i:] + labels[:i]
+        return labels[(attempt - 1) % len(labels)] if labels else ""
 
     def profile(self) -> dict:
         prof = json.loads((HERE / "profile.json").read_text())

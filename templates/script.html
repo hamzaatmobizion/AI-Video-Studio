@@ -10,7 +10,9 @@
     <a class="button secondary" href="/">Back to Studio</a>
   </div>
   <p class="prompt">{{ g.prompt }}</p>
-  {% if editable %}
+  {% if failed %}
+    <p class="notice small">This video failed{% if g.error %}: {{ g.error }}{% endif %} Change what caused it (a character's look in the story bible, or a scene's action), then <strong>Save and retry</strong>: finished scenes are kept. To change a finished scene too, use “Remake this scene” under it.</p>
+  {% elif editable %}
     <p class="muted small">Check the script and change anything: who is in each shot and where they stand, the camera, the action and the lines. Each scene's clip prompt is built from these fields; open “Clip prompt” to see exactly what Veo will get. Changes are saved as you type.</p>
   {% else %}
     <p class="notice small">This script was approved; the clips were made from the prompts shown under each scene.</p>
@@ -24,6 +26,33 @@
       <input type="text" id="script-language" maxlength="40" placeholder="e.g. English, Urdu"{% if not editable %} disabled{% endif %}>
     </label>
   </div>
+  <fieldset class="bible">
+    <legend>Story bible <span class="muted small">· shared by every scene</span></legend>
+    <div class="grid2">
+      <label>Title
+        <input type="text" id="bible-title" maxlength="120"{% if not editable %} disabled{% endif %}>
+      </label>
+      <label>Video type
+        <select id="script-genre"{% if not editable %} disabled{% endif %}>
+          {% for key, label in genres.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Colour palette
+        <input type="text" id="bible-palette" maxlength="200" placeholder="e.g. bright greens, sky blue, apple red"{% if not editable %} disabled{% endif %}>
+      </label>
+      <label>Recurring motif
+        <input type="text" id="bible-motif" maxlength="200" placeholder="e.g. a glowing letter A in every scene"{% if not editable %} disabled{% endif %}>
+      </label>
+    </div>
+    <label>Main setting
+      <input type="text" id="bible-setting" maxlength="400"{% if not editable %} disabled{% endif %}>
+    </label>
+    <div id="bible-characters"></div>
+    <p class="muted small">The palette goes into every clip prompt. Each invented character's look and “never” list are added to every scene they're in. For a picked character, what your prompt says about their age, look, outfit or voice is used instead of their saved details; an empty field keeps the saved one.</p>
+  </fieldset>
+  {% if unused and g.scenes | selectattr('action') | list %}
+    <p class="notice small">Not in any scene: {{ unused | join(", ") }}. The story had no part that fits {{ 'them' if unused | length > 1 else 'this character' }}, so {{ 'they were' if unused | length > 1 else 'it was' }} left out rather than shown as someone else. Add them to a shot below if you want them in.</p>
+  {% endif %}
   {% if not library %}<p class="hint">Tip: <a href="/characters">create characters</a> to keep the same face, outfit and voice in every scene.</p>{% endif %}
 </section>
 
@@ -31,11 +60,11 @@
 
 {% if editable %}
 <div class="script-actions">
-  <button type="button" class="secondary" id="add-shot">+ Add scene</button>
+  {% if not failed %}<button type="button" class="secondary" id="add-shot">+ Add scene</button>{% endif %}
   <span class="muted small" id="script-status"></span>
   <span class="grow"></span>
   <p class="error" id="script-error" hidden></p>
-  <button type="button" id="approve-script">Approve &amp; generate</button>
+  <button type="button" id="approve-script">{{ 'Save and retry' if failed else 'Approve &amp; generate' | safe }}</button>
 </div>
 {% endif %}
 
@@ -43,5 +72,5 @@
 {% for key in ("framing", "angle", "movement", "lens") %}
 <datalist id="{{ key }}-options">{% for o in options[key] %}<option value="{{ o }}">{% endfor %}</datalist>
 {% endfor %}
-<script type="application/json" id="script-data">{{ {"scenes": scenes, "prompts": prompts, "style": g.style or "", "language": g.language or "", "library": library | map(attribute="id") | list, "names": library | map(attribute="name") | list, "positions": options.position, "max_words": max_words, "max_prompt": max_prompt} | tojson }}</script>
+<script type="application/json" id="script-data">{{ {"scenes": scenes, "prompts": prompts, "style": g.style or "", "language": g.language or "", "genre": g.genre or "general", "bible": g.bible or {}, "library": library | map(attribute="id") | list, "names": library | map(attribute="name") | list, "positions": options.position, "max_words": max_words, "max_prompt": max_prompt, "clips": clips, "can_redo": can_redo, "checks": g.scenes | map(attribute="check_note") | list, "failed": failed} | tojson }}</script>
 {% endblock %}

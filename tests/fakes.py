@@ -52,6 +52,23 @@ class TestPatternGenerator:
             raise step
         return [{"action": f"{req.prompt} (part {i})"} for i in range(1, req.scene_count + 1)]
 
+    def check(self, req, should_cancel) -> dict:
+        self.calls.append(req)
+        step = self.script.pop(0) if self.script else "ok"
+        if isinstance(step, BaseException):
+            raise step
+        return {"ok": True, "problems": ""}
+
+    def portrait(self, req, should_cancel) -> Path:
+        self.calls.append(req)
+        step = self.script.pop(0) if self.script else "ok"
+        if isinstance(step, BaseException):
+            raise step
+        req.out_dir.mkdir(parents=True, exist_ok=True)
+        path = req.out_dir / "portrait.png"
+        path.write_bytes(PNG)
+        return path
+
 
 # ---- web app side: fake worker + fake Google behind one MockTransport ---------
 class FakeWorker:
@@ -71,11 +88,13 @@ class FakeWorker:
         if request.headers.get("authorization") != "Bearer worker-key-123456789012345":
             return httpx.Response(401, json={"detail": "Missing or wrong API key."})
         path = request.url.path
-        if request.method == "POST" and path in ("/videos", "/plans"):
+        if request.method == "POST" and path in ("/videos", "/plans", "/portraits", "/stills", "/checks"):
             ctype = request.headers.get("content-type", "")
             self.submits.append({"multipart": ctype.startswith("multipart"), "body": request.content[:200], "path": path,
                                  "json": json.loads(request.content) if ctype.startswith("application/json") else None,
-                                 "images": request.content.count(b'name="images"')})
+                                 "images": request.content.count(b'name="images"'),
+                                 "videos": request.content.count(b'name="videos"'),
+                                 "stills": request.content.count(b'name="stills"'), "content": request.content})
             if self.submit_response:
                 code, body = self.submit_response
                 return httpx.Response(code, json=body)
@@ -92,8 +111,14 @@ class FakeWorker:
             if not job:
                 return httpx.Response(404, json={"detail": "No such job."})
             body = {"status": job["status"], "error": job["error"], "video_url": None, "final_prompt": "p"}
-            if job["status"] == "done" and "scenes" in job:
+            if job["status"] == "done" and "check" in job:
+                body["check"] = job["check"]
+            elif job["status"] == "done" and "scenes" in job:
                 body["scenes"] = job["scenes"]
+                if "bible" in job:
+                    body["bible"] = job["bible"]
+            elif job["status"] == "done" and job.get("image"):
+                body["image_url"] = f"/videos/{m.group(1)}/file"
             elif job["status"] == "done":
                 body["video_url"] = f"/videos/{m.group(1)}/file"
             return httpx.Response(200, json=body)

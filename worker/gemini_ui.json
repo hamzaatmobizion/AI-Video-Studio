@@ -67,6 +67,17 @@
       "[role='menuitem']:has-text('{label}')",
       "button.bard-mode-list-button:has-text('{label}')"
     ],
+    "aspect_switch": [
+      "button[aria-label*='aspect ratio' i]",
+      "button:has-text('Landscape')",
+      "button:has-text('Portrait')"
+    ],
+    "aspect_option": [
+      "[role='menuitemradio']:has-text('{label}')",
+      "[role='menuitem']:has-text('{label}')",
+      "[role='option']:has-text('{label}')",
+      "button:has-text('{label}')"
+    ],
     "file_input": [
       "input[type='file']"
     ],
@@ -78,6 +89,10 @@
     "upload_menu_item": [
       "[role='menuitem']:has-text('Upload files')",
       "button:has-text('Upload files')"
+    ],
+    "rights_reminder_agree": [
+      "[role='dialog']:has-text('reminder about creating videos') button:has-text('Agree')",
+      "mat-dialog-container:has-text('rights to any content you upload') button:has-text('Agree')"
     ],
     "upload_consent_agree": [
       "[role='dialog']:has-text('Creating content from images and files') button:has-text('Agree')",
@@ -91,10 +106,25 @@
     "response": [
       "model-response"
     ],
+    "reply_busy": [
+      "button[aria-label*='Stop response' i]",
+      "button[aria-label='Stop']",
+      "button:has-text('Answer now')"
+    ],
     "response_video": [
       "video"
     ],
+    "response_image": [
+      "generated-image img",
+      "single-image img",
+      "model-response img[src*='googleusercontent']",
+      "model-response img[src^='blob:']"
+    ],
     "download_button": [
+      "button[aria-label*='Download' i]"
+    ],
+    "image_download_button": [
+      "button[aria-label='Download full size image']",
       "button[aria-label*='Download' i]"
     ],
     "captcha": [
@@ -102,7 +132,23 @@
       "iframe[title*='reCAPTCHA' i]"
     ]
   },
+  "ab_survey": {
+    "_note": "Gemini sometimes shows two answers side by side to vote on; the worker reads the first, never votes.",
+    "marker": "Which response is more helpful",
+    "first": "Choice A",
+    "second": "Choice B"
+  },
   "patterns": {
+    "plan_misroute": [
+      "(i'?m|i am) (generating|creating|making) (your|the|a) video",
+      "your video (is ready|will be ready)",
+      "check back to see when your video"
+    ],
+    "image_limit": [
+      "create more images",
+      "image (generation )?limit",
+      "(generate|create|make) (more )?images? (when|once|as soon as)"
+    ],
     "verification": [
       "unusual traffic",
       "verify (it'?s|that it'?s) you",
@@ -123,15 +169,30 @@
       "subscribe to (google )?(ai|gemini)",
       "requires a (google )?ai (pro|ultra|plus)"
     ],
+    "real_people": [
+      "(can'?t|cannot|won'?t|unable to) (make|create|generate) (videos?|clips?|content) (of|with|featuring) real (people|persons|individuals)",
+      "videos? of real (people|persons|individuals)"
+    ],
     "safety": [
       "(can'?t|cannot|won'?t|unable to) (create|generate|make) (that|this|a video|videos) (because|as it|since)",
+      "(can'?t|cannot|won'?t|unable to) (create|generate|make) (videos?|clips?|content|images?) (that|which) (seem to |appear to |might )?(show|depict|involve|include|contain)",
+      "(minors|children|a child|kids) in (dangerous|compromising|unsafe|sexual|inappropriate)",
       "(violat|goes against)\\w* (our|the) (policy|policies|guidelines)",
       "safety (policy|policies|guidelines|filters)"
+    ],
+    "busy": [
+      "unusually high traffic",
+      "at full capacity",
+      "(too many|high number of) requests right now",
+      "please try again later"
     ],
     "error": [
       "something went wrong",
       "(couldn'?t|could not|wasn'?t able to) (generate|create|make) (the|your) video",
-      "an error occurred"
+      "an error occurred",
+      "encounter(ed|ing) an error",
+      "having a hard time fulfilling",
+      "can i (try|help you with) something else"
     ],
     "signed_out": [
       "sign in to (continue|use gemini|gemini)",

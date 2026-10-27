@@ -54,8 +54,10 @@ Videos made before accounts existed belong to the first account.
 | `API_HOST` / `API_PORT` | `127.0.0.1` / `8100` | Worker bind; only loopback is accepted |
 | `STUDIO_API_KEY` | (none) | Worker Bearer key, at least 24 characters |
 | `GEMINI_MODEL_LABEL` | (unset; see `profile.json`) | Model to pick in Gemini's picker; empty = keep the current one |
+| `GEMINI_PLAN_MODELS` | `Flash,Pro` | Chat model(s) that write scene plans, comma-separated and tried in turn on retries; empty = keep the current one |
 | `GENERATION_TIMEOUT_SECONDS` | `900` | Maximum wait for Gemini to finish one clip |
 | `MAX_RETRIES` | `1` | Extra attempts after a QC or Gemini error |
+| `RETRY_DELAY_SECONDS` | `90` | Wait before a retry; other queued jobs run meanwhile |
 | `BROWSER_HEADLESS` | `true` | Generate in the background with no browser window; `false` to watch or debug |
 | `BROWSER_CHANNEL` | (empty) | `chrome` = use installed Google Chrome |
 
@@ -78,7 +80,10 @@ Cancel on a finished video moves it to the Drive trash. Dismiss only hides the c
 ## Worker contract (the app polls; the worker never calls back)
 ```
 POST   /videos          {"prompt","aspect","ref"} JSON, or multipart with up to 3 images → {"job_id"}
+POST   /stills          multipart: body={"description","aspect","names","previous"} + up to 4 images → {"job_id"}
+POST   /checks          multipart: body={"names","previous","frames"} + pictures, previous frame, clip frames → {"job_id"}
 GET    /videos/{id}     → {"status": queued|running|done|failed, "error", "video_url", "final_prompt"}
+                          (+ "image_url" for portraits and stills, "check": {"ok","problems"} for checks)
 GET    /videos/{id}/file → MP4 (Bearer)
 DELETE /videos/{id}     → best-effort cancel
 GET    /health          → {"account_paused", "queued", "running", "gemini", ...}

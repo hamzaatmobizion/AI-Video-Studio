@@ -9,6 +9,8 @@
         {% elif g.status == "REVIEW" %}<span class="script-icon" aria-hidden="true">✎</span>Script ready to review
         {% elif g.status == "GENERATING" %}<span class="spinner lg"></span>
           {%- if total > 1 and done == total %}Joining scenes…
+          {%- elif (g.job_kind or "").startswith("still:") %}Locking scene {{ g.job_kind[6:] }}'s first frame…
+          {%- elif (g.job_kind or "").startswith("check:") %}Checking scene {{ g.job_kind[6:] }}…
           {%- elif total > 1 %}Generating scene {{ done + 1 }} of {{ total }}…
           {%- else %}Generating your video…{% endif %}
         {% elif g.status == "SAVING" %}<span class="spinner lg"></span>Saving to Google Drive…
@@ -33,7 +35,7 @@
       {% if g.status == "SAVE_FAILED" %}<button data-post="/generations/{{ g.id }}/save">Try saving again</button>{% endif %}
       {% if g.status == "PAUSED" %}<button data-post="/generations/{{ g.id }}/resume">Resume</button>{% endif %}
       {% if g.status in ("FAILED", "CANCELLED") %}<button data-post="/generations/{{ g.id }}/retry">Retry</button>{% endif %}
-      {% if g.scenes and g.scenes[0].action and g.status not in ("PLANNING", "REVIEW") %}<a class="button secondary" href="/generations/{{ g.id }}/script">Script</a>{% endif %}
+      {% if g.scenes and g.scenes[0].action and g.status not in ("PLANNING", "REVIEW") %}<a class="button secondary" href="/generations/{{ g.id }}/script">{{ 'Fix script' if g.status == 'FAILED' else 'Script' }}</a>{% endif %}
       {% if not active and g.status != "REVIEW" %}<button class="secondary" data-post="/generations/{{ g.id }}/dismiss">Dismiss</button>{% endif %}
     </div>
   </div>

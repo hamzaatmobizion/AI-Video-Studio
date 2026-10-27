@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Prompt rules · VideoGeneration{% endblock %}
+{% block content %}
+<section class="panel rules">
+  <h1>How to write a prompt for the best video</h1>
+  <p class="muted">Videos are made in 10-second clips that are joined together, and Gemini makes each clip on its own. The app already does most of the work of keeping them consistent; a few things only you can do.</p>
+
+  <h2>The app does this for you</h2>
+  <p class="muted small">No need to write these in your prompt.</p>
+  <ul>
+    <li>Splits your story into 10-second clips, keeping every timed moment and every line you wrote.</li>
+    <li>Keeps faces, clothes, places and objects the same from clip to clip: your characters' portraits, a story bible, and each clip starting from the previous one's last frame.</li>
+    <li>Gives each picked character the part that fits them, and tells you on the script page if one had no part.</li>
+    <li>Tells Gemini the rules it often breaks: one action at a time, two hands each, things keep their state, no on-screen text, no crowds or fast fights in close-up.</li>
+    <li>Makes a “young man” or “young woman” look clearly adult.</li>
+    <li>Uses the voice your prompt gives a character, else their saved one.</li>
+    <li>Leaves music out of the clips (it would change at every cut) and adds your <strong>Background music</strong> track under the whole video.</li>
+    <li>Reads the length, style and 9:16 or 16:9 shape from your prompt.</li>
+  </ul>
+  <p class="muted small">So you can leave out long “STRICT RULES” lists: they make the prompt longer, not the video better.</p>
+
+  <h2>What only you can do</h2>
+  <table class="rules-table">
+    <thead><tr><th>Rule</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td><strong>At most 2 moments per 10 seconds.</strong> A moment is one action and its reaction or line. Give running, chasing, jumping or fighting its own 10 seconds.</td>
+          <td>10 s → 2 moments, 20 s → 4, 30 s → 6</td></tr>
+      <tr><td><strong>Keep lines short:</strong> about 20–25 spoken words per 10 seconds, everyone together.</td>
+          <td>Split a long speech across two clips.</td></tr>
+      <tr><td><strong>Use characters with good portraits:</strong> full body, in the same style as the video. Name them in the prompt as they're named in your library.</td>
+          <td>A Pixar-style 3D portrait for a cartoon video.</td></tr>
+      <tr><td><strong>Adults must look adult.</strong> If Gemini takes someone for a child, it refuses any scene with romance, shouting, chasing or hitting.</td>
+          <td>“a man in his 30s with a thick mustache”, not “a boy” or “a young lad”</td></tr>
+      <tr><td><strong>Describe clothes with colours</strong> for anyone without a portrait.</td>
+          <td>“red and teal striped sari”, not “sari”</td></tr>
+      <tr><td><strong>One style, and no “realistic” in a cartoon.</strong> It makes Gemini treat your characters as real people and refuse.</td>
+          <td>“Pixar-style 3D cartoon animation”</td></tr>
+      <tr><td><strong>Write lines in the script of the language you want spoken.</strong> For Pakistani Punjabi use Shahmukhi; Gurmukhi gives an Indian pronunciation.</td>
+          <td>“نی نوہے!” not “ਨੀ ਨੂੰਹੇ!”</td></tr>
+      <tr><td><strong>Say which hand does what</strong> when someone holds something and also points or waves.</td>
+          <td>“holds the roti in her left hand and points with her right”</td></tr>
+      <tr><td><strong>No photos of real people.</strong> Gemini refuses to animate them.</td>
+          <td>Use portraits drawn on the Characters page.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Before you generate</h2>
+  <ul>
+    <li>Read the notes under the prompt: <span class="note-error">red</span> means Gemini will likely refuse or fail, <span class="warn">yellow</span> means the video may suffer, <span class="note-ok">green</span> means nothing is known to cause problems.</li>
+    <li>For an important video, tick <strong>Let me review the script</strong>; for a final version, also <strong>Lock characters</strong> and <strong>Check each clip</strong>.</li>
+  </ul>
+</section>
+
+<section class="panel rules">
+  <h2>Let any AI write your prompt</h2>
+  <p class="muted">Copy this, paste it into ChatGPT, Gemini, Claude or any other AI chat, replace the last line with your idea (in any language), and paste the prompt it writes into the Studio.</p>
+  <div class="copy-head"><span class="cp-label">Ask an AI to write the prompt</span><button type="button" class="secondary" data-copy="#prompt-maker">Copy</button></div>
+<pre class="copy-block" id="prompt-maker">You write prompts for an AI video tool that makes videos in 10-second clips and joins them into one video. Turn my idea (at the end) into one prompt in exactly the format below, following these rules:
+
+- Length: 10, 20, 30… seconds (up to 2 minutes). At most 2 moments per 10 seconds; a moment is one action and its reaction or line. Give any fast movement (running, chasing, jumping, fighting, falling) its own 10 seconds, never with a long line.
+- Dialogue: about 20–25 spoken words per 10 seconds at most, all characters together. Put each line in double quotes after who says it. For Pakistani Punjabi write the lines in Shahmukhi (Perso-Arabic) script, never Gurmukhi; for Urdu, in Urdu script.
+- Characters: give each one an age, hair, face, build and clothes with colours, and how they sound. Adults must clearly look adult: an age like "in his 30s" and a grown-up feature (mustache, stubble, a mature face). No children in scenes with romance, shouting, chasing or hitting. No real or famous people.
+- Style: name one style, e.g. "Pixar-style 3D cartoon animation". Never use the word "realistic" for a cartoon.
+- Actions: one clear action at a time. If someone holds something in both hands they can't also point or wave: say which hand does what. Objects, clothes and places keep their state until the story changes them.
+- Sound: sound effects only, no background music, no subtitles, no on-screen text.
+- Keep it plain and short: no lists of "strict rules", no repeated instructions.
+
+Format:
+
+A [length]-second [vertical 9:16 or widescreen 16:9] [kind of video, e.g. Pakistani Punjabi family comedy], [style].
+Setting: [place, time of day, 2 or 3 key objects].
+
+[Name]: [age], [hair, face, build], [clothes with colours].
+Voice: [e.g. deep, warm, Pakistani Punjabi accent].
+(one block like this for each character)
+
+0–5 seconds: [one action]. [Name] says: "[line]"
+5–10 seconds: [one action or reaction]. [Name] says: "[line]"
+(continue in 5-second steps to the end)
+
+Sound: [sound effects]. No background music, no subtitles.
+
+My idea: [write your idea here]</pre>
+
+  <div class="copy-head"><span class="cp-label">Or fill in the format yourself</span><button type="button" class="secondary" data-copy="#prompt-format">Copy</button></div>
+<pre class="copy-block" id="prompt-format">A 20-second vertical 9:16 [kind of video], [style, e.g. Pixar-style 3D cartoon animation].
+Setting: [place, time of day, 2 or 3 key objects].
+
+[Name]: [age, e.g. a man in his 30s], [hair, face, build], [clothes with colours].
+Voice: [how they sound, e.g. deep, warm, Pakistani Punjabi accent].
+[Name]: [age], [hair, face, build], [clothes with colours].
+Voice: [how they sound].
+
+0–5 seconds: [one action]. [Name] says: "[line]"
+5–10 seconds: [one action or reaction]. [Name] says: "[line]"
+10–15 seconds: [one action]. [Name] says: "[line]"
+15–20 seconds: [the ending]. [Name] says: "[line]"
+
+Sound: [sound effects, e.g. a cartoon boing at the end]. No background music, no subtitles.</pre>
+
+  <h2>Example</h2>
+<pre class="copy-block">A 20-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
+Setting: a colourful village kitchen in the afternoon, steel pots on a shelf, a wooden stool.
+
+Saas: a woman in her 50s, grey hair in a bun, round face, orange shalwar kameez and green dupatta.
+Voice: older woman, loud and expressive, Pakistani Punjabi accent.
+Bahu: a woman in her late 20s, long black braid, pink shalwar kameez.
+Voice: young woman, cheeky and sweet, Pakistani Punjabi accent.
+
+0–5 seconds: Saas walks in, sees Bahu on her phone and puts her hands on her hips. Saas says: "نی نوہے! سارا دن موبائل تے لگی رہندی ایں!"
+5–10 seconds: Bahu hides the phone behind her back and smiles. Bahu says: "امی جی، تہاڈے لئی رشتہ لبھ رہی آں!"
+10–15 seconds: Saas freezes, eyes wide. Saas says: "میرے لئی رشتہ؟ میں تاں ویاہی ہوئی آں!"
+15–20 seconds: Bahu laughs and walks out of the kitchen; Saas shakes her head.
+
+Sound: a cartoon boing at the end. No background music, no subtitles.</pre>
+</section>
+{% endblock %}

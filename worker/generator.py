@@ -18,7 +18,8 @@ class ClipRequest:
 @dataclass
 class PlanRequest:
     """Ask Gemini (chat, not the Video tool) to write a `scene_count`-scene script from one idea.
-    `cast`: [{name, appearance, outfit, voice, personality}] the script must use."""
+    `cast`: [{name, appearance, outfit, voice, personality}] the script must use; `rules`: the video type's rules
+    (app/genres.py), added to the planner's own."""
 
     job_id: str
     prompt: str
@@ -28,6 +29,29 @@ class PlanRequest:
     cast: list[dict] = field(default_factory=list)
     style: str = ""
     language: str = ""
+    rules: str = ""
+    attempt: int = 1
+    model: str = ""  # the chat model to write it with ("" = whatever is selected in Gemini)
+
+
+@dataclass
+class PortraitRequest:
+    """Ask Gemini (chat) for one image from a description: a character portrait, or a scene's first frame drawn
+    from the attached `images` (the characters' pictures, then the previous shot's last frame)."""
+
+    job_id: str
+    prompt: str
+    out_dir: Path = Path(".")
+    images: list[Path] = field(default_factory=list)
+
+
+@dataclass
+class CheckRequest:
+    """Ask Gemini (chat, text only) whether a new clip's frames match the attached reference pictures."""
+
+    job_id: str
+    prompt: str
+    images: list[Path] = field(default_factory=list)
 
 
 class GeneratorError(Exception):
@@ -68,6 +92,14 @@ class SubscriptionRequired(AccountStop):
     kind = "subscription_required"
 
 
+class GeminiBusy(GenerationError):
+    """Gemini says it's at full capacity: retried, after a longer wait than other errors."""
+
+
+class ImageLimitReached(GeneratorError):
+    """Gemini's image quota is used up. Fails the portrait only: videos have their own quota, so nothing pauses."""
+
+
 class Cancelled(Exception):
     pass
 
@@ -79,6 +111,15 @@ class VideoGenerator(Protocol):
         """Produce one clip file inside req.out_dir and return its path."""
         ...
 
-    def plan(self, req: PlanRequest, should_cancel: Callable[[], bool]) -> list[dict]:
-        """Return exactly req.scene_count script scenes written by Gemini (see parse_script)."""
+    def plan(self, req: PlanRequest, should_cancel: Callable[[], bool]) -> dict | list[dict]:
+        """Return {"bible", "scenes"} with exactly req.scene_count script scenes written by Gemini (see parse_plan);
+        a bare list of scenes is taken as having no bible."""
+        ...
+
+    def portrait(self, req: PortraitRequest, should_cancel: Callable[[], bool]) -> Path:
+        """Produce one JPG/PNG/WebP portrait inside req.out_dir and return its path."""
+        ...
+
+    def check(self, req: CheckRequest, should_cancel: Callable[[], bool]) -> dict:
+        """Return {"ok": bool, "problems": str}: whether the clip's frames match the references."""
         ...

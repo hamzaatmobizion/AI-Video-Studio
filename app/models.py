@@ -42,6 +42,13 @@ class Generation(Base):
     cast_ids: Mapped[list] = mapped_column(JSON, default=list)  # Character ids the script may use
     style: Mapped[str] = mapped_column(Text, default="")  # visual style for every clip
     language: Mapped[str] = mapped_column(String(40), default="")  # language of the spoken lines
+    genre: Mapped[str] = mapped_column(String(30), default="")  # video type (app/genres.py)
+    bible: Mapped[dict] = mapped_column(JSON, default=dict)  # story bible Gemini wrote with the script
+    music_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # one track under the whole video
+    lock_frames: Mapped[bool] = mapped_column(Boolean, default=False)  # each scene starts from a still made first
+    check_clips: Mapped[bool] = mapped_column(Boolean, default=False)  # Gemini checks each clip, one redo if off
+    old_drive_file_id: Mapped[str | None] = mapped_column(String(128), nullable=True)  # trashed once a redo is saved
+    job_kind: Mapped[str] = mapped_column(String(20), default="")  # what worker_job_id is: "" clip | still | check
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     scenes: Mapped[list["Scene"]] = relationship(order_by="Scene.position", cascade="all, delete-orphan",
@@ -66,6 +73,9 @@ class Scene(Base):
     shot: Mapped[dict] = mapped_column(JSON, default=dict)  # framing, angle, movement, lens
     characters: Mapped[list] = mapped_column(JSON, default=list)  # [{id, name, position}]
     dialogue: Mapped[list] = mapped_column(JSON, default=list)  # [{id, name, line}]
+    still_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # its locked first frame
+    check_note: Mapped[str] = mapped_column(Text, default="")  # what Gemini's clip check said
+    redos: Mapped[int] = mapped_column(Integer, default=0)  # automatic remakes after a failed check
 
     SCRIPT_FIELDS = ("setting", "time_of_day", "action", "sound", "shot", "characters", "dialogue")
 
@@ -85,12 +95,35 @@ class Character(Base):
     outfit: Mapped[str] = mapped_column(Text, default="")
     voice: Mapped[str] = mapped_column(Text, default="")  # gender, age, accent, pitch, pace, tone
     personality: Mapped[str] = mapped_column(Text, default="")  # guides Gemini's script, not the clip prompt
+    locked: Mapped[str] = mapped_column(Text, default="")  # traits that must never change, said in every clip
+    never: Mapped[str] = mapped_column(Text, default="")  # what Veo tends to get wrong about them
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # under var/characters
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
+    @property
+    def image_url(self) -> str | None:
+        """Changes with every new picture, so browsers can cache each one."""
+        if not self.image_path:
+            return None
+        return f"/characters/{self.id}/image?v={self.image_path.rsplit('/', 1)[-1].split('.')[0]}"
+
     def sheet(self) -> dict:
         return {"id": self.id, "name": self.name, "appearance": self.appearance, "outfit": self.outfit,
-                "voice": self.voice, "personality": self.personality, "image_path": self.image_path}
+                "voice": self.voice, "personality": self.personality, "locked": self.locked, "never": self.never,
+                "image_path": self.image_path}
+
+
+class Portrait(Base):
+    """A character portrait Gemini drew from a description, before (or without) it becomes a character's picture."""
+
+    __tablename__ = "portraits"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    job_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(20))  # working | ready | failed
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # under var/portraits
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class GoogleConnection(Base):

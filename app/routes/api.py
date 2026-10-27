@@ -3,20 +3,23 @@ import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 from starlette.background import BackgroundTask
 
 from app.auth import require_api_user, require_post
+from app.checks import prompt_notes
 from app.enums import Aspect, GenStatus
 from app.interfaces import StorageError
-from app.media import MAX_IMAGE_BYTES, MAX_IMAGES, image_kind
-from app.models import Generation
+from app.media import MAX_IMAGE_BYTES, MAX_IMAGES, MAX_MUSIC_BYTES, audio_kind, image_kind
+from app.models import Character, Generation
+from app.script import MAX_CAST, TEXT_LIMITS, aspect_from_prompt
 from app.routes.views import cards_for
 from app.services.generation import UserError, drive_name
 
 router = APIRouter()
-MAX_PROMPT = 2000  # one clip prompt, as Gemini's video tool takes it
+MAX_SCENE_TEXT = TEXT_LIMITS["action"]  # one scene's words; the clip prompt adds the format and quality rules
 MAX_IDEA = 10000  # one prompt that Gemini's chat turns into scene prompts
 MAX_SCENES = 12  # × ~10 s ≈ 2 minutes
 SCENE_SECONDS = 10
@@ -58,15 +61,20 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
                             duration: str = Form(""), scenes: list[str] = Form(default=[]),
                             aspect: str = Form("9:16"), images: list[UploadFile] = File(default=[]),
                             cast: list[str] = Form(default=[]), style: str = Form(""), language: str = Form(""),
-                            review: str = Form("")):
+                            review: str = Form(""), genre: str = Form(""), music: UploadFile | None = File(None),
+                            lock_frames: str = Form(""), check_clips: str = Form("")):
     """Either one `prompt` + `duration` (Gemini writes the script), or `scenes` written by the user.
     An empty `duration` (Default) takes the length from the prompt, else 10 seconds.
-    `cast`: ids of the user's characters to use. `review`: stop for the user to edit and approve the script."""
+    `cast`: ids of the user's characters to use. `review`: stop for the user to edit and approve the script.
+    `genre`: the video type (app/genres.py); empty (Auto) reads it from the prompt. `music`: one track under the
+    whole video. `lock_frames`: each scene starts from a still made first; `check_clips`: Gemini checks each clip."""
     plan = None
     review = review.strip().lower() in ("1", "on", "true", "yes")
     if not all(c.strip().isdigit() for c in cast):
         raise UserError("Pick characters from the list.")
-    cast_ids = [int(c) for c in cast]
+    cast_ids = list(dict.fromkeys(int(c) for c in cast))
+    if len(cast_ids) > MAX_CAST:
+        raise UserError(f"Pick at most {MAX_CAST} characters for one video.")
     if not scenes:
         if duration.strip().lower() in ("", "auto"):
             duration = duration_from_prompt(prompt) or SCENE_SECONDS
@@ -83,7 +91,7 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
         count = duration // SCENE_SECONDS
         # Gemini's chat writes the script for a long video, condenses a long prompt for one clip, and
         # drafts it as a script whenever there is a cast to direct or a script to review.
-        plan = count if count > 1 or len(prompt) > MAX_PROMPT or cast_ids or review else None
+        plan = count if count > 1 or len(prompt) > MAX_SCENE_TEXT or cast_ids or review else None
         scenes = [prompt]
     else:
         scenes = [s.strip() for s in scenes]
@@ -92,8 +100,9 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
         for i, text in enumerate(scenes, 1):
             if not text:
                 raise UserError(f"Write scene {i} first.")
-            if len(text) > MAX_PROMPT:
-                raise UserError(f"Keep scene {i} under {MAX_PROMPT} characters.")
+            if len(text) > MAX_SCENE_TEXT:
+                raise UserError(f"Keep scene {i} under {MAX_SCENE_TEXT:,} characters.")
+    aspect = aspect_from_prompt("\n".join(scenes)) or aspect  # a format written in the prompt wins
     if aspect not in {a.value for a in Aspect}:
         raise UserError("Aspect must be 9:16 or 16:9.")
     images = [f for f in images if f.filename]
@@ -108,9 +117,38 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
         if kind is None:
             raise UserError(f"{f.filename} isn't a JPG, PNG or WebP image.")
         checked.append((kind, data))
+    track = None
+    if music is not None and music.filename:
+        data = await music.read(MAX_MUSIC_BYTES + 1)
+        if len(data) > MAX_MUSIC_BYTES:
+            raise UserError(f"{music.filename} is larger than 20 MB.")
+        kind = audio_kind(data[:16])
+        if kind is None:
+            raise UserError(f"{music.filename} isn't an MP3, M4A, WAV or OGG file.")
+        track = (kind, data)
+    on = lambda v: v.strip().lower() in ("1", "on", "true", "yes")  # noqa: E731
     gen_id = request.app.state.service.create(user.id, scenes, aspect, checked, plan=plan, cast_ids=cast_ids,
-                                              style=style, language=language, review=review)
+                                              style=style, language=language, review=review, genre=genre,
+                                              music=track, lock_frames=on(lock_frames), check_clips=on(check_clips))
     return {"id": gen_id, "review": review}
+
+
+class CheckBody(BaseModel):
+    prompt: str = ""
+    cast: list[int] = []
+    style: str = ""
+    language: str = ""
+    seconds: int = 0
+
+
+@router.post("/api/prompt-check")
+def prompt_check(body: CheckBody, request: Request, user=Depends(require_api_user)):
+    """Notes on a prompt and its picked characters before it goes to Gemini (app/checks.py). Changes nothing."""
+    with request.app.state.db.session() as s:
+        cast = [c.sheet() for c in s.scalars(select(Character).where(Character.user_id == user.id,
+                                                                    Character.id.in_(body.cast[:MAX_CAST])))]
+    return {"notes": prompt_notes(body.prompt[:MAX_IDEA], cast, body.style[:300], body.language[:40],
+                                   max(0, min(body.seconds, MAX_SCENES * SCENE_SECONDS)))}
 
 
 class ScriptBody(BaseModel):
@@ -118,14 +156,32 @@ class ScriptBody(BaseModel):
     style: str = ""
     language: str = ""
     approve: bool = False
+    bible: dict | None = None
+    genre: str | None = None
 
 
 @router.post("/generations/{gen_id}/script")
 def save_script(gen_id: int, body: ScriptBody, request: Request, user=Depends(require_post)):
     """Save the edited script (and get each scene's clip prompt back); `approve` starts the clips."""
     scenes = request.app.state.service.save_script(gen_id, user.id, body.scenes, body.style, body.language,
-                                                   approve=body.approve)
+                                                   approve=body.approve, bible=body.bible, genre=body.genre)
     return {"ok": True, "scenes": scenes}
+
+
+@router.post("/generations/{gen_id}/scenes/{position}/redo")
+def redo_scene(gen_id: int, position: int, request: Request, user=Depends(require_post)):
+    """Make one scene again (the others are kept) and rejoin the video."""
+    request.app.state.service.redo_scene(gen_id, user.id, position)
+    return {"ok": True}
+
+
+@router.get("/generations/{gen_id}/scenes/{position}/clip")
+def scene_clip(gen_id: int, position: int, request: Request, user=Depends(require_api_user)):
+    """One scene's clip, to watch it before or after the video is joined."""
+    path = request.app.state.service.scene_clip(gen_id, user.id, position)
+    if path is None:
+        return JSONResponse({"detail": "This scene's clip isn't kept any more."}, status_code=404)
+    return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "private, no-cache"})
 
 
 @router.post("/generations/{gen_id}/{action}")

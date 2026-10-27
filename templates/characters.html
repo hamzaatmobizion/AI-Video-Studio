@@ -1,64 +1,164 @@
 {% extends "base.html" %}
 {% block title %}Characters · VideoGeneration{% endblock %}
+{% set voice_chips = ["male", "female", "young", "middle-aged", "elderly", "deep", "soft", "husky", "warm", "calm", "energetic", "slow pace", "fast pace", "Urdu accent", "Punjabi accent", "British accent", "American accent"] %}
+{% set personality_chips = ["warm", "funny", "serious", "shy", "confident", "curious", "grumpy", "kind", "mischievous"] %}
+{% macro field(id, name, label, limit, hint="", rows=0, placeholder="", optional=False) %}
+<div class="cp-field">
+  <div class="cp-field-top">
+    <label for="{{ id }}">{{ label }}{% if optional %} <span class="muted">(optional)</span>{% endif %}</label>
+    <span class="cp-count" data-for="{{ id }}" data-max="{{ limit }}"></span>
+  </div>
+  {% if rows %}
+  <textarea id="{{ id }}" name="{{ name }}" rows="{{ rows }}" maxlength="{{ limit }}" placeholder="{{ placeholder }}"></textarea>
+  {% else %}
+  <input type="text" id="{{ id }}" name="{{ name }}" maxlength="{{ limit }}" placeholder="{{ placeholder }}">
+  {% endif %}
+  {% if hint %}<p class="cp-hint">{{ hint }}</p>{% endif %}
+  {{ caller() if caller else "" }}
+</div>
+{% endmacro %}
 {% block content %}
-<section class="panel">
-  <h1>Characters</h1>
-  <p class="muted">Your cast. Each scene a character is in describes them in exactly these words, and their picture is sent as a reference, so they look and sound the same from clip to clip and video to video. Pick them under <em>Cast</em> in the <a href="/">Studio</a>.</p>
-  <form id="character-form" class="stack" data-id="">
-    <h2 id="character-form-title">New character</h2>
-    <div class="grid2">
-      <label>Name
-        <input type="text" name="name" maxlength="{{ limits.name }}" required placeholder="Ali">
-      </label>
-      <label>Voice
-        <input type="text" name="voice" maxlength="{{ limits.voice }}" placeholder="Deep, calm male voice, slow pace, Lahori Urdu accent">
-      </label>
+<header class="cp-head">
+  <div>
+    <h1>Characters</h1>
+    <p class="muted">Your recurring cast. Each character looks and sounds the same in every scene and every video they appear in.</p>
+  </div>
+  <div class="cp-head-actions">
+    <span class="muted small">{{ characters | length }} of {{ max_characters }}</span>
+    <button type="button" id="cp-new"{% if characters | length >= max_characters %} disabled{% endif %}>+ New character</button>
+  </div>
+</header>
+
+<section id="cp-editor" class="cp-editor" hidden aria-labelledby="cp-editor-title">
+  <form id="character-form" novalidate>
+    <header class="cp-editor-head">
+      <h2 id="cp-editor-title">New character</h2>
+      <button type="button" class="cp-close" id="cp-close" aria-label="Close">×</button>
+    </header>
+    <div class="cp-editor-body">
+      <div class="cp-studio">
+        <div class="cp-frame" id="cp-frame" data-state="empty">
+          <img id="cp-frame-img" alt="Character picture" hidden>
+          <div class="cp-frame-empty">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></svg>
+            <p>Generate a portrait, or drop a photo here</p>
+          </div>
+          <div class="cp-frame-busy" aria-live="polite">
+            <span class="spinner lg"></span>
+            <p id="cp-busy-text">Gemini is drawing…</p>
+            <p class="small">Usually 20–60 seconds</p>
+          </div>
+          <span class="cp-frame-badge" id="cp-frame-badge" hidden></span>
+        </div>
+        <div class="cp-generate">
+          <label class="cp-label" for="cp-style">Portrait style</label>
+          <select id="cp-style">{% for s in portrait_styles %}<option>{{ s }}</option>{% endfor %}</select>
+          <button type="button" id="cp-draw" class="cp-draw" {% if not can_draw %}disabled{% endif %}>
+            <span aria-hidden="true">✨</span> Generate portrait
+          </button>
+          <p class="cp-hint" id="cp-draw-hint">{% if can_draw %}Describe their appearance, then let Gemini draw them.{% else %}Portraits need the video worker (set WORKER_URL and WORKER_API_KEY).{% endif %}</p>
+        </div>
+        <div class="cp-attempts" id="cp-attempts" hidden>
+          <span class="cp-label">Your portraits</span>
+          <div class="cp-attempts-row" id="cp-attempts-row"></div>
+        </div>
+        <div class="cp-upload-row">
+          <label class="cp-upload">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>
+            Upload a photo
+            <input type="file" name="image" id="cp-file" accept="image/jpeg,image/png,image/webp">
+          </label>
+          <button type="button" class="link" id="cp-remove-pic" hidden>Remove picture</button>
+        </div>
+        <p class="error small" id="cp-draw-error" hidden></p>
+      </div>
+
+      <div class="cp-fields">
+        <fieldset class="cp-section">
+          <legend>Identity</legend>
+          {% call field("cp-name", "name", "Name", limits.name, placeholder="Ali") %}{% endcall %}
+        </fieldset>
+        <fieldset class="cp-section">
+          <legend>Look</legend>
+          {% call field("cp-appearance", "appearance", "Appearance", limits.appearance, rows=3,
+                        hint="Face, hair, age, build. Be specific: Gemini draws the portrait from these words, and they're used in scenes when there's no picture.",
+                        placeholder="Man in his 30s, short black hair, trimmed beard, brown eyes, slim build") %}
+            <p class="warn" id="cp-group-warn" hidden>This sounds like several people. One character should be one person: make each person a separate character so every face stays the same.</p>
+          {% endcall %}
+          {% call field("cp-outfit", "outfit", "Outfit", limits.outfit, placeholder="White kurta, navy waistcoat, black sandals") %}{% endcall %}
+          {% call field("cp-locked", "locked", "Must never change", limits.locked, optional=True,
+                        hint="The details Veo most often gets wrong. They're written into every clip, even when there's a portrait.",
+                        placeholder="Long floppy ears hanging down, round orange glasses") %}{% endcall %}
+          {% call field("cp-never", "never", "Never show", limits.never, optional=True,
+                        hint="Added to each clip's “Avoid” list.",
+                        placeholder="Upright ears, brown fur, rectangular glasses") %}{% endcall %}
+        </fieldset>
+        <fieldset class="cp-section">
+          <legend>Voice</legend>
+          {% call field("cp-voice", "voice", "How they sound", limits.voice, placeholder="Deep, calm male voice, slow pace, Lahori Urdu accent") %}
+            <div class="cp-chips" data-target="cp-voice" aria-label="Voice suggestions">
+              {% for c in voice_chips %}<button type="button" class="cp-chip" aria-pressed="false">{{ c }}</button>{% endfor %}
+            </div>
+          {% endcall %}
+        </fieldset>
+        <fieldset class="cp-section">
+          <legend>Personality</legend>
+          {% call field("cp-personality", "personality", "Traits", limits.personality, optional=True,
+                        hint="Helps Gemini write their lines and acting. Not added to the clip prompt.",
+                        placeholder="Warm, funny, a little stubborn") %}
+            <div class="cp-chips" data-target="cp-personality" aria-label="Personality suggestions">
+              {% for c in personality_chips %}<button type="button" class="cp-chip" aria-pressed="false">{{ c }}</button>{% endfor %}
+            </div>
+          {% endcall %}
+        </fieldset>
+        <div class="cp-preview">
+          <span class="cp-label">How they appear in a clip</span>
+          <pre id="cp-preview"></pre>
+        </div>
+      </div>
     </div>
-    <label>Appearance
-      <textarea name="appearance" rows="2" maxlength="{{ limits.appearance }}" required placeholder="Man in his 30s, short black hair, trimmed beard, brown eyes, slim build"></textarea>
-      <span class="hint">Face, hair, age, build. Be specific and keep it short; these exact words go into every scene.</span>
-    </label>
-    <label>Outfit
-      <input type="text" name="outfit" maxlength="{{ limits.outfit }}" placeholder="White kurta, navy waistcoat, black sandals">
-    </label>
-    <label>Personality (optional)
-      <input type="text" name="personality" maxlength="{{ limits.personality }}" placeholder="Warm, funny, a little stubborn">
-      <span class="hint">Helps Gemini write their lines and acting; not added to the clip prompt.</span>
-    </label>
-    <label>Reference picture (optional · JPG/PNG/WebP · 10 MB)
-      <input type="file" name="image" accept="image/jpeg,image/png,image/webp">
-    </label>
-    <label class="check" id="remove-image-row" hidden><input type="checkbox" name="remove_image" value="1"> Remove the current picture</label>
-    <p class="error" id="character-error" hidden></p>
-    <div class="form-actions">
-      <button type="submit" id="character-save">Add character</button>
-      <button type="button" class="secondary" id="character-cancel" hidden>Cancel editing</button>
-    </div>
+    <input type="hidden" name="portrait_id" id="cp-portrait-id">
+    <input type="hidden" name="remove_image" id="cp-remove-image">
+    <footer class="cp-foot">
+      <p class="error" id="character-error" hidden></p>
+      <span class="grow"></span>
+      <button type="button" class="secondary" id="character-cancel">Cancel</button>
+      <button type="submit" id="character-save">Create character</button>
+    </footer>
   </form>
 </section>
 
 {% if characters %}
-<ul class="char-list">
+<ul class="cp-grid">
   {% for c in characters %}
-  <li class="char-card" data-character='{{ {"id": c.id, "name": c.name, "appearance": c.appearance, "outfit": c.outfit, "voice": c.voice, "personality": c.personality, "has_image": c.image_path is not none} | tojson }}'>
-    <header>
-      {% if c.image_path %}<img class="char-thumb" src="/characters/{{ c.id }}/image" alt="">{% else %}<span class="char-thumb initial" aria-hidden="true">{{ c.name[:1] }}</span>{% endif %}
-      <h2>{{ c.name }}</h2>
-    </header>
-    <dl>
-      <dt>Appearance</dt><dd>{{ c.appearance }}</dd>
-      {% if c.outfit %}<dt>Outfit</dt><dd>{{ c.outfit }}</dd>{% endif %}
-      {% if c.voice %}<dt>Voice</dt><dd>{{ c.voice }}</dd>{% endif %}
-      {% if c.personality %}<dt>Personality</dt><dd>{{ c.personality }}</dd>{% endif %}
-    </dl>
-    <div class="actions">
-      <button class="secondary edit-character">Edit</button>
-      <button class="secondary danger" data-post="/characters/{{ c.id }}/delete" data-reload data-confirm="Delete {{ c.name }}? Videos already made keep them.">Delete</button>
+  <li class="cp-card" data-character='{{ {"id": c.id, "name": c.name, "appearance": c.appearance, "outfit": c.outfit, "voice": c.voice, "personality": c.personality, "locked": c.locked, "never": c.never, "image_url": c.image_url} | tojson }}'>
+    <div class="cp-card-pic">
+      {% if c.image_path %}<img src="{{ c.image_url }}" alt="{{ c.name }}" loading="lazy">
+      {% else %}<span class="cp-mono" style="--hue: {{ (c.id * 47) % 360 }}" aria-hidden="true">{{ c.name[:1] | upper }}</span>{% endif %}
+      <div class="cp-card-actions">
+        <button type="button" class="cp-pill edit-character">Edit</button>
+        <button type="button" class="cp-pill danger" data-post="/characters/{{ c.id }}/delete" data-reload
+                data-confirm="Delete {{ c.name }}? Videos already made keep them.">Delete</button>
+      </div>
+    </div>
+    <div class="cp-card-body">
+      <h3>{{ c.name }}</h3>
+      <p class="cp-card-look">{{ c.appearance }}</p>
+      <div class="cp-card-tags">
+        {% if c.outfit %}<span class="cp-tag" title="Outfit">👕 {{ c.outfit }}</span>{% endif %}
+        {% if c.voice %}<span class="cp-tag" title="Voice">🎙 {{ c.voice }}</span>{% endif %}
+        {% if not c.image_path %}<span class="cp-tag" title="Without a portrait they're only described in words, so their look can change between scenes.">⚠ No portrait</span>{% endif %}
+      </div>
     </div>
   </li>
   {% endfor %}
 </ul>
 {% else %}
-<section class="panel empty"><p class="muted">No characters yet. Add the people who appear in your videos above.</p></section>
+<section class="cp-empty" id="cp-empty">
+  <div class="cp-empty-art" aria-hidden="true"><span class="cp-mono" style="--hue: 220">A</span><span class="cp-mono" style="--hue: 330">S</span><span class="cp-mono" style="--hue: 150">R</span></div>
+  <h2>Build your cast</h2>
+  <p class="muted">Create the people in your videos once: their look, outfit, voice and a portrait. Then pick them in the Studio and they stay the same from scene to scene.</p>
+  <button type="button" class="cp-new-btn">Create your first character</button>
+</section>
 {% endif %}
 {% endblock %}

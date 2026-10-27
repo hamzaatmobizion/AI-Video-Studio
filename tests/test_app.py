@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import inspect, select
 
+from app import script
 from app.enums import GenStatus
 from app.models import Generation, GoogleConnection, utcnow
 from app.providers.drive_storage import _token_cache
@@ -175,7 +176,8 @@ def test_full_flow_to_ready_and_range_stream(app, authed, drive_connected, net):
     g = gen(app, gid)
     assert g.status == GenStatus.READY, g.error
     assert g.temp_path is None
-    assert not any(Path(app.state.settings.generated_dir).iterdir())  # temp copy deleted
+    # the joined copy is deleted; the scene's own clip is kept a while, to watch or remake it
+    assert [p.name for p in Path(app.state.settings.generated_dir).iterdir()] == [f"{gid}-scenes"]
 
     stored = net.google.files[g.drive_file_id]
     assert stored["data"] == clip
@@ -585,7 +587,8 @@ def test_scenes_are_made_one_at_a_time_then_joined(app, authed, drive_connected,
     stored = net.google.files[g.drive_file_id]
     assert 2.8 <= duration_of(stored["data"], tmp_path) <= 3.3
     assert re.fullmatch(r"\d{4}-\d\d-\d\d a boat at dawn \(\d+\)\.mp4", stored["name"])
-    assert not any(Path(app.state.settings.generated_dir).iterdir())  # scene clips and joined copy cleaned up
+    left = list(Path(app.state.settings.generated_dir).iterdir())  # the joined copy is gone; scene clips are kept
+    assert [p.name for p in left] == [f"{gid}-scenes"] and len(list(left[0].glob("scene-*.mp4"))) == 3
 
 
 def test_limit_mid_video_pauses_keeps_scenes_and_resumes(app, authed, drive_connected, net, tmp_path):
@@ -645,7 +648,7 @@ def test_failed_scene_is_named_and_retry_keeps_finished_ones(app, authed, drive_
 @pytest.mark.parametrize("scenes,message", [
     (["x"] * 13, "at most 12 scenes"),
     (["fine", "  "], "Write scene 2 first."),
-    (["fine", "y" * 2001], "Keep scene 2 under 2000 characters."),
+    (["fine", "y" * 1501], "Keep scene 2 under 1,500 characters."),
 ])
 def test_scene_validation(authed, drive_connected, scenes, message):
     r = submit_scenes(authed, scenes)
@@ -704,8 +707,9 @@ def test_one_prompt_gemini_plans_scenes_then_they_are_made(app, authed, drive_co
     net.worker.jobs["job1"].update(status="done", scenes=["dawn at the lighthouse", "noon storm", "night beam"])
     tick(app)
     g = gen(app, gid)
-    assert g.status == GenStatus.GENERATING and [sc.prompt for sc in g.scenes] == \
-        ["dawn at the lighthouse", "noon storm", "night beam"]
+    assert g.status == GenStatus.GENERATING and [sc.prompt.splitlines()[:2] for sc in g.scenes] == \
+        [["Vertical 9:16 video.", x] for x in ("dawn at the lighthouse", "noon storm", "night beam")]
+    assert all(sc.prompt.endswith(script.NO_TEXT + " " + script.NO_MUSIC) for sc in g.scenes)
     assert net.worker.submits[1]["path"] == "/videos" and b"dawn at the lighthouse" in net.worker.submits[1]["body"]
 
     for job in ("job2", "job3", "job4"):

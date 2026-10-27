@@ -21,9 +21,10 @@ CREATE TABLE IF NOT EXISTS jobs (
   clip_path TEXT,
   kind TEXT NOT NULL DEFAULT 'clip',         -- clip | plan (Gemini writes scene prompts)
   scene_count INTEGER,                       -- plan jobs: how many scene prompts to write
-  result TEXT,                               -- plan jobs: JSON list of script scenes
-  options TEXT,                              -- plan jobs: JSON {cast, style, language}
+  result TEXT,                               -- plan jobs: JSON {bible, scenes} (older: a list of scenes)
+  options TEXT,                              -- plan jobs: JSON {cast, style, language, rules}
   cancel_requested INTEGER NOT NULL DEFAULT 0,
+  not_before REAL,                           -- a retry waits until then (Gemini errors pass with time)
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL
 );
@@ -45,7 +46,7 @@ class JobStore:
             self._conn.executescript(SCHEMA)
             have = {r["name"] for r in self._conn.execute("PRAGMA table_info(jobs)")}
             for col, ddl in (("kind", "TEXT NOT NULL DEFAULT 'clip'"), ("scene_count", "INTEGER"),
-                             ("result", "TEXT"), ("options", "TEXT")):
+                             ("result", "TEXT"), ("options", "TEXT"), ("not_before", "REAL")):
                 if col not in have:  # databases made before plan jobs (or their options) existed
                     self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {ddl}")
         path.chmod(0o600)
@@ -91,7 +92,8 @@ class JobStore:
 
     def next_queued(self) -> dict | None:
         row = self._x("SELECT id FROM jobs WHERE status='queued' AND cancel_requested=0 "
-                      "ORDER BY created_at LIMIT 1").fetchone()
+                      "AND (not_before IS NULL OR not_before <= ?) ORDER BY created_at LIMIT 1",
+                      (time.time(),)).fetchone()
         return self.get(row["id"]) if row else None
 
     def by_status(self, status: str) -> list[dict]:

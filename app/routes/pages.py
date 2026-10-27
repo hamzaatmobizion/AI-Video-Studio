@@ -1,5 +1,6 @@
 import asyncio
 import re
+from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request
@@ -11,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from app.auth import (csrf_token, current_user, hash_password, require_page_user, require_post,
                       verify_password)
 from app import script as sc
+from app.genres import GENRE_LABELS
 from app.enums import ACTIVE, GenStatus
 from app.models import Character, Generation, User
 from app.routes.views import cards_for, settings_context
@@ -37,7 +39,7 @@ def studio(request: Request, prompt_from: int | None = None, user=Depends(requir
     return render(request, "studio.html", cards=cards_for(request, user.id),
                   can_generate=st.providers.generator() is not None,
                   drive_connected=st.providers.connection(user.id) is not None,
-                  characters=characters, styles=sc.STYLES,
+                  characters=characters, styles=sc.STYLES, max_cast=sc.MAX_CAST, genres=GENRE_LABELS,
                   **_prefill(prefill),
                   prefill_aspect=prefill.aspect if prefill else "9:16")
 
@@ -46,13 +48,16 @@ def _prefill(gen: Generation | None) -> dict:
     """Studio form values for "Use prompt again": one prompt + duration, or the user's own scenes."""
     if gen is None:
         return {"prefill_prompt": "", "prefill_duration": None, "prefill_scenes": [""], "prefill_manual": False,
-                "prefill_cast": [], "prefill_style": "", "prefill_language": "", "prefill_review": True}
+                "prefill_cast": [], "prefill_style": "", "prefill_language": "", "prefill_review": True,
+                "prefill_genre": "", "prefill_lock": False, "prefill_check": False}
     manual = not gen.planned and len(gen.scenes) > 1
     return {"prefill_prompt": "" if manual else gen.prompt,
             "prefill_duration": max(len(gen.scenes), 1) * 10,
             "prefill_scenes": [s.action or s.prompt for s in gen.scenes] if manual else [""],
             "prefill_manual": manual, "prefill_cast": gen.cast_ids or [], "prefill_style": gen.style or "",
-            "prefill_language": gen.language or "", "prefill_review": bool(gen.review)}
+            "prefill_language": gen.language or "", "prefill_review": bool(gen.review),
+            "prefill_genre": gen.genre or "", "prefill_lock": bool(gen.lock_frames),
+            "prefill_check": bool(gen.check_clips)}
 
 
 @router.get("/generations/{gen_id}/script", response_class=HTMLResponse)
@@ -60,8 +65,14 @@ def script_page(gen_id: int, request: Request, user=Depends(require_page_user)):
     """The script editor: each scene's setting, camera, who is where, what they do and say."""
     gen, library = request.app.state.service.script(gen_id, user.id)
     scenes = [s.script() for s in gen.scenes]
-    return render(request, "script.html", g=gen, scenes=scenes, library=library,
-                  editable=gen.status == GenStatus.REVIEW,
+    # Picked characters the story had no role for (Gemini leaves them out rather than cast them as someone else)
+    used = {p.get("id") for sc in scenes for p in sc["characters"]}
+    unused = [c["name"] for c in library if c["id"] in (gen.cast_ids or []) and c["id"] not in used]
+    return render(request, "script.html", g=gen, scenes=scenes, library=library, genres=GENRE_LABELS, unused=unused,
+                  editable=gen.status in (GenStatus.REVIEW, GenStatus.FAILED),
+                  failed=gen.status == GenStatus.FAILED,
+                  clips=[bool(s.clip_path and Path(s.clip_path).exists()) for s in gen.scenes],
+                  can_redo=gen.status in (GenStatus.READY, GenStatus.FAILED),
                   prompts=[s.prompt for s in gen.scenes],
                   options={"framing": sc.FRAMINGS, "angle": sc.ANGLES, "movement": sc.MOVEMENTS, "lens": sc.LENSES,
                            "position": sc.POSITIONS, "time_of_day": sc.TIMES_OF_DAY, "style": sc.STYLES},
@@ -71,6 +82,12 @@ def script_page(gen_id: int, request: Request, user=Depends(require_page_user)):
 HISTORY_STATUSES = {"all": "All", "ready": "Ready", "in_progress": "In progress", "failed": "Failed",
                     "cancelled": "Cancelled"}
 PER_PAGE = 20
+
+
+@router.get("/rules", response_class=HTMLResponse)
+def rules_page(request: Request, user=Depends(require_page_user)):
+    """How to write a prompt for the best video, and a format any AI chat can fill in."""
+    return render(request, "rules.html")
 
 
 @router.get("/history", response_class=HTMLResponse)

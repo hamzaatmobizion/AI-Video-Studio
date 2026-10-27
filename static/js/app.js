@@ -295,6 +295,22 @@
     });
   }
   localTimes(document);
+  // A card's long prompt (3 lines) or message (4 lines) is cut short, with Show more / Show less
+  function clampPrompts(root) {
+    root.querySelectorAll(".card .clamp, .history-row .clamp").forEach((p) => {
+      const more = (p.closest(".card-error, .card-note") || p).nextElementSibling;
+      if (!more || !more.classList.contains("clamp-more")) return;
+      more.hidden = p.scrollHeight <= p.clientHeight + 2 && !p.classList.contains("expanded");
+    });
+  }
+  clampPrompts(document);
+  document.addEventListener("click", (e) => {
+    const more = e.target.closest(".clamp-more");
+    if (!more) return;
+    const prev = more.previousElementSibling, p = prev.querySelector(".clamp") || prev;
+    const open = p.classList.toggle("expanded");
+    more.textContent = open ? "Show less" : "Show more";
+  });
 
   // Card polling: every 5 s while anything is in progress
   const cards = document.getElementById("cards");
@@ -314,7 +330,7 @@
         wrap.className = "card-wrap"; wrap.dataset.id = c.id;
         prev ? prev.after(wrap) : cards.prepend(wrap);
       }
-      if (wrap.dataset.hash !== c.hash) { wrap.innerHTML = c.html; wrap.dataset.hash = c.hash; localTimes(wrap); }
+      if (wrap.dataset.hash !== c.hash) { wrap.innerHTML = c.html; wrap.dataset.hash = c.hash; localTimes(wrap); clampPrompts(wrap); }
       prev = wrap;
     }
     cards.querySelectorAll(".card-wrap").forEach((w) => { if (!seen.has(w.dataset.id)) w.remove(); });

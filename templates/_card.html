@@ -1,42 +1,54 @@
 {% set total = g.scenes | length %}{% set done = g.scenes | selectattr("clip_path") | list | length %}
+{% set labels = {"PLANNING": "Writing script", "REVIEW": "Review script", "GENERATING": "Making", "SAVING": "Saving",
+                 "SAVE_FAILED": "Not saved", "PAUSED": "Paused", "CANCELLED": "Cancelled", "FAILED": "Failed",
+                 "READY": "Ready"} %}
 <article class="card status-{{ g.status | lower }}">
-  <div class="media">
+  <div class="media {{ 'portrait' if g.aspect == '9:16' else 'landscape' }}">
     {% if g.status == "READY" %}
       <video controls preload="metadata" playsinline src="/generations/{{ g.id }}/file#t=0.1"></video>
     {% else %}
-      <div class="placeholder {{ 'portrait' if g.aspect == '9:16' else 'landscape' }}">
-        {% if g.status == "PLANNING" %}<span class="spinner lg"></span>Gemini is writing the script ({{ total }} scene{{ '' if total == 1 else 's' }})…
-        {% elif g.status == "REVIEW" %}<span class="script-icon" aria-hidden="true">✎</span>Script ready to review
-        {% elif g.status == "GENERATING" %}<span class="spinner lg"></span>
+      <div class="placeholder">
+        {% if g.status == "PLANNING" %}<span class="spinner lg"></span><span>Gemini is writing the script ({{ total }} scene{{ '' if total == 1 else 's' }})…</span>
+        {% elif g.status == "REVIEW" %}<span class="script-icon" aria-hidden="true">✎</span><span>Script ready to review</span>
+        {% elif g.status == "GENERATING" %}<span class="spinner lg"></span><span>
           {%- if total > 1 and done == total %}Joining scenes…
           {%- elif (g.job_kind or "").startswith("still:") %}Locking scene {{ g.job_kind[6:] }}'s first frame…
           {%- elif (g.job_kind or "").startswith("check:") %}Checking scene {{ g.job_kind[6:] }}…
           {%- elif total > 1 %}Generating scene {{ done + 1 }} of {{ total }}…
-          {%- else %}Generating your video…{% endif %}
-        {% elif g.status == "SAVING" %}<span class="spinner lg"></span>Saving to Google Drive…
-        {% elif g.status == "SAVE_FAILED" %}Not saved yet
-        {% elif g.status == "PAUSED" %}<span class="paused-icon" aria-hidden="true">❚❚</span>Paused
+          {%- else %}Generating your video…{% endif %}</span>
+        {% elif g.status == "SAVING" %}<span class="spinner lg"></span><span>Saving to Google Drive…</span>
+        {% elif g.status == "SAVE_FAILED" %}<span class="state-icon" aria-hidden="true">⤒</span><span>Not saved yet</span>
+        {% elif g.status == "PAUSED" %}<span class="state-icon paused" aria-hidden="true">‖</span><span>Paused</span>
           {%- if total > 1 %}<span class="small">{{ done }} of {{ total }} scenes done</span>{% endif %}
-        {% elif g.status == "CANCELLED" %}Cancelled
-        {% else %}Failed{% endif %}
+        {% elif g.status == "CANCELLED" %}<span class="state-icon" aria-hidden="true">⊘</span><span>Cancelled</span>
+        {% else %}<span class="state-icon" aria-hidden="true">!</span><span>Failed</span>{% endif %}
       </div>
+    {% endif %}
+    <span class="status-chip {{ g.status | lower }}">{{ labels.get(g.status, g.status | title) }}</span>
+    {% if g.provider == 'flow' %}<span class="badge flow">Flow</span>{% endif %}
+    {% if total > 1 and g.status in ("GENERATING", "PAUSED") %}
+      <span class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="{{ total }}" aria-valuenow="{{ done }}"
+            aria-label="{{ done }} of {{ total }} scenes made"><span style="width: {{ (100 * done / total) | round | int }}%"></span></span>
     {% endif %}
   </div>
   <div class="body">
-    <p class="prompt">{{ g.prompt }}</p>
-    <p class="meta">{% if g.provider == 'flow' %}<span class="badge flow">Flow</span> {% endif %}#{{ g.id }} · {{ g.aspect }}{% if total > 1 %} · {{ total }} scenes{% endif %} · <time class="local-time" datetime="{{ g.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ g.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</time></p>
-    {% if g.error %}<p class="{{ 'muted' if active else 'error' }}">{{ g.error }}</p>{% endif %}
+    <p class="prompt clamp" dir="auto">{{ g.prompt }}</p>
+    <button type="button" class="link clamp-more" hidden>Show more</button>
+    <p class="meta">#{{ g.id }} · {{ g.aspect }}{% if total > 1 %} · {{ total }} scenes{% endif %} · <time class="local-time" datetime="{{ g.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ g.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</time></p>
+    {% if g.error %}<p class="{{ 'card-note' if active else 'card-error' }}"><span class="clamp lines-4">{{ g.error }}</span></p>
+    <button type="button" class="link clamp-more" hidden>Show more</button>{% endif %}
     <div class="actions">
       {% if g.status == "REVIEW" %}<a class="button" href="/generations/{{ g.id }}/script">Review script</a>{% endif %}
-      {% if g.status in ("PLANNING", "REVIEW", "GENERATING", "SAVING", "SAVE_FAILED", "READY", "PAUSED") %}
-        <button class="secondary" data-post="/generations/{{ g.id }}/cancel"
-                data-confirm="{{ 'Move this video to the Drive trash?' if g.status == 'READY' else 'Cancel this video?' }}">Cancel</button>
-      {% endif %}
       {% if g.status == "SAVE_FAILED" %}<button data-post="/generations/{{ g.id }}/save">Try saving again</button>{% endif %}
       {% if g.status == "PAUSED" %}<button data-post="/generations/{{ g.id }}/resume">Resume</button>{% endif %}
       {% if g.status in ("FAILED", "CANCELLED") %}<button data-post="/generations/{{ g.id }}/retry">Retry</button>{% endif %}
       {% if g.scenes and g.scenes[0].action and g.status not in ("PLANNING", "REVIEW") %}<a class="button secondary" href="/generations/{{ g.id }}/script">{{ 'Fix script' if g.status == 'FAILED' else 'Script' }}</a>{% endif %}
-      {% if not active and g.status != "REVIEW" %}<button class="secondary" data-post="/generations/{{ g.id }}/dismiss">Dismiss</button>{% endif %}
+      <span class="spacer"></span>
+      {% if g.status in ("PLANNING", "REVIEW", "GENERATING", "SAVING", "SAVE_FAILED", "READY", "PAUSED") %}
+        <button class="link danger" data-post="/generations/{{ g.id }}/cancel"
+                data-confirm="{{ 'Move this video to the Drive trash?' if g.status == 'READY' else 'Cancel this video?' }}">Cancel</button>
+      {% endif %}
+      {% if not active and g.status != "REVIEW" %}<button class="link" data-post="/generations/{{ g.id }}/dismiss">Dismiss</button>{% endif %}
     </div>
   </div>
 </article>

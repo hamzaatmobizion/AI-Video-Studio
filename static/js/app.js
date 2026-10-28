@@ -304,6 +304,29 @@
     });
   }
   clampPrompts(document);
+  // History: emptying the search box (deleting the text or its ✕) shows every video again, without pressing Search
+  const historySearch = document.querySelector(".history-search");
+  if (historySearch) {
+    const box = historySearch.querySelector("input[type=search]");
+    const searched = new URLSearchParams(location.search).get("q");
+    box.addEventListener("input", () => { if (!box.value.trim() && searched) historySearch.requestSubmit(); });
+    historySearch.addEventListener("submit", () => { if (!box.value.trim()) box.disabled = true; });  // no empty "q="
+  }
+  // History: a header for each day (Today, Yesterday, Mon 20 Oct 2026), in the viewer's own timezone
+  const historyList = document.querySelector("ul.history");
+  if (historyList) {
+    const day = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const today = new Date(), yesterday = new Date(Date.now() - 86400000);
+    let last = null;
+    historyList.querySelectorAll(":scope > li.history-row[data-time]").forEach((row) => {
+      const d = new Date(row.dataset.time);
+      if (isNaN(d) || day(d) === last) return;
+      last = day(d);
+      const label = last === day(today) ? "Today" : last === day(yesterday) ? "Yesterday"
+        : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+      row.before(Object.assign(document.createElement("li"), { className: "history-day", textContent: label }));
+    });
+  }
   document.addEventListener("click", (e) => {
     const more = e.target.closest(".clamp-more");
     if (!more) return;

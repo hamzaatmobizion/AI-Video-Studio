@@ -3,17 +3,25 @@
 {% set labels = {"READY": "Ready", "PLANNING": "Planning", "REVIEW": "Script to review", "GENERATING": "Generating", "SAVING": "Saving", "SAVE_FAILED": "Not saved",
                  "FAILED": "Failed", "CANCELLED": "Cancelled", "PAUSED": "Paused"} %}
 {% block content %}
-<section class="panel">
-  <h1>History</h1>
-  <form class="filters" method="get" action="/history" role="search">
-    <input type="search" name="q" value="{{ q }}" maxlength="200" placeholder="Search prompts" aria-label="Search prompts">
-    <select name="status" aria-label="Status">
-      {% for key, label in statuses.items() %}<option value="{{ key }}" {% if key == status %}selected{% endif %}>{{ label }}</option>{% endfor %}
-    </select>
+<section class="history-head">
+  <div class="history-title">
+    <h1>History</h1>
+    <p class="muted small">{{ total }} video{{ '' if total == 1 else 's' }}{% if q or status != 'all' %} match{% endif %}</p>
+  </div>
+  <form class="history-search" method="get" action="/history" role="search">
+    <span class="search-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+    <input type="search" name="q" value="{{ q }}" maxlength="200" placeholder="Search your prompts…" aria-label="Search prompts">
+    {% if status != 'all' %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
     <button type="submit">Search</button>
-    {% if q or status != 'all' %}<a class="clear" href="/history">Clear</a>{% endif %}
   </form>
-  <p class="muted small">{{ total }} video{{ '' if total == 1 else 's' }}{% if q or status != 'all' %} match{% endif %}</p>
+  <nav class="status-filters" aria-label="Filter by status">
+    {% for key, label in statuses.items() %}
+      {% set params = [] %}{% if q %}{% set _ = params.append(('q', q)) %}{% endif %}{% if key != 'all' %}{% set _ = params.append(('status', key)) %}{% endif %}
+      <a class="filter-chip{% if key == status %} active{% endif %}" href="/history{% if params %}?{{ params | urlencode }}{% endif %}"
+         {% if key == status %}aria-current="true"{% endif %}>{{ label }}</a>
+    {% endfor %}
+    {% if q or status != 'all' %}<a class="filter-clear" href="/history">Clear</a>{% endif %}
+  </nav>
 </section>
 
 {% if not rows %}
@@ -27,7 +35,7 @@
 {% else %}
   <ul class="history">
     {% for g in rows %}
-    <li class="history-row">
+    <li class="history-row" data-time="{{ g.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">
       <div class="thumb {{ 'portrait' if g.aspect == '9:16' else 'landscape' }} status-{{ g.status | lower }}">
         {% if g.status == "READY" %}
           <video controls preload="metadata" playsinline src="/generations/{{ g.id }}/file#t=0.1"></video>
@@ -72,9 +80,9 @@
   </ul>
   {% if pages > 1 %}
   <nav class="pager" aria-label="Pages">
-    {% if prev_url %}<a class="button secondary" href="{{ prev_url }}">← Newer</a>{% else %}<span></span>{% endif %}
-    <span class="muted small">Page {{ page }} of {{ pages }}</span>
-    {% if next_url %}<a class="button secondary" href="{{ next_url }}">Older →</a>{% else %}<span></span>{% endif %}
+    {% if prev_url %}<a class="button secondary" href="{{ prev_url }}">← Newer</a>{% else %}<span class="button secondary disabled" aria-hidden="true">← Newer</span>{% endif %}
+    <span class="pager-count">Page {{ page }} of {{ pages }}</span>
+    {% if next_url %}<a class="button secondary" href="{{ next_url }}">Older →</a>{% else %}<span class="button secondary disabled" aria-hidden="true">Older →</span>{% endif %}
   </nav>
   {% endif %}
 {% endif %}

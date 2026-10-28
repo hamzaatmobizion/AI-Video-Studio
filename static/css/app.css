@@ -74,6 +74,11 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .actions .spacer { flex:1; }
 .actions button, .actions .button { padding:6px 12px; font-size:.88em; border-radius:8px; }
 .actions button.link { padding:6px 4px; color:var(--muted); }
+/* a card's buttons stay on one line: main actions left, Cancel / Dismiss right */
+.card .actions { flex-wrap:nowrap; gap:6px; }
+.card .actions button, .card .actions .button { white-space:nowrap; padding:6px 9px; }
+.card .actions button.link { padding:6px 2px; }
+.card .actions .spacer { margin-left:-6px; }  /* no double gap around the invisible spacer */
 .actions button.link:hover { color:var(--fg); }
 .actions button.link.danger:hover { color:var(--bad); }
 .spinner { width:14px; height:14px; border:2px solid var(--muted); border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; }
@@ -117,6 +122,26 @@ input[type=search] { padding:8px 10px; border:1px solid var(--line); border-radi
 .filters input[type=search] { flex:1; min-width:200px; }
 .filters select { width:auto; }
 .filters .clear { margin-left:4px; }
+/* History: header with search and status chips, rows grouped by day */
+.history-head { display:grid; grid-template-columns:auto 1fr; gap:14px 24px; align-items:center; margin:4px 0 20px; }
+.history-title h1 { margin:0; font-size:1.7em; letter-spacing:-.01em; }
+.history-title p { margin:2px 0 0; }
+.history-search { position:relative; display:flex; gap:8px; justify-self:end; width:min(520px, 100%); }
+.history-search .search-icon { position:absolute; left:12px; top:50%; transform:translateY(-50%); width:18px; height:18px;
+  color:var(--muted); pointer-events:none; }
+.history-search .search-icon svg { width:100%; height:100%; display:block; }
+.history-search input[type=search] { flex:1; padding:10px 12px 10px 38px; border-radius:10px; background:var(--panel); }
+.history-search button { border-radius:10px; padding:8px 16px; }
+.status-filters { grid-column:1 / -1; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.filter-chip { padding:6px 14px; border-radius:999px; border:1px solid var(--line); background:var(--panel); color:var(--fg);
+  text-decoration:none; font-size:.9em; font-weight:500; transition:border-color .15s, background .15s; }
+.filter-chip:hover { border-color:var(--accent); }
+.filter-chip.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+.filter-clear { margin-left:4px; font-size:.9em; color:var(--muted); }
+.history-day { list-style:none; margin:10px 2px -2px; font-size:.8em; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--muted); }
+.history-day:first-child { margin-top:0; }
+@media (max-width:700px) { .history-head { grid-template-columns:1fr; } .history-search { justify-self:stretch; } }
 .history { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
 .history-row { display:grid; grid-template-columns:132px 1fr; gap:18px; background:var(--panel); border:1px solid var(--line);
   border-radius:14px; padding:14px; box-shadow:0 1px 2px rgb(0 0 0 / .06); transition:box-shadow .15s; }
@@ -144,7 +169,11 @@ input[type=search] { padding:8px 10px; border:1px solid var(--line); border-radi
 .pill.planning, .pill.generating, .pill.saving, .pill.paused { background:color-mix(in srgb, var(--accent) 18%, transparent); color:var(--accent); }
 .badge { font-size:.85em; }
 .badge.flow { padding:1px 7px; border-radius:999px; border:1px solid var(--accent); color:var(--accent); font-weight:600; }
-.pager { display:flex; justify-content:space-between; align-items:center; margin-top:16px; }
+.pager { display:flex; justify-content:space-between; align-items:center; margin-top:20px; }
+.pager .button { border-radius:10px; }
+.pager .disabled { opacity:.35; pointer-events:none; background:transparent; color:var(--accent); }
+.pager-count { font-size:.9em; color:var(--muted); padding:6px 14px; border-radius:999px; background:var(--panel);
+  border:1px solid var(--line); }
 .empty p { margin:0; }
 .history-link { margin-top:16px; }
 @media (max-width:560px) { .history-row { grid-template-columns:88px 1fr; gap:12px; padding:12px; } }

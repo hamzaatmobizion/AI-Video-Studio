@@ -387,13 +387,14 @@ class FlowBrowserGenerator:
         return self._composer_pictures(pg) == 0
 
     def _mode_for(self, req: ClipRequest) -> tuple[str, list[Path]]:
-        """Which Flow mode makes this clip, and the pictures it takes. A scene with a first frame (a locked still, or
-        the previous clip's last frame: `req.frame`) starts exactly from it in Frames mode, so the place, people and
-        style carry on; Flow's Frames mode takes no other pictures, and the frame already shows the characters.
-        Otherwise Ingredients, with the characters' pictures as references; with no pictures, plain text to video."""
+        """Which Flow mode makes this clip, and the pictures it takes. As with Gemini, the characters' pictures always
+        go with the clip, the scene's first frame (a locked still, or the previous clip's last frame: `req.frame`)
+        after them, all as Ingredients, numbered as the prompt's "reference image N". Frames mode (an exact start,
+        but no other pictures) only when the frame is the clip's one picture; with no pictures, plain text to video."""
         images = [p for p in req.images if p.exists()]
-        if req.frame is not None and 0 <= req.frame < len(req.images) and req.images[req.frame].exists():
-            return "frames", [req.images[req.frame]]
+        framed = req.frame is not None and 0 <= req.frame < len(req.images) and req.images[req.frame].exists()
+        if framed and len(images) == 1:
+            return "frames", images
         if not images:
             return "text", []
         return "ingredients", images[:int(self.ui.get("max_images", 3))]

@@ -1149,8 +1149,9 @@ def test_flow_mode_for_pictures(ws):
     assert gen._mode_for(ClipRequest("j", 1, "x", "9:16")) == ("text", [])
     assert gen._mode_for(ClipRequest("j", 1, "x", "9:16", images=pics)) == ("ingredients", pics[:3])
     assert gen.ui["modes"] == {"text": "Frames", "frames": "Frames", "ingredients": "Ingredients"}
-    # a scene with a first frame starts exactly from it (Frames mode), the frame alone
-    assert gen._mode_for(ClipRequest("j", 1, "x", "9:16", images=pics[:2], frame=1)) == ("frames", [pics[1]])
+    # as with Gemini, the characters' pictures go with the frame (Ingredients); Frames mode only for the frame alone
+    assert gen._mode_for(ClipRequest("j", 1, "x", "9:16", images=pics[:2], frame=1)) == ("ingredients", pics[:2])
+    assert gen._mode_for(ClipRequest("j", 1, "x", "9:16", images=pics[:1], frame=0)) == ("frames", pics[:1])
     assert gen._mode_for(ClipRequest("j", 1, "x", "9:16", images=pics[:2], frame=5)) == ("ingredients", pics[:2])
     assert gen.ui["clip_settings"] == {"kind": "Video", "resolution": "720p", "duration": "8s", "count": "x1"}
     ws2 = WorkerSettings(_env_file=None, STUDIO_DATA_PATH=ws.data, STUDIO_API_KEY=KEY, FLOW_MODEL_LABEL="Veo 3.1 - Fast")

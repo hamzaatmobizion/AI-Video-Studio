@@ -196,26 +196,17 @@ class GenerationService:
                 extra = []  # lines added now; the scene's action is shortened to make room, never these
                 start = Path(scene.still_path) if scene.still_path and Path(scene.still_path).exists() else None
                 lead = start or frame  # the scene's own first frame, else the previous clip's last one
-                if lead and gen.provider == Provider.FLOW:
-                    # Flow starts the clip exactly from this frame (its Frames mode), which takes no other pictures:
-                    # the frame already shows everyone, and the prompt describes them in words, never "picture N"
-                    paths, pictured = [str(lead)], 0
-                    if is_structured(scene.script()):
-                        prompt = compile_prompt(scene.script(), [dict(c, image_path=None) for c in library], gen.style,
-                                                gen.language, gen.aspect, fit=True, **_prompt_options(gen))
-                    extra.append(STARTS_FROM.format(n=1))
-                elif lead and pictured < MAX_SCENE_IMAGES:
+                # Gemini and Flow alike: the pictures of who is in the shot, then the frame, so every name in the
+                # prompt keeps its own "reference image N" (Flow takes them all as Ingredients)
+                if lead and pictured < MAX_SCENE_IMAGES:
                     paths = [*paths[:pictured], str(lead), *paths[pictured:]][:MAX_SCENE_IMAGES]
                     extra.append((STARTS_FROM if start or gen.lock_frames else CONTINUE_FROM).format(n=pictured + 1))
                 if scene.redos and scene.check_note.startswith("Remade once: "):  # say what went wrong last time
                     extra.append(f"Fix from the last try: {_fit_text(scene.check_note[13:].rstrip('.'), 300)}.")
                 room = MAX_PROMPT - len("\n".join(extra)) - 1
                 if extra and len(prompt) > room:
-                    worded = paths == [str(lead)] and gen.provider == Provider.FLOW  # as above: no pictures but the frame
-                    prompt = compile_prompt(scene.script(),
-                                            [dict(c, image_path=None) for c in library] if worded else library,
-                                            gen.style, gen.language, gen.aspect, fit=True, room=room,
-                                            **_prompt_options(gen))
+                    prompt = compile_prompt(scene.script(), library, gen.style, gen.language, gen.aspect, fit=True,
+                                            room=room, **_prompt_options(gen))
                 prompt = "\n".join([prompt, *extra])[:MAX_PROMPT]
                 images = [Path(p) for p in paths if Path(p).exists()]
                 start_at = images.index(Path(lead)) if lead and Path(lead) in images else None

@@ -95,17 +95,17 @@ def test_flow_lock_characters_draws_the_first_frame_in_flow(app, authed, drive_c
     net.worker.clips["job3"] = clip_bytes(tmp_path, "job3")
     tick(app)
     first = net.worker.submits[2]
-    # Flow starts the clip exactly from the drawn frame (Frames mode takes only that picture), so the prompt describes
-    # Ali in words, never as "reference image 1", and names the frame as picture 1
-    assert first["path"] == "/videos" and first["images"] == 1
-    assert b'name="provider"\r\n\r\nflow' in first["content"] and b'name="frame"\r\n\r\n0' in first["content"]
-    assert b"Reference image 1 is this shot's first frame" in first["content"]
-    assert b"as reference image" not in first["content"] and b"man in his 30s, beard" in first["content"]
+    # As with Gemini: Ali's picture as reference image 1, then the drawn frame as reference image 2
+    assert first["path"] == "/videos" and first["images"] == 2
+    assert b'name="provider"\r\n\r\nflow' in first["content"] and b'name="frame"\r\n\r\n1' in first["content"]
+    assert b"Reference image 2 is this shot's first frame" in first["content"]
+    assert b"as in reference image 1" in first["content"]
     assert gen(app, gid).scenes[0].still_path.endswith("scene-1-still.png")
     finish(net, app, "job3")
     second = net.worker.submits[3]
-    assert second["path"] == "/videos" and second["images"] == 1  # no second still: scene 1's last frame alone
-    assert b'name="frame"\r\n\r\n0' in second["content"]
+    # no second still: Ali's picture again, then scene 1's last frame
+    assert second["path"] == "/videos" and second["images"] == 2
+    assert b'name="frame"\r\n\r\n1' in second["content"] and b"as in reference image 1" in second["content"]
     assert sum(s["path"] == "/stills" for s in net.worker.submits) == 1
 
 

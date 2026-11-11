@@ -31,7 +31,7 @@ SECRET_PROMPT = "a lighthouse keeper named Zorblax feeding seagulls"
 @pytest.fixture
 def ws(tmp_path):
     s = WorkerSettings(_env_file=None, STUDIO_DATA_PATH=tmp_path / "data", STUDIO_API_KEY=KEY, MAX_RETRIES=1,
-                       RETRY_DELAY_SECONDS=0)
+                       RETRY_DELAY_SECONDS=0, FLOW_MIN_GAP_SECONDS=0)
     s.ensure_dirs()
     return s
 
@@ -1327,6 +1327,60 @@ def test_flow_unusual_activity_pauses_flow():
     assert stop.classify(text) == "verification"
     err = flow_stop("verification")
     assert isinstance(err, VerificationRequired) and "unusual activity" in err.user_message
+
+
+def test_flow_flag_lifts_after_the_cooldown(flow_api, store):
+    from worker.flow_browser import stop_error as flow_stop
+    runner = flow_api.runner
+    runner.generators["flow"].script = [flow_stop("verification")]
+    a = store.create("a", "9:16", None, provider="flow")
+    runner.tick()
+    pause = runner.paused("flow")
+    assert pause["kind"] == "manual_intervention_required" and pause["until"] == pause["at"] + 120 * 60
+    assert "resume by itself in about 2 hours" in store.get(a)["error"]
+    runner.tick()
+    assert runner.paused("flow") is not None  # still cooling down
+    store.kv_set("account_pause:flow", {**pause, "until": time.time() - 1})
+    b = store.create("b", "9:16", None, provider="flow")
+    runner.tick()
+    assert runner.paused("flow") is None and store.get(b)["status"] == "done"
+
+
+def test_flow_limit_doesnt_lift_by_itself(flow_api, store):
+    from worker.flow_browser import stop_error as flow_stop
+    runner = flow_api.runner
+    runner.generators["flow"].script = [flow_stop("limit")]
+    store.create("a", "9:16", None, provider="flow")
+    runner.tick()
+    assert "until" not in runner.paused("flow")
+
+
+def test_flow_is_paced(ws, store, lock):
+    ws.FLOW_MIN_GAP_SECONDS = 60
+    runner = Runner(ws, store, TestPatternGenerator(), lock, flow=TestPatternGenerator(profile="profile_flow.json"))
+    a = store.create("a", "9:16", None, provider="flow")
+    b = store.create("b", "9:16", None, provider="flow")
+    c = store.create("c", "9:16", None)
+    runner.tick()
+    assert store.get(a)["status"] == "done" and store.get(b)["status"] == "queued"
+    next_at = store.kv_get("flow_pace")["next_at"]
+    assert time.time() + 59 < next_at < time.time() + 91
+    runner.tick()
+    assert store.get(b)["status"] == "queued" and store.get(c)["status"] == "done"  # Gemini isn't held up
+    store.kv_set("flow_pace", {**store.kv_get("flow_pace"), "next_at": 0})
+    runner.tick()
+    assert store.get(b)["status"] == "done"
+
+
+def test_flow_hourly_cap(ws, store, lock):
+    ws.FLOW_MAX_PER_HOUR = 2
+    runner = Runner(ws, store, TestPatternGenerator(), lock, flow=TestPatternGenerator(profile="profile_flow.json"))
+    jobs = [store.create(p, "9:16", None, provider="flow") for p in "abc"]
+    runner.tick(); runner.tick(); runner.tick()
+    assert [store.get(j)["status"] for j in jobs] == ["done", "done", "queued"]
+    store.kv_set("flow_pace", {"next_at": 0, "starts": [time.time() - 3601, time.time()]})
+    runner.tick()
+    assert store.get(jobs[2])["status"] == "done"  # a start over an hour old no longer counts
 
 
 def test_flow_failed_tile_stops_the_wait_at_once(ws):

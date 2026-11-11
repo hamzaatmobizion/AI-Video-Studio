@@ -25,6 +25,12 @@ class WorkerSettings(BaseSettings):
     GEMINI_PLAN_MODELS: str = "Flash,Pro"
     FLOW_MODEL_LABEL: str | None = None  # None → profile_flow.json ("Veo 3.1 - Lite"); the model picked in Flow
     FLOW_IMAGE_MODEL_LABEL: str | None = None  # None → profile_flow.json ("Nano Banana 2.1"): Flow's first-frame stills
+    # Google Flow flags a browser for "unusual activity" when generations come back to back, so Flow is paced: a rest
+    # after each generation (plus up to half again at random), at most so many starts an hour (0 = no cap), and after
+    # a flag Flow resumes by itself once the cooldown has passed (0 = only by hand).
+    FLOW_MIN_GAP_SECONDS: int = 60
+    FLOW_MAX_PER_HOUR: int = 12
+    FLOW_FLAG_COOLDOWN_MINUTES: int = 120
     GENERATION_TIMEOUT_SECONDS: int = 900
     MAX_RETRIES: int = 1
     RETRY_DELAY_SECONDS: int = 90  # wait before retrying: Gemini's "I encountered an error" fails again at once
@@ -97,6 +103,12 @@ class WorkerSettings(BaseSettings):
             out.append("GENERATION_TIMEOUT_SECONDS must be between 60 and 3600.")
         if not 0 <= self.MAX_RETRIES <= 3:
             out.append("MAX_RETRIES must be between 0 and 3.")
+        if not 0 <= self.FLOW_MIN_GAP_SECONDS <= 3600:
+            out.append("FLOW_MIN_GAP_SECONDS must be between 0 and 3600.")
+        if not 0 <= self.FLOW_MAX_PER_HOUR <= 100:
+            out.append("FLOW_MAX_PER_HOUR must be between 0 and 100.")
+        if not 0 <= self.FLOW_FLAG_COOLDOWN_MINUTES <= 24 * 60:
+            out.append("FLOW_FLAG_COOLDOWN_MINUTES must be between 0 and 1440.")
         if self.BROWSER_CHANNEL not in ("", "chrome"):
             out.append('BROWSER_CHANNEL must be empty or "chrome".')
         return out

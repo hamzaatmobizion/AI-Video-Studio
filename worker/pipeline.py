@@ -4,12 +4,15 @@ Rules:
 - QC failure or generator error → bounded retry (MAX_RETRIES), then failed. Never a loop.
 - Safety refusal → failed immediately; the prompt is never reworded.
 - Account stop (limit, sign-out, verification, subscription) → pause that provider (Gemini or Google Flow), fail
-  its queue with the same message; the attempt doesn't count. Resume is manual. Gemini's pause also stops its chat
-  (plans, portraits, checks), except a video limit, which leaves the chat free.
+  its queue with the same message; the attempt doesn't count. Resume is manual, except Flow's "unusual activity"
+  flag, which lifts by itself after FLOW_FLAG_COOLDOWN_MINUTES. Gemini's pause also stops its chat (plans,
+  portraits, checks), except a video limit, which leaves the chat free.
+- Google Flow is paced (FLOW_MIN_GAP_SECONDS, FLOW_MAX_PER_HOUR): its jobs wait, other lanes carry on.
 - Clip files are written once as clips/<job>/attempt-N.mp4 and made read-only.
 """
 import logging
 import os
+import random
 import re
 import shutil
 import threading
@@ -40,6 +43,15 @@ PLAN_RETRY_DELAY = 30  # seconds before a failed script is asked again: no video
 #                        takes over if Gemini keeps failing, so waiting long only slows the video
 PROVIDERS = ("gemini", "flow")  # where a clip can be made
 PAUSE_KEYS = {"gemini": "account_pause", "flow": "account_pause:flow"}
+FLOW_PACE_KEY = "flow_pace"  # {"next_at": when the next Flow job may start, "starts": start times in the last hour}
+FLAGGED = "manual_intervention_required"  # VerificationRequired.kind
+
+
+def _span(minutes: int) -> str:
+    if minutes < 60:
+        return f"{minutes} minutes"
+    hours = minutes / 60
+    return "1 hour" if hours == 1 else f"{hours:g} hours"
 
 
 class Runner:
@@ -159,8 +171,8 @@ class Runner:
             self.store.event(jid, "image_limit")
             return
         except AccountStop as e:
-            self.pause(e.kind, e.user_message, provider, chat=provider == "gemini")
-            self.store.update(jid, status="failed", error=e.user_message)
+            message = self.pause(e.kind, e.user_message, provider, chat=provider == "gemini")
+            self.store.update(jid, status="failed", error=message)
             return
         except GeneratorError as e:
             self._retry_or_fail(jid, e.user_message, type(e).__name__)
@@ -227,7 +239,39 @@ class Runner:
             pause = self.paused(provider)
             if pause:
                 out |= self._blocks(provider, pause)
+        if self._flow_resting():
+            out.add("flow")
         return out
+
+    # ---- Flow pacing ---------------------------------------------------------
+    def _flow_pace(self) -> dict:
+        pace = self.store.kv_get(FLOW_PACE_KEY) or {}
+        cutoff = time.time() - 3600
+        return {"next_at": pace.get("next_at", 0), "starts": [t for t in pace.get("starts", []) if t > cutoff]}
+
+    def _flow_resting(self) -> bool:
+        """Flow's jobs wait out the rest after the last generation and the hourly cap."""
+        pace = self._flow_pace()
+        cap = self.settings.FLOW_MAX_PER_HOUR
+        return time.time() < pace["next_at"] or (cap > 0 and len(pace["starts"]) >= cap)
+
+    def _flow_started(self) -> None:
+        pace = self._flow_pace()
+        pace["starts"].append(time.time())
+        self.store.kv_set(FLOW_PACE_KEY, pace)
+
+    def _flow_finished(self) -> None:
+        pace = self._flow_pace()
+        gap = self.settings.FLOW_MIN_GAP_SECONDS
+        pace["next_at"] = time.time() + gap * random.uniform(1.0, 1.5)
+        self.store.kv_set(FLOW_PACE_KEY, pace)
+
+    def _flow_cooldown_over(self) -> None:
+        """A Flow "unusual activity" pause lifts by itself once the cooldown has passed."""
+        pause = self.paused("flow")
+        if pause and pause["kind"] == FLAGGED and pause.get("until") and time.time() >= pause["until"]:
+            self.resume("flow")
+            self.store.event(None, "account_resumed", "flow cooldown over")
 
     def lane_pause(self, name: str) -> dict | None:
         """The pause that stops jobs in lane `name` (gemini | flow | chat), if any."""
@@ -237,9 +281,15 @@ class Runner:
                 return pause
         return None
 
-    def pause(self, kind: str, message: str, provider: str = "gemini", chat: bool = False) -> None:
-        """`chat`: a Gemini chat job (plan, portrait, check) hit the stop, so the chat stops too."""
+    def pause(self, kind: str, message: str, provider: str = "gemini", chat: bool = False) -> str:
+        """`chat`: a Gemini chat job (plan, portrait, check) hit the stop, so the chat stops too. Returns the message
+        the stopped jobs fail with."""
         pause = {"kind": kind, "message": message, "at": time.time(), "provider": provider, "chat": chat}
+        cooldown = self.settings.FLOW_FLAG_COOLDOWN_MINUTES
+        if provider == "flow" and kind == FLAGGED and cooldown:
+            pause["until"] = pause["at"] + cooldown * 60
+            message = pause["message"] = (f"{message} Flow will resume by itself in about {_span(cooldown)} "
+                                          "(or resume it sooner in Settings).")
         self.store.kv_set(PAUSE_KEYS[provider], pause)
         self.store.event(None, "account_paused", f"{provider} {kind}")
         stopped = self._blocks(provider, pause)
@@ -247,6 +297,7 @@ class Runner:
             if lane(job) in stopped:
                 self.store.update(job["id"], status="failed", error=message)
         log.warning("%s generation paused: %s", provider, kind)
+        return message
 
     def resume(self, provider: str = "gemini") -> None:
         self.store.kv_del(PAUSE_KEYS[provider])
@@ -266,14 +317,20 @@ class Runner:
 
     def tick(self) -> bool:
         """Run at most one job. Returns True if a job was processed."""
+        self._flow_cooldown_over()
         job = self.store.next_queued(skip_lanes=tuple(sorted(self.blocked_lanes())))
         if job is None:
             return False
         if not self.lock.try_acquire("generation"):
             return False  # sign-in window or session check holds the profile
+        flow = lane(job) == "flow"
+        if flow:
+            self._flow_started()
         try:
             self._process(job)
         finally:
+            if flow:
+                self._flow_finished()
             self.lock.release("generation")
         return True
 
@@ -341,8 +398,8 @@ class Runner:
         except AccountStop as e:
             # This attempt doesn't count against the job; the provider stops. Pause first, so anyone
             # who sees this job failed also sees the pause (the web app keeps a paused video's scenes).
-            self.pause(e.kind, e.user_message, provider)
-            self.store.update(jid, status="failed", error=e.user_message)
+            message = self.pause(e.kind, e.user_message, provider)
+            self.store.update(jid, status="failed", error=message)
             return
         except GeneratorError as e:
             self._retry_or_fail(jid, e.user_message, type(e).__name__)

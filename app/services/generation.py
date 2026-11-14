@@ -9,6 +9,9 @@ Clips are made by the video's provider: Gemini (10-second scenes from its daily 
 (8-second scenes, Veo 3.1 - Lite, paid with Flow credits). The script and clip checks are Gemini's chat either way;
 a Flow video never draws a Gemini still, so it spends no Gemini video or image.
 
+A Flow video made by hand (`by_hand`) waits at HAND for each scene: the user makes the clip in Google Flow from the
+prompt and pictures the by-hand page shows, and uploads it; the script, checks and joining stay automatic.
+
 Scenes go to the worker one at a time, so a limit never fails a queue of them: the generation is
 PAUSED with its finished clips kept, and continues only when the user clicks Resume on that video.
 Driven by `tick()` (scheduler every 5 s, never overlapping). All state is in the DB, so a restart
@@ -44,7 +47,7 @@ HISTORY_FILTERS = {
     "failed": [GenStatus.FAILED],
     "cancelled": [GenStatus.CANCELLED],
     "in_progress": [GenStatus.PLANNING, GenStatus.REVIEW, GenStatus.GENERATING, GenStatus.SAVING,
-                    GenStatus.SAVE_FAILED, GenStatus.PAUSED],
+                    GenStatus.SAVE_FAILED, GenStatus.PAUSED, GenStatus.HAND],
 }
 MAX_UPLOAD_ATTEMPTS = 10
 UPLOAD_RETRY = timedelta(seconds=30)
@@ -86,13 +89,17 @@ class GenerationService:
     def create(self, user_id: int, scenes: list[str], aspect: str, images: list[tuple[str, bytes]],
                plan: int | None = None, cast_ids: list[int] | None = None, style: str = "", language: str = "",
                review: bool = False, genre: str = "", music: tuple[str, bytes] | None = None,
-               lock_frames: bool = False, check_clips: bool = False, provider: str = Provider.GEMINI) -> int:
+               lock_frames: bool = False, check_clips: bool = False, provider: str = Provider.GEMINI,
+               by_hand: bool = False) -> int:
         """`scenes`: one prompt per ~10 s clip, already validated. With `plan` = N, `scenes` is the user's
         one prompt and Gemini first writes an N-scene script from it. `images` validated by content: [(ext, bytes)].
         `cast_ids`: the user's characters to use; `review`: wait for the user to approve the script;
         `genre`: the video type (app/genres.py), read from the prompt when it isn't one. `music`: (ext, bytes) of
         one track laid under the whole video; `lock_frames`, `check_clips`: the slower consistency options.
-        `provider`: where the clips are made (gemini | flow), so how long each scene is."""
+        `provider`: where the clips are made (gemini | flow), so how long each scene is. `by_hand` (Flow only): the
+        user makes each clip in Google Flow and uploads it; no first frame is drawn, since that's made in Flow too."""
+        by_hand = by_hand and provider == Provider.FLOW
+        lock_frames = lock_frames and not by_hand
         if self.p.generator() is None:
             raise UserError("Video generation is off: set WORKER_URL and WORKER_API_KEY in .env.", 503)
         if self.p.storage(user_id) is None:
@@ -123,7 +130,7 @@ class GenerationService:
                              poll_errors=0, upload_attempts=0, dismissed=False, planned=bool(plan),
                              review=review, cast_ids=cast_ids, style=style, language=language, genre=genre,
                              bible={}, scenes=rows, lock_frames=lock_frames, check_clips=check_clips,
-                             provider=Provider(provider))
+                             provider=Provider(provider), by_hand=by_hand)
             s.add(gen)
             s.flush()
             paths = []
@@ -168,24 +175,25 @@ class GenerationService:
         with self.db.session() as s:
             gen = s.get(Generation, gen_id)
             scene = _next_scene(gen)
+            if gen.by_hand:  # the user makes this clip in Google Flow and uploads it (the by-hand page)
+                gen.status, gen.worker_job_id, gen.job_kind, gen.submitted_at = GenStatus.HAND, None, "", None
+                log.info("generation %s scene %d waits for its clip by hand", gen_id, scene.position)
+                return
             lane = gen.provider  # which of the worker's queues this goes to: the clip's, or Gemini's chat (a still)
             try:
                 if gen_client is None:
                     raise GeneratorError("Video generation is off: set WORKER_URL and WORKER_API_KEY.", final=True)
-                paths, pictured, names, library = gen.ref_images, 0, [], self._library(s, gen.user_id)
-                if scene.characters:  # the pictures of who is in this shot first, then the video's own uploads
-                    names = _pictured_names(scene, library)
-                    pictured = len(names)
-                    paths = scene_images(scene.script(), library, gen.ref_images)
-                prompt = scene.prompt
+                library = self._library(s, gen.user_id)
+                names = _pictured_names(scene, library) if scene.characters else []
                 frame = self._previous_frame(gen, scene)
                 ref = f"gen-{gen.id}-s{scene.position}-{uuid.uuid4().hex[:6]}"
-                if gen.lock_frames and scene.still_path is None and frame is None and 0 < pictured < MAX_SCENE_IMAGES:
+                if gen.lock_frames and scene.still_path is None and frame is None and 0 < len(names) < MAX_SCENE_IMAGES:
                     # A Flow video's still is drawn in Flow (its credits), so it uses no Gemini image
                     lane = "flow" if gen.provider == Provider.FLOW else "chat"
                     # "Lock characters", first scene: draw its opening frame from the pictures, then animate it. Later
                     # scenes start from the previous clip's real last frame: a redraw of it would change things.
-                    images = [Path(p) for p in paths[:pictured]] + ([frame] if frame else [])
+                    paths = scene_images(scene.script(), library, gen.ref_images)
+                    images = [Path(p) for p in paths[:len(names)]] + ([frame] if frame else [])
                     job_id = gen_client.still(still_prompt(scene.script(), library, gen.style, gen.bible), gen.aspect,
                                               ref, images, names, previous=bool(frame), provider=gen.provider)
                     gen.worker_job_id, gen.job_kind, gen.submitted_at, gen.poll_errors = \
@@ -193,23 +201,7 @@ class GenerationService:
                     gen.status = GenStatus.GENERATING
                     log.info("generation %s scene %d still submitted as %s", gen_id, scene.position, job_id)
                     return
-                extra = []  # lines added now; the scene's action is shortened to make room, never these
-                start = Path(scene.still_path) if scene.still_path and Path(scene.still_path).exists() else None
-                lead = start or frame  # the scene's own first frame, else the previous clip's last one
-                # Gemini and Flow alike: the pictures of who is in the shot, then the frame, so every name in the
-                # prompt keeps its own "reference image N" (Flow takes them all as Ingredients)
-                if lead and pictured < MAX_SCENE_IMAGES:
-                    paths = [*paths[:pictured], str(lead), *paths[pictured:]][:MAX_SCENE_IMAGES]
-                    extra.append((STARTS_FROM if start or gen.lock_frames else CONTINUE_FROM).format(n=pictured + 1))
-                if scene.redos and scene.check_note.startswith("Remade once: "):  # say what went wrong last time
-                    extra.append(f"Fix from the last try: {_fit_text(scene.check_note[13:].rstrip('.'), 300)}.")
-                room = MAX_PROMPT - len("\n".join(extra)) - 1
-                if extra and len(prompt) > room:
-                    prompt = compile_prompt(scene.script(), library, gen.style, gen.language, gen.aspect, fit=True,
-                                            room=room, **_prompt_options(gen))
-                prompt = "\n".join([prompt, *extra])[:MAX_PROMPT]
-                images = [Path(p) for p in paths if Path(p).exists()]
-                start_at = images.index(Path(lead)) if lead and Path(lead) in images else None
+                prompt, images, start_at = self._clip_inputs(gen, scene, library, frame)
                 job_id = gen_client.submit(prompt, gen.aspect, ref, images, provider=gen.provider, frame=start_at)
             except GeneratorError as e:
                 pause = _worker_pause(gen_client, lane)
@@ -224,6 +216,81 @@ class GenerationService:
             gen.poll_errors = 0
             gen.status = GenStatus.GENERATING
             log.info("generation %s scene %d submitted as %s", gen_id, scene.position, job_id)
+
+    def _clip_inputs(self, gen: Generation, scene: Scene, library: list[dict],
+                     frame: Path | None) -> tuple[str, list[Path], int | None]:
+        """One scene's clip prompt, the pictures that go with it, and which of them is its start frame (if any).
+        `frame`: the previous clip's last frame."""
+        paths, pictured = gen.ref_images, 0
+        if scene.characters:  # the pictures of who is in this shot first, then the video's own uploads
+            pictured = len(_pictured_names(scene, library))
+            paths = scene_images(scene.script(), library, gen.ref_images)
+        prompt = scene.prompt
+        extra = []  # lines added now; the scene's action is shortened to make room, never these
+        start = Path(scene.still_path) if scene.still_path and Path(scene.still_path).exists() else None
+        lead = start or frame  # the scene's own first frame, else the previous clip's last one
+        # Gemini and Flow alike: the pictures of who is in the shot, then the frame, so every name in the
+        # prompt keeps its own "reference image N" (Flow takes them all as Ingredients)
+        if lead and pictured < MAX_SCENE_IMAGES:
+            paths = [*paths[:pictured], str(lead), *paths[pictured:]][:MAX_SCENE_IMAGES]
+            extra.append((STARTS_FROM if start or gen.lock_frames else CONTINUE_FROM).format(n=pictured + 1))
+        if scene.redos and scene.check_note.startswith("Remade once: "):  # say what went wrong last time
+            extra.append(f"Fix from the last try: {_fit_text(scene.check_note[13:].rstrip('.'), 300)}.")
+        room = MAX_PROMPT - len("\n".join(extra)) - 1
+        if extra and len(prompt) > room:
+            prompt = compile_prompt(scene.script(), library, gen.style, gen.language, gen.aspect, fit=True,
+                                    room=room, **_prompt_options(gen))
+        prompt = "\n".join([prompt, *extra])[:MAX_PROMPT]
+        images = [Path(p) for p in paths if Path(p).exists()]
+        start_at = images.index(Path(lead)) if lead and Path(lead) in images else None
+        return prompt, images, start_at
+
+    # ---- by hand ---------------------------------------------------------
+    def hand_scene(self, gen_id: int, user_id: int) -> dict:
+        """What the by-hand page shows: the video, and for the scene waiting for its clip, the prompt and the
+        pictures to give Google Flow, in order."""
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            if not gen.by_hand:
+                raise UserError("This video's clips are made automatically.", 404)
+            scene = _next_scene(gen) if gen.status == GenStatus.HAND else None
+            out = {"gen": gen, "scene": scene, "prompt": "", "images": [], "start_at": None}
+            if scene is not None:
+                library = self._library(s, user_id)
+                prompt, images, start_at = self._clip_inputs(gen, scene, library,
+                                                             self._previous_frame(gen, scene))
+                names = _pictured_names(scene, library) if scene.characters else []
+                out.update(prompt=prompt, start_at=start_at,
+                           images=[{"path": p, "label": "Previous scene's last frame" if i == start_at
+                                    else names[i] if i < len(names) else "Your reference image"}
+                                   for i, p in enumerate(images)])
+            return out
+
+    def hand_image(self, gen_id: int, user_id: int, index: int) -> Path | None:
+        """The `index`-th picture (0-based) of the scene waiting for its clip by hand."""
+        images = self.hand_scene(gen_id, user_id)["images"]
+        return images[index]["path"] if 0 <= index < len(images) else None
+
+    def upload_clip(self, gen_id: int, user_id: int, position: int, data: bytes) -> None:
+        """The clip the user made in Google Flow for the scene waiting for it: kept as that scene's clip, checked if
+        the video asks for it, then the next scene waits (or the scenes are joined)."""
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            scene = _next_scene(gen)
+            if not gen.by_hand or gen.status != GenStatus.HAND or scene is None:
+                raise UserError("This video isn't waiting for a clip.")
+            if scene.position != position:
+                raise UserError(f"Scene {scene.position} is the one waiting for its clip. Reload the page.")
+            dest = self._scene_dir(gen) / f"scene-{scene.position}.mp4"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            scene.clip_path = str(dest)
+            _first_version(dest).unlink(missing_ok=True)
+            gen.status, gen.error = GenStatus.GENERATING, None
+            log.info("generation %s scene %d clip uploaded by hand (%d bytes)", gen_id, position, len(data))
+            if gen.check_clips and not scene.redos and self._submit_check(gen, scene, self._library(s, user_id)):
+                return
+        self._continue(gen_id)
 
     def _submit_check(self, gen: Generation, scene: Scene, library: list[dict]) -> bool:
         """Ask Gemini to watch the new clip, sound included, and check it against the characters' pictures, the
@@ -312,7 +379,8 @@ class GenerationService:
                     storage.delete(gen.drive_file_id)
                 except StorageError as e:
                     raise UserError(e.message, 502) from e
-            elif gen.status not in (GenStatus.SAVING, GenStatus.SAVE_FAILED, GenStatus.PAUSED, GenStatus.REVIEW):
+            elif gen.status not in (GenStatus.SAVING, GenStatus.SAVE_FAILED, GenStatus.PAUSED, GenStatus.REVIEW,
+                                    GenStatus.HAND):
                 raise UserError("This video can't be cancelled now.")
             self._drop_temp(gen)
             self._drop_scenes(gen)

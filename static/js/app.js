@@ -283,6 +283,22 @@
     finally { btn.disabled = false; }
   });
 
+  // By hand: upload the clip made in Google Flow, then show the next scene (or the join)
+  const handUpload = document.getElementById("hand-upload");
+  if (handUpload) handUpload.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("hand-error");
+    showError(err, "");
+    const file = handUpload.clip.files[0];
+    if (!file) return showError(err, "Choose the clip you downloaded from Google Flow.");
+    if (file.size > 500 * 1024 * 1024) return showError(err, `${file.name} is larger than 500 MB.`);
+    const btn = handUpload.querySelector("button[type=submit]");
+    btn.disabled = true; btn.textContent = "Uploading…";
+    try { await post(handUpload.dataset.url, new FormData(handUpload)); location.reload(); }
+    catch (ex) { showError(err, ex.message); btn.disabled = false; btn.textContent = "Upload again"; }
+  });
+  if (document.querySelector("[data-reload]")) setTimeout(() => location.reload(), 5000);
+
   // Times are stored in UTC; show them in the viewer's own timezone (the page keeps UTC without JavaScript)
   function localTimes(root) {
     const pad = (n) => String(n).padStart(2, "0");

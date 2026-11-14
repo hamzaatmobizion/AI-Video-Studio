@@ -60,7 +60,7 @@ def _prefill(gen: Generation | None) -> dict:
     if gen is None:
         return {"prefill_prompt": "", "prefill_duration": None, "prefill_scenes": [""], "prefill_manual": False,
                 "prefill_cast": [], "prefill_style": "", "prefill_language": "", "prefill_review": True,
-                "prefill_genre": "", "prefill_lock": False, "prefill_check": False}
+                "prefill_genre": "", "prefill_lock": False, "prefill_check": False, "prefill_by_hand": False}
     manual = not gen.planned and len(gen.scenes) > 1
     return {"prefill_prompt": "" if manual else gen.prompt,
             "prefill_duration": max(len(gen.scenes), 1) * SCENE_SECONDS.get(gen.provider, 10),
@@ -68,7 +68,7 @@ def _prefill(gen: Generation | None) -> dict:
             "prefill_manual": manual, "prefill_cast": gen.cast_ids or [], "prefill_style": gen.style or "",
             "prefill_language": gen.language or "", "prefill_review": bool(gen.review),
             "prefill_genre": gen.genre or "", "prefill_lock": bool(gen.lock_frames),
-            "prefill_check": bool(gen.check_clips)}
+            "prefill_check": bool(gen.check_clips), "prefill_by_hand": bool(gen.by_hand)}
 
 
 @router.get("/generations/{gen_id}/script", response_class=HTMLResponse)
@@ -89,6 +89,15 @@ def script_page(gen_id: int, request: Request, user=Depends(require_page_user)):
                            "position": sc.POSITIONS, "time_of_day": sc.TIMES_OF_DAY, "style": sc.STYLES},
                   max_words=sc.words_per_clip(SCENE_SECONDS.get(gen.provider, 10)), max_prompt=sc.MAX_PROMPT,
                   seconds=SCENE_SECONDS.get(gen.provider, 10))
+
+
+@router.get("/generations/{gen_id}/by-hand", response_class=HTMLResponse)
+def by_hand_page(gen_id: int, request: Request, user=Depends(require_page_user)):
+    """A Flow video made by hand: the prompt and pictures for the scene that's next, and where to upload its clip."""
+    hand = request.app.state.service.hand_scene(gen_id, user.id)
+    gen = hand["gen"]
+    return render(request, "by_hand.html", g=gen, scene=hand["scene"], prompt=hand["prompt"], images=hand["images"],
+                  done=sum(1 for s in gen.scenes if s.clip_path), seconds=SCENE_SECONDS.get(gen.provider, 8))
 
 
 HISTORY_STATUSES = {"all": "All", "ready": "Ready", "in_progress": "In progress", "failed": "Failed",

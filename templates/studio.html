@@ -66,6 +66,7 @@
       </div>
       <label class="check"><input type="checkbox" name="review" value="1" {% if prefill_review %}checked{% endif %}> Let me review and edit the script (shots, dialogue, who is in each scene) before the clips are made</label>
       {% if provider == 'flow' %}
+      <label class="check"><input type="checkbox" name="by_hand" value="1" {% if prefill_by_hand %}checked{% endif %}> Make the clips myself in Google Flow (by hand): the app writes the script and shows each scene's prompt and pictures; you generate the clip in Flow in your own browser, download it and upload it here, and the app joins the scenes and saves the video. Nothing in Flow is automated, so it can't be flagged. “Lock characters” is skipped.</label>
       <label class="check"><input type="checkbox" name="lock_frames" value="1" {% if prefill_lock %}checked{% endif %}> Lock characters (slower): draw the first scene's opening frame from the character pictures and start from it; every later scene starts exactly from the previous scene's last frame. The frame is drawn in Google Flow (Nano Banana, one Flow image per video), not Gemini.</label>
       <label class="check"><input type="checkbox" name="check_clips" value="1" {% if prefill_check %}checked{% endif %}> Check each clip (slower): Gemini's chat watches each clip and compares it with the pictures, the previous scene and the script, and remakes it once in Flow if something is wrong. Adds 1–3 minutes per scene; a remake uses more Flow credits.</label>
       {% else %}

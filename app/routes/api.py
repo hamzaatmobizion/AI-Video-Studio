@@ -12,7 +12,8 @@ from app.auth import require_api_user, require_post
 from app.checks import prompt_notes
 from app.enums import SCENE_SECONDS, Aspect, GenStatus, Provider
 from app.interfaces import StorageError
-from app.media import MAX_IMAGE_BYTES, MAX_IMAGES, MAX_MUSIC_BYTES, audio_kind, image_kind
+from app.media import (MAX_IMAGE_BYTES, MAX_IMAGES, MAX_MUSIC_BYTES, MAX_VIDEO_BYTES, audio_kind, image_kind,
+                       video_kind)
 from app.models import Character, Generation
 from app.script import MAX_CAST, TEXT_LIMITS, aspect_from_prompt
 from app.routes.views import cards_for
@@ -70,13 +71,15 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
                             aspect: str = Form("9:16"), images: list[UploadFile] = File(default=[]),
                             cast: list[str] = Form(default=[]), style: str = Form(""), language: str = Form(""),
                             review: str = Form(""), genre: str = Form(""), music: UploadFile | None = File(None),
-                            lock_frames: str = Form(""), check_clips: str = Form(""), provider: str = Form("")):
+                            lock_frames: str = Form(""), check_clips: str = Form(""), provider: str = Form(""),
+                            by_hand: str = Form("")):
     """Either one `prompt` + `duration` (Gemini writes the script), or `scenes` written by the user.
     An empty `duration` (Default) takes the length from the prompt, else 10 seconds.
     `cast`: ids of the user's characters to use. `review`: stop for the user to edit and approve the script.
     `genre`: the video type (app/genres.py); empty (Auto) reads it from the prompt. `music`: one track under the
     whole video. `lock_frames`: each scene starts from a still made first; `check_clips`: Gemini checks each clip.
-    `provider`: where the clips are made, gemini (10-second scenes) or flow (Google Flow, 8-second scenes)."""
+    `provider`: where the clips are made, gemini (10-second scenes) or flow (Google Flow, 8-second scenes).
+    `by_hand` (Flow): the user makes each clip in Google Flow and uploads it on the by-hand page."""
     plan = None
     provider = _provider(provider)
     step = SCENE_SECONDS[provider]
@@ -142,7 +145,7 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
     gen_id = request.app.state.service.create(user.id, scenes, aspect, checked, plan=plan, cast_ids=cast_ids,
                                               style=style, language=language, review=review, genre=genre,
                                               music=track, lock_frames=on(lock_frames), check_clips=on(check_clips),
-                                              provider=provider)
+                                              provider=provider, by_hand=on(by_hand))
     return {"id": gen_id, "review": review}
 
 
@@ -197,6 +200,34 @@ def scene_clip(gen_id: int, position: int, request: Request, user=Depends(requir
     if path is None:
         return JSONResponse({"detail": "This scene's clip isn't kept any more."}, status_code=404)
     return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "private, no-cache"})
+
+
+@router.post("/generations/{gen_id}/scenes/{position}/clip")
+async def upload_scene_clip(gen_id: int, position: int, request: Request, user=Depends(require_post),
+                            clip: UploadFile = File(...)):
+    """By hand: the clip the user made in Google Flow for the scene that's waiting for it (MP4)."""
+    data = await clip.read(MAX_VIDEO_BYTES + 1)
+    if len(data) > MAX_VIDEO_BYTES:
+        raise UserError(f"{clip.filename} is larger than {MAX_VIDEO_BYTES // (1024 * 1024)} MB.")
+    if video_kind(data[:16]) != "mp4":
+        raise UserError(f"{clip.filename} isn't an MP4 video. Download the clip from Google Flow as MP4.")
+    request.app.state.service.upload_clip(gen_id, user.id, position, data)
+    return {"ok": True}
+
+
+@router.get("/generations/{gen_id}/by-hand/images/{index}")
+def by_hand_image(gen_id: int, index: int, request: Request, download: bool = False,
+                  user=Depends(require_api_user)):
+    """One picture to give Google Flow with the waiting scene (`index` from 1, in the order the prompt names them)."""
+    path = request.app.state.service.hand_image(gen_id, user.id, index - 1)
+    if path is None or not path.exists():
+        return JSONResponse({"detail": "That picture isn't there any more. Reload the page."}, status_code=404)
+    with open(path, "rb") as f:
+        ext = image_kind(f.read(16)) or "jpg"
+    headers = {"Cache-Control": "private, no-cache"}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="gen-{gen_id}-image-{index}.{ext}"'
+    return FileResponse(path, media_type=f"image/{'jpeg' if ext == 'jpg' else ext}", headers=headers)
 
 
 @router.post("/generations/{gen_id}/{action}")

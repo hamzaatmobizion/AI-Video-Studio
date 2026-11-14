@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}History · VideoGeneration{% endblock %}
 {% set labels = {"READY": "Ready", "PLANNING": "Planning", "REVIEW": "Script to review", "GENERATING": "Generating", "SAVING": "Saving", "SAVE_FAILED": "Not saved",
-                 "FAILED": "Failed", "CANCELLED": "Cancelled", "PAUSED": "Paused"} %}
+                 "FAILED": "Failed", "CANCELLED": "Cancelled", "PAUSED": "Paused", "HAND": "Your turn"} %}
 {% block content %}
 <section class="history-head">
   <div class="history-title">
@@ -68,6 +68,7 @@
           {% endif %}
           {% if g.status == "SAVE_FAILED" %}<button data-post="/generations/{{ g.id }}/save" data-reload>Try saving again</button>{% endif %}
           {% if g.status == "PAUSED" %}<button data-post="/generations/{{ g.id }}/resume" data-reload>Resume</button>{% endif %}
+          {% if g.status == "HAND" %}<a class="button" href="/generations/{{ g.id }}/by-hand">Make next scene</a>{% endif %}
           {% if g.status in ("FAILED", "CANCELLED") %}<button data-post="/generations/{{ g.id }}/retry" data-reload>Retry</button>{% endif %}
           {% if g.dismissed and g.status not in active %}<button class="secondary" data-post="/generations/{{ g.id }}/restore" data-reload>Restore to Studio</button>{% endif %}
           <span class="spacer"></span>

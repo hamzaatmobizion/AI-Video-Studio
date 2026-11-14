@@ -325,3 +325,17 @@ main:has(.cp-head) { max-width:1120px; }
 .copy-block { white-space:pre-wrap; word-break:break-word; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:12px; font-size:.88em; max-height:420px; overflow:auto; }
 .prompt-help { margin:0 0 6px; }
 @media (max-width:560px) { .rules-table td:last-child { width:auto; } }
+/* By hand: the steps to make one scene's clip in Google Flow */
+.hand-steps { padding-left:20px; display:flex; flex-direction:column; gap:14px; }
+.hand-steps > li { line-height:1.5; }
+.hand-images { list-style:none; padding:0; margin:8px 0 0; display:flex; flex-wrap:wrap; gap:12px; }
+.hand-images li { display:flex; flex-direction:column; gap:4px; width:130px; font-size:.85em; }
+.hand-images img { width:130px; height:130px; object-fit:cover; border-radius:8px; border:1px solid var(--line); display:block; }
+.hand-prompt { white-space:pre-wrap; word-break:break-word; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:12px; font-size:.88em; max-height:320px; overflow:auto; margin:8px 0; }
+#hand-upload { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+#hand-upload .error { flex-basis:100%; margin:0; }
+.hand-wait { display:flex; gap:10px; align-items:center; }
+.hand-done { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:12px; }
+.hand-done figure { margin:0; }
+.hand-done video { width:100%; border-radius:8px; background:#000; display:block; }
+.status-chip.hand { background:color-mix(in srgb, var(--warn) 80%, black); }

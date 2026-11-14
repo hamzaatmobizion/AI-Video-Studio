@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}By hand #{{ g.id }} · VideoGeneration{% endblock %}
+{% block content %}
+{% set total = g.scenes | length %}
+<section class="panel">
+  <div class="script-top">
+    <div>
+      <h1>Make it in Flow · video #{{ g.id }}</h1>
+      <p class="muted small">{{ g.aspect }} · {{ total }} scene{{ '' if total == 1 else 's' }} of {{ seconds }} seconds · {{ done }} of {{ total }} clips in</p>
+    </div>
+    <a class="button secondary" href="/flow">Back to Flow</a>
+  </div>
+  <p class="prompt">{{ g.prompt }}</p>
+</section>
+
+{% if scene %}
+<section class="panel hand-step">
+  <h2>Scene {{ scene.position }} of {{ total }}</h2>
+  {% if scene.check_note.startswith("Remade once: ") %}
+    <p class="warn small">Gemini's check found a problem with your last clip for this scene ({{ scene.check_note[13:] }}). Make it once more; the prompt below says what to fix.</p>
+  {% endif %}
+  <ol class="hand-steps">
+    <li>Open <a href="https://flow.google.com" target="_blank" rel="noopener">Google Flow</a> in your normal browser{% if scene.position > 1 %}, in the project you used for scene 1{% endif %}. Choose <strong>Video</strong>, <strong>{{ g.aspect }}</strong>, <strong>{{ seconds }} s</strong>.</li>
+    {% if images %}
+    <li>Add these pictures as <strong>Ingredients</strong>, in this order: the prompt calls them “reference image 1”, “2”…
+      <ul class="hand-images">
+        {% for im in images %}
+        <li>
+          <a href="/generations/{{ g.id }}/by-hand/images/{{ loop.index }}" target="_blank" rel="noopener"><img src="/generations/{{ g.id }}/by-hand/images/{{ loop.index }}" alt="Reference image {{ loop.index }}: {{ im.label }}"></a>
+          <span><strong>{{ loop.index }}</strong> · {{ im.label }}</span>
+          <a class="small" href="/generations/{{ g.id }}/by-hand/images/{{ loop.index }}?download=1">Download</a>
+        </li>
+        {% endfor %}
+      </ul>
+    </li>
+    {% endif %}
+    <li>Paste this prompt and click generate:
+      <pre class="hand-prompt" id="hand-prompt" dir="auto">{{ prompt }}</pre>
+      <button type="button" class="secondary" data-copy="#hand-prompt">Copy prompt</button>
+    </li>
+    <li>When the clip is ready and you like it, download it from Flow (MP4) and upload it here:
+      <form id="hand-upload" data-url="/generations/{{ g.id }}/scenes/{{ scene.position }}/clip">
+        <input type="file" name="clip" accept="video/mp4" required>
+        <button type="submit">Upload scene {{ scene.position }}</button>
+        <p class="error" id="hand-error" hidden></p>
+      </form>
+    </li>
+  </ol>
+  <p class="muted small">{% if scene.position < total %}The next scene's prompt appears here once this clip is in{% if images | selectattr("label", "equalto", "Previous scene's last frame") | list %}; each scene continues from the previous clip's last frame{% endif %}.{% else %}This is the last scene: once it's in, the scenes are joined and saved to Google Drive.{% endif %}</p>
+</section>
+{% elif g.status == "HAND" %}
+<section class="panel"><p>Every scene has its clip.</p></section>
+{% else %}
+<section class="panel">
+  {% if g.status in ("GENERATING", "PLANNING", "SAVING") %}
+    <p class="hand-wait" data-reload><span class="spinner"></span>
+      {%- if g.status == "PLANNING" %} Gemini is writing the script…
+      {%- elif (g.job_kind or "").startswith("check:") %} Gemini is checking scene {{ g.job_kind[6:] }}…
+      {%- elif g.status == "SAVING" %} Saving to Google Drive…
+      {%- else %} Joining the scenes…{% endif %}</p>
+    <p class="muted small">This page updates by itself.</p>
+  {% elif g.status == "REVIEW" %}
+    <p>The script is ready. <a href="/generations/{{ g.id }}/script">Review and approve it</a> first; then each scene's prompt shows up here.</p>
+  {% elif g.status == "READY" %}
+    <p>Done: the video is joined and saved to Google Drive. <a href="/flow">See it on the Flow screen</a>.</p>
+  {% else %}
+    <p>{{ g.error or "This video isn't waiting for a clip." }}</p>
+    <p><a href="/flow">Back to Flow</a></p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if done %}
+<section class="panel">
+  <h2>Clips in</h2>
+  <div class="hand-done">
+    {% for s in g.scenes if s.clip_path %}
+    <figure>
+      <video controls preload="metadata" playsinline src="/generations/{{ g.id }}/scenes/{{ s.position }}/clip#t=0.1"></video>
+      <figcaption class="small">Scene {{ s.position }}{% if s.check_note %} · {{ s.check_note }}{% endif %}</figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

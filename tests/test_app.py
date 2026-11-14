@@ -833,3 +833,59 @@ def test_long_prompt_for_ten_seconds_is_condensed_by_gemini(app, authed, drive_c
 def test_prompt_over_ten_thousand_characters_rejected(authed, drive_connected):
     r = submit_idea(authed, prompt="x" * 10001, duration=60)
     assert r.status_code == 400 and "10,000 characters" in r.json()["detail"]
+
+
+# ---- Flow by hand ----------------------------------------------------------------
+MP4 = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 40
+
+
+def by_hand(client, scenes, **extra):
+    return client.post("/generations", data={"scenes": scenes, "aspect": "9:16", "provider": "flow",
+                                             "by_hand": "1", **extra})
+
+
+def test_by_hand_waits_for_each_clip(app, authed, drive_connected, net):
+    r = by_hand(authed, ["a boat sets off", "the boat reaches the shore"], lock_frames="1")
+    gid = r.json()["id"]
+    g = gen(app, gid)
+    assert g.status == GenStatus.HAND and g.by_hand and not g.lock_frames and not net.worker.submits
+    assert "Make scene 1" in authed.get("/flow").text
+    page = authed.get(f"/generations/{gid}/by-hand").text
+    assert "Scene 1 of 2" in page and "a boat sets off" in page and f"/scenes/1/clip" in page
+    bad = authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", PNG, "video/mp4")})
+    assert bad.status_code == 400 and "MP4" in bad.json()["detail"]
+    wrong = authed.post(f"/generations/{gid}/scenes/2/clip", files={"clip": ("x.mp4", MP4, "video/mp4")})
+    assert wrong.status_code == 400 and "Scene 1" in wrong.json()["detail"]
+    assert authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", MP4, "video/mp4")}).status_code == 200
+    g = gen(app, gid)
+    assert g.status == GenStatus.HAND and g.scenes[0].clip_path and not g.scenes[1].clip_path
+    assert "Scene 2 of 2" in authed.get(f"/generations/{gid}/by-hand").text
+    tick(app)
+    assert gen(app, gid).status == GenStatus.HAND and not net.worker.submits  # nothing goes to Flow by itself
+
+
+def test_by_hand_last_clip_joins_and_saves(app, authed, drive_connected, net):
+    gid = by_hand(authed, ["a paper boat at dusk"]).json()["id"]
+    assert authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", MP4, "video/mp4")}).status_code == 200
+    g = gen(app, gid)
+    assert g.status == GenStatus.READY, g.error
+    assert net.google.files[g.drive_file_id]["data"] == MP4
+    assert authed.post(f"/generations/{gid}/scenes/1/clip",
+                       files={"clip": ("x.mp4", MP4, "video/mp4")}).status_code == 400  # nothing waits now
+
+
+def test_by_hand_shows_the_scene_pictures(app, authed, drive_connected):
+    gid = authed.post("/generations", data={"scenes": ["a boat"], "aspect": "9:16", "provider": "flow",
+                                            "by_hand": "1"},
+                      files=[("images", ("ref.png", PNG, "image/png"))]).json()["id"]
+    page = authed.get(f"/generations/{gid}/by-hand").text
+    assert "Your reference image" in page
+    img = authed.get(f"/generations/{gid}/by-hand/images/1?download=1")
+    assert img.status_code == 200 and img.content == PNG and "attachment" in img.headers["content-disposition"]
+    assert authed.get(f"/generations/{gid}/by-hand/images/2").status_code == 404
+
+
+def test_by_hand_is_flow_only(app, authed, drive_connected, net):
+    gid = authed.post("/generations", data={"scenes": ["a boat"], "aspect": "9:16", "by_hand": "1"}).json()["id"]
+    assert not gen(app, gid).by_hand and net.worker.submits  # Gemini clips are always made automatically
+    assert authed.get(f"/generations/{gid}/by-hand").status_code == 404

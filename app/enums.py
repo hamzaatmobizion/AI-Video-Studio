@@ -26,6 +26,7 @@ class GenStatus(StrEnum):
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
     PAUSED = "PAUSED"  # Gemini stopped (e.g. daily limit); finished scenes kept, continues after Resume
+    HAND = "HAND"  # by hand: waits for the user to make the next scene's clip in Google Flow and upload it
 
 
 ACTIVE = {GenStatus.PLANNING, GenStatus.GENERATING, GenStatus.SAVING}

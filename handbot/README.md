@@ -5,7 +5,7 @@ Makes **by-hand** Google Flow videos of any length on a Mac of its own, one 8-se
 For each scene that's waiting, the bot does this:
 1. It takes the prompt and pictures from the app.
 2. For a video's first scene, it searches Google for Flow in its tab (a different search each time) and opens it, then starts a new project. It opens a new tab only the first time.
-3. It picks Video, the aspect ratio, 8s, x1 and the model.
+3. It picks Video, the aspect ratio, 8s, x1 and the model. Steps 3 and 4 (the settings, the pictures, pasting the prompt) are done in a random order for each clip; Generate always comes last.
 4. It adds each picture: **+** opens Flow's picker, **Upload media** opens the Mac file dialog (the path is pasted after ⌘⇧G), then the upload, first in the picker's list, is picked and **Add to prompt** clicked. If the picker is still open afterwards (Flow ignores the click while it's still processing the upload), it clicks again, up to 4 times. It checks the pictures arrived (the prompt bar's ✕ shows), then pastes the prompt.
 5. It clicks Generate, waits for the clip and downloads it.
 6. It uploads the clip to the app. The app joins the clips and saves the video to Google Drive.
@@ -63,6 +63,7 @@ Push the mouse into any corner of the screen to stop the bot at once (this is Py
 | `download_720p` | yes | "720p / Original size" in the list of sizes that Download opens. The bot always downloads this size |
 | `failed` | yes | the red "Failed" mark on a refused clip |
 | `failed_refund` | no | on a failed clip, the words saying its credits will be refunded. With this picture, such a clip is generated again: the bot clears the prompt bar, adds the pictures again, pastes the prompt and clicks Generate, up to `REFUND_RETRIES` (2) times |
+| `failed_retry` | no | the ↻ at the bottom of a failed clip. With it, about half the time a refunded clip is made again with its own ↻ instead of filling in the prompt bar again |
 | `upload_media` | yes | "⤒ Upload media" at the bottom left of the picker that **+** opens |
 | `picker_all` | yes | "All" with its grid icon, top left in that picker (the newest upload is found from it) |
 | `add_to_prompt` | yes | the white "Add to prompt" button in that picker |

@@ -51,6 +51,8 @@ BUTTONS = {
     "failed": ("required", "the red \"Failed\" mark on a clip Flow refused", {}),
     "failed_refund": ("optional", "the words on a failed clip saying its credits will be refunded (such a clip is "
                                   "generated again)", {}),
+    "failed_retry": ("optional", "the ↻ retry button at the bottom of a failed clip (sometimes clicked to generate a "
+                                 "refunded clip again)", {}),
     "prompt_clear": ("required", "the ✕ at the top right of the prompt bar (shows once a picture or text is in it)",
                      BOTTOM),
     "captcha": ("optional", "a CAPTCHA / \"I'm not a robot\" box", {}),
@@ -109,6 +111,7 @@ class FlowHand:
         self.s, self.sc = settings, screen
         self.project_gen: int | None = None  # the video whose Flow project that tab shows
         self.uploaded: set[str] = set()  # the pictures uploaded to that project, by file name
+        self.last_pct: tuple[int, int] | None = None  # where the clip being waited for showed its %
     def _stop(self, message: str, tag: str) -> Stop:
         return Stop(message, self.sc.save(self.s.logs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{tag}.jpg"))
 
@@ -313,11 +316,12 @@ class FlowHand:
         log.info("clicked %s%s", name, " (already picked)" if picked else "")
         time.sleep(random.uniform(0.6, 1.3))
 
-    def add_images(self, images: list[Path]) -> None:
+    def add_images(self, images: list[Path], typed: bool = False) -> None:
         """Each picture into the prompt bar, in order: + opens Flow's picker. A picture already uploaded to this project
         (a character in an earlier scene) is found by its name in the picker's list and picked; a new one (such as the
         previous clip's last frame), or one that can't be picked, is uploaded: Upload media, then the Mac file dialog
-        (the path pasted after ⌘⇧G), and the upload is picked in the list. Then Add to prompt."""
+        (the path pasted after ⌘⇧G), and the upload is picked in the list. Then Add to prompt. `typed`: the prompt is
+        already pasted."""
         for path in images:
             self._click("add_image")
             picked = self._pick_uploaded(path) if path.name in self.uploaded else None
@@ -347,8 +351,8 @@ class FlowHand:
             time.sleep(random.uniform(1, 2))
             self._add_to_prompt(path)
             self.uploaded.add(path.name)
-        # the prompt bar shows its ✕ once something is in it; nothing is typed yet, so only the pictures can show it
-        if images and self.sc.find("prompt_clear", 8, **BUTTONS["prompt_clear"][2]) is None:
+        # the prompt bar shows its ✕ once something is in it: with nothing typed yet, only the pictures can show it
+        if images and not typed and self.sc.find("prompt_clear", 8, **BUTTONS["prompt_clear"][2]) is None:
             raise self._stop("The picture didn't arrive in the prompt bar, so the clip would be made without the "
                              "character. Check Flow's picker in Chrome.", "pictures")
 
@@ -431,10 +435,12 @@ class FlowHand:
         raise self._stop(f"Flow's picker stayed open after Add to prompt for {path.name}: the upload may not have "
                          "finished. Check the picker in Chrome.", "add_to_prompt")
 
-    def send(self, prompt: str) -> None:
+    def paste_prompt(self, prompt: str) -> None:
         self._click("prompt_box")
         self.sc.paste(prompt)
         time.sleep(random.uniform(1, 2))
+
+    def generate(self) -> None:
         self._click("generate")
         self.sc.save(self.s.logs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-sent.jpg")
 
@@ -445,10 +451,12 @@ class FlowHand:
         start = time.monotonic()
         end = start + self.s.GENERATION_TIMEOUT_SECONDS
         pct, gone = None, 0  # where the new clip's % is, once seen
+        self.last_pct = None  # kept for a retry: a failed clip's tile is where its % was
         time.sleep(8)
         while time.monotonic() < end:
             texts = self.sc.texts()
             self._blocked(texts)
+            self.last_pct = pct
             self._check_failed(failed_before, texts)
             self._agree(texts)
             near = None if pct is None else (pct[0] + NEAR_PCT[0], pct[1] + NEAR_PCT[1],
@@ -545,6 +553,38 @@ class FlowHand:
         if random.random() < 0.4:  # a little back up now and then, as people do
             self.sc.scroll(random.randint(1, 3))
 
+    def _retry_failed(self) -> bool:
+        """Click the ↻ on the failed clip's tile (below and left of where its % was), which makes it again with the
+        same prompt and pictures. False if it isn't there (then the prompt bar is filled in again)."""
+        if self.last_pct is None or not self.sc.has("failed_retry"):
+            return False
+        x, y = self.last_pct
+        m = self.sc.find("failed_retry", 3, box=(x - 160, y + 60, x + 20, y + 330))
+        if m is None:
+            return False
+        self.sc.hover(x - random.randint(20, 100), y + random.randint(40, 140))  # onto the failed tile first
+        time.sleep(random.uniform(0.4, 1.0))
+        self.sc.click_at(*m.point())
+        log.info("clicked the failed clip's ↻ to make it again")
+        return True
+
+    def _fill(self, prompt: str, aspect: str, images: list[Path], settings: bool) -> None:
+        """Set the settings (Video, aspect…), add the pictures and paste the prompt, in a random order each time, as a
+        person does it differently from one clip to the next. Generate is clicked after."""
+        steps = ["prompt", *(["images"] if images else []), *(["settings"] if settings else [])]
+        random.shuffle(steps)
+        log.info("this clip's order: %s", ", ".join(steps))
+        typed = False
+        for step in steps:
+            if step == "settings":
+                self.choose_settings(aspect, bool(images))
+            elif step == "images":
+                self.add_images(images, typed)
+            else:
+                self.paste_prompt(prompt)
+                typed = True
+            time.sleep(random.uniform(0.5, 1.5))
+
     def make_clip(self, gen_id: int, prompt: str, aspect: str, images: list[Path], dest: Path) -> Path:
         """One scene's clip. A video's scenes all go in one Flow project: only its first scene opens Flow and starts
         the project; the next ones are made in the same project, in the same tab."""
@@ -559,15 +599,20 @@ class FlowHand:
             else:
                 log.info("next scene, in the same Flow project")
                 self._maybe("prompt_clear", 2)  # anything Flow left in the prompt bar from the scene before
-            self.choose_settings(aspect, bool(images))
             for attempt in range(self.s.REFUND_RETRIES + 1):
-                if attempt:  # the same prompt and pictures again, from an empty prompt bar
+                if attempt:
                     log.info("Flow refunded the clip; generating it again (try %d)", attempt + 1)
                     time.sleep(random.uniform(20, 40))
-                    self._maybe("prompt_clear", 2)
-                self.add_images(images)
-                failed_before = self._failures()
-                self.send(prompt)
+                # a refunded clip is made again either with its tile's ↻ (about half the time), or from the prompt bar
+                if attempt and random.random() < 0.5 and self._retry_failed():
+                    time.sleep(random.uniform(3, 5))  # the tile turns back into a clip being made
+                    failed_before = self._failures()
+                else:
+                    if attempt:  # the same prompt and pictures again, from an empty prompt bar
+                        self._maybe("prompt_clear", 2)
+                    self._fill(prompt, aspect, images, settings=not attempt)
+                    failed_before = self._failures()
+                    self.generate()
                 try:
                     return self.wait_and_download(dest, failed_before)
                 except Refunded:

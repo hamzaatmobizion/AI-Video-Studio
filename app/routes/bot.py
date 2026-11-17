@@ -21,7 +21,8 @@ def next_scene(request: Request, user=Depends(require_bot)):
     hand = svc.hand_scene(gen_id, user.id)
     if hand["scene"] is None:
         return Response(status_code=204)
-    return {"gen_id": gen_id, "position": hand["scene"].position, "prompt": hand["prompt"],
+    return {"gen_id": gen_id, "position": hand["scene"].position, "scenes": len(hand["gen"].scenes),
+            "prompt": hand["prompt"],
             "aspect": hand["gen"].aspect, "start_at": hand["start_at"],
             "images": [{"index": i + 1, "label": im["label"]} for i, im in enumerate(hand["images"])]}
 

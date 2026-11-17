@@ -1,4 +1,6 @@
 """The app's bot routes (app/routes/bot.py)."""
+import hashlib
+import re
 from pathlib import Path
 
 import httpx
@@ -32,12 +34,15 @@ class AppClient:
         return None if r.status_code == 204 else r.json()
 
     def images(self, job: dict, folder: Path) -> list[Path]:
-        """The scene's pictures saved in `folder`, in the app's order."""
+        """The scene's pictures saved in `folder`, in the app's order. Each is named by its content (6 hex digits, then
+        a bit of its label: "3fa2c1-boy-stude.jpg"), so the same character picture has the same name in every scene and
+        is found in Flow's picker by it, short enough that the picker doesn't cut it."""
         out = []
         for im in job["images"]:
             r = self._ok(self.http.get(f"/bot/generations/{job['gen_id']}/images/{im['index']}"))
             ext = EXT.get(r.headers.get("content-type", "").split(";")[0], "jpg")
-            path = folder / f"image-{im['index']}.{ext}"
+            label = re.sub(r"[^a-z0-9]+", "-", im["label"].lower()).strip("-")[:10].strip("-")
+            path = folder / f"{hashlib.sha1(r.content).hexdigest()[:6]}-{label or 'image'}.{ext}"
             path.write_bytes(r.content)
             out.append(path)
         return out

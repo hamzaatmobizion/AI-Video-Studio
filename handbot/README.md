@@ -1,6 +1,6 @@
 # Hand bot
 
-Makes **8-second** (one-clip) **by-hand** Google Flow videos on a Mac of its own. Longer by-hand videos aren't given to the bot; make them on the app's by-hand page. It uses your normal Chrome, moves the real mouse and types on the real keyboard. There's no Playwright and no automation flags.
+Makes **by-hand** Google Flow videos of any length on a Mac of its own, one 8-second clip per scene. All of a video's scenes are made in one Flow project, one after another: each scene after the first gets the previous clip's last frame among its pictures (the app adds it), so the scenes join smoothly. Pictures already uploaded to the project, such as the characters from scene 1, aren't uploaded again: the bot types the start of the picture's name in the picker's **Search assets** box and picks it there. Only new pictures (the last frame, a character who first shows up in this scene) are uploaded. Each picture is named by its content ("3fa2c1-boy-stude.jpg"), so the same character has the same name in every scene. After each scene's upload the bot clicks your app's tab and opens the video's by-hand page, where the next scene is shown waiting ("The bot is making scene 2 of 3…"); after the rest between clips it clicks the Flow tab (`flow_tab`) and makes that scene in the same project. After the last scene it shows the finished video on the app's Flow page. If the project isn't showing any more when the next scene's turn comes (or after a stop and Try again), it starts a new project for it; the last frame still carries the scene on. It uses your normal Chrome, moves the real mouse and types on the real keyboard. There's no Playwright and no automation flags.
 
 For each scene that's waiting, the bot does this:
 1. It takes the prompt and pictures from the app.
@@ -81,7 +81,7 @@ If a Chrome tab has Flow open, the bot uses that tab: it clicks it in the tab ba
 ```
 .venv/bin/python -m handbot run
 ```
-In the app, create an 8-second Flow video and tick **By hand**. The bot picks it up within `POLL_SECONDS`. Clips are saved in `handbot-data/clips/`, and a screenshot of each step that matters goes in `handbot-data/logs/`.
+In the app, create a Flow video (any length) with **By hand** ticked, and press **Create Video** on its by-hand page. The bot picks it up within `POLL_SECONDS` and makes every scene; between scenes it rests as below. Clips are saved in `handbot-data/clips/`, and a screenshot of each step that matters goes in `handbot-data/logs/`.
 
 Between clips it rests like the worker does: `MIN_GAP_SECONDS` (60) × 1 to 1.5, with at most `MAX_PER_HOUR` (12) an hour.
 

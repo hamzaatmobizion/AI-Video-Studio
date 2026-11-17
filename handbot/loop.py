@@ -90,9 +90,12 @@ def _one(settings: BotSettings, app: AppClient, pace: Pace, hand: FlowHand, job:
         log.error("the clip is saved at %s but the upload failed: %s", clip, e)
         input("Upload it by hand on the app's by-hand page, then press Enter to carry on (Ctrl+C quits)… ")
         return
-    log.info("video %s scene %s uploaded (%s)", gen, pos, clip)
-    try:  # show it: back to your app's tab, scrolled down to the video
-        hand.show_app(settings.app_url)
+    log.info("video %s scene %s of %s uploaded (%s)", gen, pos, job.get("scenes", 1), clip)
+    # show it in your app: the finished video on the Flow page, or between scenes the video's by-hand page with the
+    # next scene waiting. The next scene then goes back to the Flow tab, to the same project.
+    more = pos < job.get("scenes", 1)
+    try:
+        hand.show_app(settings.app_url, f"/generations/{gen}/by-hand" if more else "/flow")
     except (Stop, OSError, subprocess.SubprocessError) as e:
         log.warning("couldn't go back to your app in Chrome: %s", getattr(e, "message", e))
 

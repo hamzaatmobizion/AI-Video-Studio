@@ -23,9 +23,9 @@
       <button type="button" class="secondary" data-post="/generations/{{ g.id }}/nobot" data-reload>Make it myself</button>
     </div>
   {% elif g.bot_at %}
-    <p class="hand-wait" data-reload><span class="spinner"></span> The bot is making this clip in Google Flow…</p>
+    <p class="hand-wait" data-reload><span class="spinner"></span> The bot is making {% if total > 1 %}scene {{ scene.position }} of {{ total }}{% else %}this clip{% endif %} in Google Flow…</p>
     {% if bot_online %}
-      <p class="muted small">It downloads the clip and uploads it here; the video is then saved to Google Drive. This page updates by itself.</p>
+      <p class="muted small">It downloads each clip and uploads it here{% if total > 1 %}, then makes the next scene in the same Flow project, starting from the last frame of the clip before{% endif %}; once all the clips are in, the video is joined and saved to Google Drive. This page updates by itself.</p>
     {% else %}
       <p class="warn small">The bot isn't running. Start it with <code>python -m handbot run</code>: it picks this video up within 30 seconds.</p>
     {% endif %}
@@ -33,7 +33,7 @@
     <div class="script-top">
       <div>
         <h2>Let the bot make it</h2>
-        <p class="muted small">The bot opens Google Flow in Chrome, makes this clip, downloads it and uploads it here; the video is then saved to Google Drive.</p>
+        <p class="muted small">The bot opens Google Flow in Chrome, makes {% if total > 1 %}the {{ total - done }} clip{{ '' if total - done == 1 else 's' }} still to make, one scene after another in one project,{% else %}this clip,{% endif %} downloads {{ 'them' if total - done > 1 else 'it' }} and uploads {{ 'them' if total - done > 1 else 'it' }} here; the video is then saved to Google Drive.</p>
       </div>
       <button type="button" id="bot-create" data-url="/generations/{{ g.id }}/bot">Create Video</button>
     </div>
@@ -44,9 +44,9 @@
 {% endif %}
 
 {% if scene %}
-{% if not (bot_ready and g.bot_at and not g.bot_note) %}
+{% set bot_busy = bot_ready and g.bot_at and not g.bot_note %}
 <section class="panel hand-step">
-  <h2>{% if bot_ready %}Or make it yourself · {% endif %}Scene {{ scene.position }} of {{ total }}</h2>
+  <h2>{% if bot_busy %}The bot is making · {% elif bot_ready %}Or make it yourself · {% endif %}Scene {{ scene.position }} of {{ total }}</h2>
   {% if scene.check_note.startswith("Remade once: ") %}
     <p class="warn small">Gemini's check found a problem with your last clip for this scene ({{ scene.check_note[13:] }}). Make it once more; the prompt below says what to fix.</p>
   {% endif %}
@@ -69,6 +69,9 @@
       <pre class="hand-prompt" id="hand-prompt" dir="auto">{{ prompt }}</pre>
       <button type="button" class="secondary" data-copy="#hand-prompt">Copy prompt</button>
     </li>
+    {% if bot_busy %}
+    <li>The bot downloads the clip from Flow and uploads it here by itself.</li>
+    {% else %}
     <li>When the clip is ready and you like it, download it from Flow (MP4) and upload it here:
       <form id="hand-upload" data-url="/generations/{{ g.id }}/scenes/{{ scene.position }}/clip">
         <input type="file" name="clip" accept="video/mp4" required>
@@ -76,10 +79,10 @@
         <p class="error" id="hand-error" hidden></p>
       </form>
     </li>
+    {% endif %}
   </ol>
   <p class="muted small">{% if scene.position < total %}The next scene's prompt appears here once this clip is in{% if images | selectattr("label", "equalto", "Previous scene's last frame") | list %}; each scene continues from the previous clip's last frame{% endif %}.{% else %}This is the last scene: once it's in, the scenes are joined and saved to Google Drive.{% endif %}</p>
 </section>
-{% endif %}
 {% elif g.status == "HAND" %}
 <section class="panel"><p>Every scene has its clip.</p></section>
 {% else %}

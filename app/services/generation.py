@@ -277,14 +277,12 @@ class GenerationService:
                             .order_by(Generation.bot_at, Generation.id).limit(1))
 
     def send_to_bot(self, gen_id: int, user_id: int) -> None:
-        """"Create Video": the hand bot makes the waiting clip in Google Flow and uploads it. One-clip (8-second)
-        videos only."""
+        """"Create Video": the hand bot makes the video's clips in Google Flow, one scene after another, and uploads
+        each. It carries on from the scene that's waiting."""
         with self.db.session() as s:
             gen = self._get(s, gen_id, user_id)
             if not gen.by_hand or gen.status != GenStatus.HAND or _next_scene(gen) is None:
                 raise UserError("This video isn't waiting for a clip.")
-            if len(gen.scenes) != 1:
-                raise UserError("The bot makes 8-second (one-clip) videos only. Make this one's clips yourself.")
             if not self.settings.bot_configured:
                 raise UserError("The hand bot isn't set up: BOT_API_KEY and BOT_USER_EMAIL aren't set.")
             gen.bot_at, gen.bot_note = gen.bot_at or utcnow(), None  # also "Try again" after the bot stopped
@@ -330,7 +328,7 @@ class GenerationService:
             dest.write_bytes(data)
             scene.clip_path = str(dest)
             _first_version(dest).unlink(missing_ok=True)
-            gen.status, gen.error, gen.bot_at, gen.bot_note = GenStatus.GENERATING, None, None, None  # remakes: again
+            gen.status, gen.error, gen.bot_note = GenStatus.GENERATING, None, None  # the bot keeps the next scenes
             log.info("generation %s scene %d clip uploaded by hand (%d bytes)", gen_id, position, len(data))
             if gen.check_clips and not scene.redos and self._submit_check(gen, scene, self._library(s, user_id)):
                 return
@@ -794,6 +792,7 @@ class GenerationService:
     def _join(self, gen_id: int) -> None:
         with self.db.session() as s:
             gen = s.get(Generation, gen_id)
+            gen.bot_at = None  # every clip is in: a scene remade later waits for "Create Video" again
             paths = [Path(sc.clip_path) for sc in gen.scenes]
             if not all(p.exists() for p in paths):
                 gen.status, gen.error = GenStatus.FAILED, "A finished scene went missing before joining. Retry it."

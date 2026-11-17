@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from handbot.config import BotSettings
-from handbot.screen import Screen, Text, chrome_front, show_app_page
+from handbot.screen import Match, Screen, Text, chrome_front, show_app_page
 
 log = logging.getLogger("handbot")
 
@@ -73,6 +73,8 @@ PICKED_SHADE = 46
 
 # The first item in the picker's list (the newest upload), from the top-left of its "All" entry, in points
 FIRST_ITEM = (237, 15)
+# The picker's list of uploads (names start here), from the same spot: x and y ranges (points)
+LIST_BOX = ((100, 340), (-10, 430))
 ADD_TRIES = 4  # Add to prompt clicks before the bot gives up on a picture whose upload Flow is still processing
 
 
@@ -82,7 +84,7 @@ AGREE = {"i agree", "agree", "accept", "accept all", "got it", "ok", "okay", "co
 MONEY = re.compile(r"\b(buy|purchase|payment|pay|billing|card|subscri\w*|upgrade|plan|price|checkout|credits?)\b", re.I)
 CAPTCHA = re.compile(r"not a robot|unusual traffic|verify (that )?you('| a)re (a )?human|recaptcha|captcha", re.I)
 FAILED = re.compile(r"^\s*failed\b", re.I)
-REFUNDED = re.compile(r"refund", re.I)
+REFUNDED = re.compile(r"be refunded", re.I)  # one line a failed clip ("You will be refunded…"), not its "refund to appear"
 UNUSUAL = re.compile(r"unusual activity", re.I)
 
 
@@ -106,7 +108,7 @@ class FlowHand:
     def __init__(self, settings: BotSettings, screen: Screen):
         self.s, self.sc = settings, screen
         self.project_gen: int | None = None  # the video whose Flow project that tab shows
-
+        self.uploaded: set[str] = set()  # the pictures uploaded to that project, by file name
     def _stop(self, message: str, tag: str) -> Stop:
         return Stop(message, self.sc.save(self.s.logs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{tag}.jpg"))
 
@@ -169,6 +171,10 @@ class FlowHand:
     def _check_failed(self, before: tuple[int, int], texts: list[Text] | None = None) -> None:
         texts = self.sc.texts() if texts is None else texts
         failed, refunded = self._failures(texts)
+        if failed > before[0] or refunded > before[1]:  # read the screen once more: a misread isn't a failed clip
+            time.sleep(3)
+            texts = self.sc.texts()
+            failed, refunded = (min(a, b) for a, b in zip((failed, refunded), self._failures(texts)))
         if refunded > before[1]:
             raise Refunded()
         if failed > before[0]:
@@ -181,6 +187,7 @@ class FlowHand:
         """Start a new Flow project. If a Chrome tab has Flow open (the one in front, or one clicked in the tab bar), go
         to Flow's home page there, no search. Only with no Flow tab (or if its home page can't be reached) search
         Google for Flow and click its result (Flow's address is never typed): in the Flow tab, else a new tab."""
+        self.uploaded = set()  # a new project has none of the pictures yet
         on_flow = self._shows_flow() or self._to_flow_tab()
         if on_flow and self._flow_home():
             log.info("Flow is open: starting a new project there (no search)")
@@ -210,6 +217,12 @@ class FlowHand:
         """Whether the tab in front shows Flow (its home page, or a project)."""
         return self.sc.locate("new_project", **BUTTONS["new_project"][2]) is not None \
             or self.sc.has("flow_home") and self.sc.locate("flow_home") is not None
+
+    def _in_project(self) -> bool:
+        """Whether a Flow project is in front (its tab clicked in the tab bar if need be), not Flow's home page."""
+        if not (self._shows_flow() or self._to_flow_tab()):
+            return False
+        return self.sc.locate("new_project", **BUTTONS["new_project"][2]) is None
 
     def _to_flow_tab(self) -> bool:
         """Click a Google Flow tab in Chrome's tab bar, if there is one. True once it shows Flow."""
@@ -301,12 +314,21 @@ class FlowHand:
         time.sleep(random.uniform(0.6, 1.3))
 
     def add_images(self, images: list[Path]) -> None:
-        """Each picture into the prompt bar, in order: + opens Flow's picker; Upload media, then the Mac file dialog
-        (the path pasted after ⌘⇧G); the upload shows first in the picker's list: click it, then Add to prompt."""
+        """Each picture into the prompt bar, in order: + opens Flow's picker. A picture already uploaded to this project
+        (a character in an earlier scene) is found by its name in the picker's list and picked; a new one (such as the
+        previous clip's last frame), or one that can't be picked, is uploaded: Upload media, then the Mac file dialog
+        (the path pasted after ⌘⇧G), and the upload is picked in the list. Then Add to prompt."""
         for path in images:
             self._click("add_image")
-            self._click("upload_media", 6)
-            time.sleep(random.uniform(1.2, 2))  # the macOS file dialog
+            picked = self._pick_uploaded(path) if path.name in self.uploaded else None
+            if picked == "added":  # clicking the row added it at once
+                continue
+            if picked == "picked":
+                self._add_to_prompt(path)
+                continue
+            if self.sc.find("picker_all", 3) is None:  # the picker closed meanwhile: open it again
+                self._click("add_image")
+            self._open_file_dialog(path)
             self.sc.keys("command", "shift", "g")
             time.sleep(0.6)
             # pasted, not typed: key by key, the temp folder's "__" opened the Emoji viewer, which took the rest
@@ -318,21 +340,88 @@ class FlowHand:
             listed = self.sc.find("picker_all", 10)
             if listed is None:
                 raise self._stop(f"The picker didn't come back after uploading {path.name}.", "picker")
-            self.sc.click_at(listed.x + FIRST_ITEM[0] + random.randint(-40, 40),
-                             listed.y + FIRST_ITEM[1] + random.randint(-6, 6))
-            log.info("picked the upload %s", path.name)
+            row = self._listed(path, listed)
+            self.sc.click_at(*(row.point() if row else (listed.x + FIRST_ITEM[0] + random.randint(-40, 40),
+                                                       listed.y + FIRST_ITEM[1] + random.randint(-6, 6))))
+            log.info("picked the upload %s%s", path.name, "" if row else " (first in the list)")
             time.sleep(random.uniform(1, 2))
             self._add_to_prompt(path)
+            self.uploaded.add(path.name)
         # the prompt bar shows its ✕ once something is in it; nothing is typed yet, so only the pictures can show it
         if images and self.sc.find("prompt_clear", 8, **BUTTONS["prompt_clear"][2]) is None:
             raise self._stop("The picture didn't arrive in the prompt bar, so the clip would be made without the "
                              "character. Check Flow's picker in Chrome.", "pictures")
 
+    def _open_file_dialog(self, path: Path) -> None:
+        """Click Upload media and wait for the Mac file dialog (its Cancel and Open buttons read off the screen), so
+        the path is never typed into Flow's page instead. Clicked once more if it doesn't open."""
+        for attempt in range(2):
+            self._click("upload_media", 6)
+            end = time.monotonic() + 8
+            while time.monotonic() < end:
+                time.sleep(1)
+                words = {t.text.strip().lower() for t in self.sc.texts()}
+                if {"cancel", "open"} <= words:
+                    time.sleep(random.uniform(0.3, 0.8))
+                    return
+            log.info("the file dialog didn't open for %s (try %d)", path.name, attempt + 1)
+        raise self._stop(f"The Mac file dialog didn't open after clicking Upload media for {path.name}.", "file_dialog")
+
+    def _pick_uploaded(self, path: Path) -> str | None:
+        """In the open picker, click the row of a picture uploaded to this project before (the list shows every upload
+        by name). "picked": Add to prompt shows for it. "added": the picker closed at once, with the picture in the
+        prompt bar (the picker opens with its top row selected, and clicking a selected row adds it). None if it isn't
+        listed or nothing happened: then it's uploaded."""
+        listed = self.sc.find("picker_all", 10)
+        if listed is None:
+            raise self._stop("Flow's picker didn't open after clicking +.", "picker")
+        row = self._listed(path, listed)
+        if row is None:
+            log.info("%s isn't in the picker's list; uploading it", path.name)
+            return None
+        self.sc.click_at(*row.point())
+        end = time.monotonic() + 5
+        while time.monotonic() < end:
+            time.sleep(0.7)
+            if self.sc.locate("add_to_prompt"):
+                log.info("picked %s, already in the project (not uploaded again)", path.name)
+                time.sleep(random.uniform(0.5, 1.2))
+                return "picked"
+            if self.sc.locate("picker_all") is None:
+                log.info("clicking %s added it to the prompt at once (not uploaded again)", path.name)
+                time.sleep(random.uniform(0.5, 1.2))
+                return "added"
+        self.sc.save(self.s.logs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-reuse-{path.stem}.jpg")
+        log.info("picking %s in the list did nothing; uploading it", path.name)
+        return None
+
+    def _listed(self, path: Path, listed: Match) -> Text | None:
+        """The picture's row in the picker's list (the column right of All), found by its name's 6 content digits read
+        off the screen. Letters that the text recognition mixes up with digits are read as those digits."""
+        def plain(s: str) -> str:
+            return s.lower().translate(str.maketrans("oil", "011"))
+
+        key = plain(path.name.split("-")[0])
+        x0, x1, y0, y1 = (listed.x + LIST_BOX[0][0], listed.x + LIST_BOX[0][1],
+                          listed.y + LIST_BOX[1][0], listed.y + LIST_BOX[1][1])
+        for t in self.sc.texts():
+            if key in plain(t.text) and x0 <= t.x <= x1 and y0 <= t.y <= y1:
+                return t
+        return None
+
     def _add_to_prompt(self, path: Path) -> None:
         """Click Add to prompt until the picker closes. While Flow is still processing the upload it ignores the click
         and the picker stays open, and then its + shows as ✕, so the next picture's + can't be found."""
         for attempt in range(1, ADD_TRIES + 1):
-            self._click("add_to_prompt", 20)  # shows once the upload is picked
+            end = time.monotonic() + (20 if attempt == 1 else 2)  # it shows once the upload is picked
+            while self.sc.locate("add_to_prompt") is None:
+                if self.sc.locate("picker_all") is None:  # the picker closed: the picture went in (or a slow close)
+                    log.info("the picker closed by itself with %s", path.name)
+                    return
+                if time.monotonic() >= end:
+                    raise self._stop(f"Couldn't see {BUTTONS['add_to_prompt'][1]}.", "add_to_prompt")
+                time.sleep(0.7)
+            self._click("add_to_prompt", 2)
             time.sleep(random.uniform(1, 2))
             self._maybe("i_agree", 1) or self._agree()  # "Rights to use this image": I agree
             if self.sc.wait_gone("add_to_prompt", 6):
@@ -440,16 +529,16 @@ class FlowHand:
             time.sleep(2)
         raise self._stop("The clip didn't finish downloading into DOWNLOAD_DIR.", "download")
 
-    def show_app(self, app_url: str) -> None:
-        """Back to your app's Flow page: click its tab in Chrome's tab bar (by its purple ▶ icon), load the Flow page
-        there (the tab may be on another page, such as the video's by-hand page), then scroll down to the new video a
-        few steps at a time. With no tab of the app open, the Flow page is opened in a new tab."""
+    def show_app(self, app_url: str, path: str = "/flow") -> None:
+        """Back to your app: click its tab in Chrome's tab bar (by its purple ▶ icon), load `path` there (the Flow page,
+        or between scenes the video's by-hand page with the next scene), then scroll down a few steps at a time. With
+        no tab of the app open, the page is opened in a new tab."""
         chrome_front()
         if self.sc.has("app_tab") and self.sc.find("app_tab", 2, **BUTTONS["app_tab"][2]):
             self._click("app_tab", 2)
         else:
-            log.info("no tab of your app in the tab bar; opening its Flow page")
-        show_app_page(app_url, "/flow")
+            log.info("no tab of your app in the tab bar; opening %s", path)
+        show_app_page(app_url, path)
         time.sleep(random.uniform(2, 4))  # the page updates itself once the video is in
         for _ in range(random.randint(2, 4)):  # down to the video, a few steps at a time
             self.sc.scroll(-random.randint(2, 5))
@@ -461,9 +550,15 @@ class FlowHand:
         the project; the next ones are made in the same project, in the same tab."""
         chrome_front()
         try:
+            if self.project_gen == gen_id and not self._in_project():
+                log.info("the video's Flow project isn't showing any more; starting a new one")
+                self.project_gen = None
             if self.project_gen != gen_id:
                 self.open_project()
                 self.project_gen = gen_id
+            else:
+                log.info("next scene, in the same Flow project")
+                self._maybe("prompt_clear", 2)  # anything Flow left in the prompt bar from the scene before
             self.choose_settings(aspect, bool(images))
             for attempt in range(self.s.REFUND_RETRIES + 1):
                 if attempt:  # the same prompt and pictures again, from an empty prompt bar

@@ -950,11 +950,23 @@ def test_bot_makes_the_waiting_clip(app, authed, drive_connected, net, bot):
     assert authed.get("/bot/next", headers=bot).status_code == 204
 
 
-def test_bot_takes_eight_second_videos_only(app, authed, drive_connected, bot):
-    long = by_hand(authed, ["a boat sets off", "the boat reaches the shore"]).json()["id"]
-    assert "Create Video" not in authed.get(f"/generations/{long}/by-hand").text  # longer ones are made by hand
-    r = authed.post(f"/generations/{long}/bot")
-    assert r.status_code == 400 and "8-second" in r.json()["detail"]
+def test_bot_makes_every_scene_of_a_longer_video(app, authed, drive_connected, net, bot):
+    gid = by_hand(authed, ["a boat sets off", "the boat reaches the shore"]).json()["id"]
+    assert "Create Video" in authed.get(f"/generations/{gid}/by-hand").text
+    assert authed.post(f"/generations/{gid}/bot").status_code == 200
+    assert "The bot is making scene 1 of 2" in authed.get(f"/generations/{gid}/by-hand").text
+    job = authed.get("/bot/next", headers=bot).json()
+    assert job["gen_id"] == gid and job["position"] == 1 and job["scenes"] == 2
+    authed.post(f"/bot/generations/{gid}/scenes/1/clip", headers=bot, files={"clip": ("x.mp4", MP4, "video/mp4")})
+    job = authed.get("/bot/next", headers=bot).json()  # the next scene stays the bot's, no second "Create Video"
+    assert job["position"] == 2 and "the boat reaches the shore" in job["prompt"]
+    page = authed.get(f"/generations/{gid}/by-hand").text
+    assert "The bot is making scene 2 of 2" in page
+    assert "The bot is making · Scene 2 of 2" in page and "the boat reaches the shore" in page  # its prompt shows
+    assert "Upload scene 2" not in page  # the bot uploads it
+    r = authed.post(f"/bot/generations/{gid}/scenes/2/clip", headers=bot, files={"clip": ("x.mp4", MP4, "video/mp4")})
+    assert r.status_code == 200, r.text
+    assert gen(app, gid).bot_at is None  # every clip in: joined (the test clips can't be), the bot is done with it
     assert authed.get("/bot/next", headers=bot).status_code == 204
 
 

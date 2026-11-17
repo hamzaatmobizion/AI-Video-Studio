@@ -105,8 +105,10 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
             raise UserError(f"Keep the prompt under {MAX_IDEA:,} characters.")
         count = duration // step
         # Gemini's chat writes the script for a long video, condenses a long prompt for one clip, and
-        # drafts it as a script whenever there is a cast to direct or a script to review.
-        plan = count if count > 1 or len(prompt) > MAX_SCENE_TEXT or cast_ids or review else None
+        # drafts it as a script whenever there is a cast to direct or a script to review. A Flow video's prompt is
+        # always scripted (by the Gemini API), so the planner's rules apply with or without characters.
+        plan = count if (count > 1 or len(prompt) > MAX_SCENE_TEXT or cast_ids or review
+                         or provider == Provider.FLOW) else None
         scenes = [prompt]
     else:
         scenes = [s.strip() for s in scenes]
@@ -206,20 +208,29 @@ def scene_clip(gen_id: int, position: int, request: Request, user=Depends(requir
 async def upload_scene_clip(gen_id: int, position: int, request: Request, user=Depends(require_post),
                             clip: UploadFile = File(...)):
     """By hand: the clip the user made in Google Flow for the scene that's waiting for it (MP4)."""
+    request.app.state.service.upload_clip(gen_id, user.id, position, await clip_bytes(clip))
+    return {"ok": True}
+
+
+async def clip_bytes(clip: UploadFile) -> bytes:
+    """An uploaded Flow clip's bytes, once it's checked to be an MP4 that isn't too large."""
     data = await clip.read(MAX_VIDEO_BYTES + 1)
     if len(data) > MAX_VIDEO_BYTES:
         raise UserError(f"{clip.filename} is larger than {MAX_VIDEO_BYTES // (1024 * 1024)} MB.")
     if video_kind(data[:16]) != "mp4":
         raise UserError(f"{clip.filename} isn't an MP4 video. Download the clip from Google Flow as MP4.")
-    request.app.state.service.upload_clip(gen_id, user.id, position, data)
-    return {"ok": True}
+    return data
 
 
 @router.get("/generations/{gen_id}/by-hand/images/{index}")
 def by_hand_image(gen_id: int, index: int, request: Request, download: bool = False,
                   user=Depends(require_api_user)):
     """One picture to give Google Flow with the waiting scene (`index` from 1, in the order the prompt names them)."""
-    path = request.app.state.service.hand_image(gen_id, user.id, index - 1)
+    return hand_picture(request.app.state.service.hand_image(gen_id, user.id, index - 1), gen_id, index, download)
+
+
+def hand_picture(path, gen_id: int, index: int, download: bool):
+    """One by-hand picture as a response (404 once it's gone)."""
     if path is None or not path.exists():
         return JSONResponse({"detail": "That picture isn't there any more. Reload the page."}, status_code=404)
     with open(path, "rb") as f:
@@ -234,7 +245,7 @@ def by_hand_image(gen_id: int, index: int, request: Request, download: bool = Fa
 def generation_action(gen_id: int, action: str, request: Request, user=Depends(require_post)):
     svc = request.app.state.service
     actions = {"cancel": svc.cancel, "retry": svc.retry, "resume": svc.resume, "dismiss": svc.dismiss,
-               "save": svc.save_again,
+               "save": svc.save_again, "bot": svc.send_to_bot, "nobot": svc.take_from_bot,
                "restore": svc.restore, "delete": svc.delete}
     if action not in actions:
         return JSONResponse({"detail": "Unknown action."}, status_code=404)

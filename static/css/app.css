@@ -191,6 +191,7 @@ label.check input { margin-top:4px; }
 .script-icon { font-size:30px; color:var(--accent); }
 /* script editor */
 .script-top { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; }
+.script-top-actions { display:flex; gap:8px; flex-wrap:wrap; }
 .shot-card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
 .shot-card > header { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .shot-card h2 { margin:0; font-size:1.05rem; }
@@ -339,3 +340,4 @@ main:has(.cp-head) { max-width:1120px; }
 .hand-done figure { margin:0; }
 .hand-done video { width:100%; border-radius:8px; background:#000; display:block; }
 .status-chip.hand { background:color-mix(in srgb, var(--warn) 80%, black); }
+.bot-stopped { color:var(--warn); margin:0 0 6px; }

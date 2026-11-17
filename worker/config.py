@@ -23,6 +23,11 @@ class WorkerSettings(BaseSettings):
     # spells of erroring on every plan while the other answered (Flash hung on 22 Oct, Pro failed on 23 Oct), so a
     # retry switches model.
     GEMINI_PLAN_MODELS: str = "Flash,Pro"
+    # A Flow video's script is written through the Gemini API (free tier, text only) when this key is set, with these
+    # models in turn (the next when one is out of quota); if all fail, Gemini's chat writes it as before.
+    GEMINI_API_KEY: str = ""
+    # Pinned, not "gemini-flash-latest": on 16 Nov 2026 that (gemini-3.8-flash) never answered a free-tier request
+    GEMINI_API_PLAN_MODELS: str = "gemini-3.5-flash,gemini-3.5-flash-lite"
     FLOW_MODEL_LABEL: str | None = None  # None → profile_flow.json ("Veo 3.1 - Lite"); the model picked in Flow
     FLOW_IMAGE_MODEL_LABEL: str | None = None  # None → profile_flow.json ("Nano Banana 2.1"): Flow's first-frame stills
     # Google Flow flags a browser for "unusual activity" when generations come back to back, so Flow is paced: a rest

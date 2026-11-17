@@ -161,12 +161,19 @@ def normalize_scene(raw, cast: list[dict]) -> dict:
     return scene
 
 
+# A person an action is about, when it names nobody ("the little boy", "a woman"): taken to be the one chosen character
+SOMEONE = re.compile(r"\b(boy|girl|man|woman|child|kid|lady|guy|person|teen(?:ager)?|baby|toddler|son|daughter|father|"
+                     r"mother|dad|mom|mum|grand(?:father|mother|pa|ma)|uncle|aunt|student|farmer|old man|old woman)s?\b",
+                     re.I)
+
+
 def ensure_cast(scene: dict, cast: list[dict], bible: dict | None = None) -> dict:
     """Keep the user's chosen characters in a scene Gemini wrote: one unmatched person in the shot while one chosen
     character is missing is taken to be them (Gemini renamed them), and a chosen character named in the action or
-    the lines is put in the shot. Their library picture and words then go with the clip. Someone the bible says
-    Gemini invented (the baby) is never taken for a chosen character, and is put in the shot when named, so their
-    bible look goes with every clip they're in."""
+    the lines is put in the shot. A shot that lists nobody while its action is about a person ("the little boy
+    dances") has the one chosen character, when just one was chosen. Their library picture and words then go with
+    the clip. Someone the bible says Gemini invented (the baby) is never taken for a chosen character, and is put in
+    the shot when named, so their bible look goes with every clip they're in."""
     people = scene["characters"]
     invented = [c["name"] for c in (bible or {}).get("characters") or []]
     missing = [c for c in cast if c["id"] not in {p["id"] for p in people}]
@@ -178,6 +185,9 @@ def ensure_cast(scene: dict, cast: list[dict], bible: dict | None = None) -> dic
             if d["id"] is None and d["name"] == old:
                 d.update(id=c["id"], name=c["name"])
     text = " ".join([scene.get("action", "")] + [d["line"] for d in scene["dialogue"]])
+    if not people and len(cast) == 1 and not invented and SOMEONE.search(scene.get("action", "")):
+        c = missing.pop()
+        people.append({"id": c["id"], "name": c["name"], "position": ""})
     for c in missing:
         if len(people) < MAX_IN_SHOT and re.search(rf"\b{re.escape(c['name'])}\b", text, re.I):
             people.append({"id": c["id"], "name": c["name"], "position": ""})
@@ -186,6 +196,19 @@ def ensure_cast(scene: dict, cast: list[dict], bible: dict | None = None) -> dic
                 and re.search(rf"\b{re.escape(name)}\b", text, re.I):
             people.append({"id": None, "name": name, "position": ""})
     return scene
+
+
+def include_cast(scenes: list[dict], cast: list[dict]) -> list[dict]:
+    """Every chosen character in the video: one the script left out (no role in the prompt fitted them) goes into the
+    scene with the fewest chosen characters that has room, so their picture is given with that clip."""
+    for c in cast:
+        if any(p["id"] == c["id"] for sc in scenes for p in sc["characters"]):
+            continue
+        room = [sc for sc in scenes if len(sc["characters"]) < MAX_IN_SHOT]
+        if room:
+            min(room, key=lambda sc: sum(p["id"] is not None for p in sc["characters"]))["characters"].append(
+                {"id": c["id"], "name": c["name"], "position": ""})
+    return scenes
 
 
 def per_shot(cast_size: int, scene_count: int) -> int:
@@ -305,10 +328,13 @@ AGE_WORDS = re.compile(r"\b(?:aged?\s*\d{1,3}|\d{1,3}\s*(?:-\s*)?(?:years?(?:[\s
 
 def merged_sheet(sheet: dict, bible: dict | None) -> dict:
     """A picked character as this video shows them: each age, look, outfit or voice the prompt gives (the bible's
-    cast entry) replaces their saved one; whatever the prompt doesn't say stays as saved. `from_prompt` names
-    the prompt's own entry (only the fields it gives)."""
+    cast entry) replaces their saved one; whatever the prompt doesn't say stays as saved. A character with a picture
+    keeps their look as pictured: only a voice is taken from the prompt. `from_prompt` names the prompt's own entry
+    (only the fields it gives)."""
     name = (sheet.get("name") or "").lower()
     over = next((c for c in (bible or {}).get("cast") or [] if name and c["name"].lower() == name), None)
+    if over and sheet.get("image_path"):  # their picture is the reference: the prompt never redesigns it, only voices it
+        over = {"voice": over["voice"]} if over.get("voice") else None
     if not over:
         return sheet
     out = {**sheet, "from_prompt": {k: v for k, v in over.items() if k != "name" and v}}
@@ -335,10 +361,14 @@ def _avoid(items: list[str]) -> str:
 
 
 def _fit(text: str, room: int) -> str:
-    """`text` cut at a word to at most `room` characters."""
+    """`text` cut to at most `room` characters: after its last whole sentence when that keeps at least half of the
+    room (a half sentence, "placing a glass on the", leaves Veo guessing), else at a word."""
     if len(text) <= room:
         return text
     cut = text[:max(room, 0)]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "), cut.rfind(".\n"))
+    if end >= room // 2:
+        return cut[:end + 1]
     return cut[:cut.rfind(" ")].rstrip(" ,;:") if " " in cut else cut
 
 

@@ -31,19 +31,23 @@ CAST_LIMITS = {"name": 60, "appearance": 1000, "outfit": 200, "voice": 150, "per
 
 
 def _plan_options(body: dict) -> dict:
-    """The plan's optional cast, style, language and video-type rules, bounded."""
+    """The plan's optional cast, style, language, video-type rules and provider (where the clips are made), bounded."""
     cast = body.get("cast") or []
     if not isinstance(cast, list) or len(cast) > MAX_CAST or not all(isinstance(c, dict) for c in cast):
         raise HTTPException(400, f"Cast must be a list of at most {MAX_CAST} characters.")
     cast = [{k: str(c.get(k) or "").strip()[:n] for k, n in CAST_LIMITS.items()} for c in cast]
     if any(not c["name"] for c in cast):
         raise HTTPException(400, "Every cast member needs a name.")
+    provider = body.get("provider") or "gemini"
+    if provider not in ("gemini", "flow"):
+        raise HTTPException(400, "Provider must be gemini or flow.")
     seconds = body.get("clip_seconds")
     if seconds is not None and (not isinstance(seconds, int) or isinstance(seconds, bool) or not 4 <= seconds <= 10):
         raise HTTPException(400, "clip_seconds must be a number from 4 to 10.")
     opts = {"cast": cast, "style": str(body.get("style") or "").strip()[:300],
             "language": str(body.get("language") or "").strip()[:40],
-            "rules": str(body.get("rules") or "").strip()[:MAX_RULES], "clip_seconds": seconds}
+            "rules": str(body.get("rules") or "").strip()[:MAX_RULES], "clip_seconds": seconds,
+            "provider": provider if provider == "flow" else ""}  # flow: the script is for a Flow video (Gemini API)
     return {k: v for k, v in opts.items() if v}
 
 

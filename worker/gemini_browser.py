@@ -69,7 +69,7 @@ POSITIONS = ["frame left", "center", "frame right", "foreground", "background"]
 MAX_SPOKEN_WORDS = 25  # per 10 seconds (as app/script.py): a shorter clip gets proportionally fewer
 MAX_SCENE_IMAGES, MAX_IN_SHOT = 3, 6  # as app/script.py: pictures one clip takes, people one shot may hold
 _BIBLE_EXAMPLE = ('{"title": "...", "style": "...", "palette": "...", "setting": "...", "motif": "...", '
-                  '"characters": [{"name": "...", "look": "...", "never": "..."}], '
+                  '"characters": [{"name": "...", "look": "...", "voice": "...", "never": "..."}], '
                   '"cast": [{"name": "...", "age": "...", "look": "...", "outfit": "...", "voice": "..."}]}')
 _EXAMPLE = ('{"setting": "...", "time_of_day": "...", "characters": [{"name": "...", "position": "..."}], '
             '"shot": {"framing": "...", "angle": "...", "movement": "...", "lens": "..."}, "action": "...", '
@@ -89,15 +89,16 @@ def plan_instruction(req: PlanRequest) -> str:
             + (f". Personality: {c['personality']}" if c.get("personality") else "")
             for c in req.cast)
         cast = ("Cast (use these names exactly; any other character the idea names, such as a friend or a baby, "
-                "you invent and keep; the cast's saved looks, outfits and voices are added to every scene for you, so "
-                "don't describe them again, except that where the idea itself says a cast member's age, look, "
-                "clothes or voice, the idea wins: copy those words into the bible's cast entry for them, and leave "
-                "out what the idea doesn't say). Give each cast member "
-                "the role in the idea that fits their age, gender and look, and name them in the action of every "
-                "scene they are in; when the idea says 'friends' or 'a group', these are the people. Leave out a "
-                "cast member the idea has no fitting role for, and never use one as a different person (a "
-                "12-year-old is not the baby, a young woman is not the grandmother): invent that person instead, "
-                "with their look in the bible:\n" + sheets + "\n")
+                "you invent and keep). Each cast member has a reference picture that fixes their face, hair, body, "
+                "age and clothes: it is attached to every scene they are in, so never describe, change or redesign "
+                "their look or outfit, even where the idea describes that person differently; in the bible's cast "
+                "entry for them give only a voice, if the idea says one. Every cast member must appear in the video: "
+                "give each the role in the idea that fits their age, gender and look, and name them in the action of "
+                "every scene they are in; when the idea says 'friends' or 'a group', these are the people. Never use "
+                "one as a different person (a 12-year-old is not the grandfather, a young woman is not the "
+                "grandmother): invent that person instead, with their look in the bible, and still put the cast "
+                "member in the video as themselves, with a small part that suits them (watching, helping, reacting):"
+                "\n" + sheets + "\n")
     else:
         cast = ("Invent the characters the idea needs and give each a short name. Each scene is made on its own, "
                 "so fix each character's look once in the bible: it is added to every scene they are in for you, so "
@@ -179,16 +180,32 @@ def plan_instruction(req: PlanRequest) -> str:
         f"{', '.join(MOVEMENTS)}. lens is one of: {', '.join(LENSES)}. position is one of: {', '.join(POSITIONS)}.\n"
         f"- Spoken lines must fit in {req.clip_seconds} seconds: at most about "
         f"{round(MAX_SPOKEN_WORDS * req.clip_seconds / 10)} words per scene "
-        "in total, except lines the idea writes out, which are all kept. Leave dialogue empty when nobody speaks.\n"
+        "in total. Lines the idea writes out are all kept word for word: when one scene's lines run over that, move "
+        "the later ones to the next scene (a short silent moment can go with them) rather than cramming them in, so "
+        "nobody has to rush. Leave dialogue empty when nobody speaks.\n"
+        "- Keep each scene's action under about 350 characters (about 60 words), written in order so its last "
+        "sentence is the scene's ending: the clip prompt has a length limit (the cast, lines and rules take most of "
+        "it), and anything past it is cut off. When the idea crams more into one scene than fits, keep its key "
+        "moments and the ending (the punchline) in fewer words rather than dropping any.\n"
+        "- Show what people feel on their faces and bodies, matched to their lines; the listener reacts with their "
+        "mouth closed. A joke's punchline gets a clear, held visual reaction, and the last scene ends on one.\n"
+        "- In an animated or cartoon video, never write 'realistic', 'photorealistic', 'real person' or "
+        "'live-action' anywhere: it makes the generator treat the characters as real people and refuse.\n"
+        "- Pakistani Punjabi lines are written in Shahmukhi (Urdu-style) script: if the idea writes them in "
+        "Gurmukhi or Latin letters, write the same words in Shahmukhi, unless it says the speech is Indian Punjabi. "
+        "Urdu lines are written in Urdu script.\n"
+        "- When the idea gives its own video rules (expressions, camera, sound, what to avoid), apply the ones that "
+        "can be seen or heard in the scenes themselves; leave out resolution, frame rate and lists of 'strict rules'.\n"
         "- Put any on-screen text in the action of the scene where it appears, spelled exactly as in the idea.\n"
         "- Never put double quotes inside a value; write quotes as single quotes ('like this').\n"
         "- First write the story bible every scene follows: title; style = the visual style in a few words (the one "
         "given, else the idea's, else one that suits it); palette = 3 to 5 main colours; setting = the main place, "
         "described once; motif = one visual element that recurs in every scene to tie them together (or empty); "
-        "characters = one entry per character you invented (not the cast), with look = their fixed appearance and "
-        "clothing in one line and never = the details a generator might get wrong about them ('upright ears, "
-        "brown fur'); cast = one entry per cast member the idea describes, named as in the cast list, with only "
-        "the age, look, outfit and voice the idea gives them, in the idea's words (empty when it says none).\n"
+        "characters = one entry per character you invented (not the cast), with look = their fixed appearance in "
+        "one line (age, hair, face, build, and clothes with their colours: 'red and teal striped sari', never just "
+        "'sari'), voice = how they sound (empty if the idea gives no hint), and never = the details a generator might get wrong about them ('upright ears, "
+        "brown fur'); cast = one entry per cast member, named as in the cast list, with only the voice the idea "
+        "gives them (empty when it says none): their picture fixes their age, look and outfit.\n"
         f"- Reply with ONLY one compact JSON object: {{\"bible\": {{...}}, \"scenes\": [...]}}, where scenes holds "
         f"{req.scene_count} objects, one per scene, in order, each scene object on a single line with no "
         f"indentation. The bible is like:\n{_BIBLE_EXAMPLE}\nand each scene like:\n"
@@ -523,8 +540,9 @@ def launch_kwargs(settings: WorkerSettings, headless: bool | None = None) -> dic
     return kw
 
 
-PROFILE_IN_USE = ("The Gemini browser window is still open. Quit it (Chrome menu → Quit, or ⌘Q in that "
-                  "window), then click Check session.")
+# Gemini and Google Flow share the one profile, so this is either sign-in window (often Flow's)
+PROFILE_IN_USE = ("The worker's Chrome window (the Gemini or Google Flow sign-in window) is still open. Quit it "
+                  "(Chrome menu → Quit, or ⌘Q in that window), then click Check session.")
 
 
 def profile_browser_pid(settings: WorkerSettings) -> int | None:

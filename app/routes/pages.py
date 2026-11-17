@@ -82,6 +82,8 @@ def script_page(gen_id: int, request: Request, user=Depends(require_page_user)):
     return render(request, "script.html", g=gen, scenes=scenes, library=library, genres=GENRE_LABELS, unused=unused,
                   editable=gen.status in (GenStatus.REVIEW, GenStatus.FAILED),
                   failed=gen.status == GenStatus.FAILED,
+                  # a by-hand video waiting for a clip: the scene number its by-hand page makes next
+                  next_hand=(sum(1 for s in gen.scenes if s.clip_path) + 1) if gen.status == GenStatus.HAND else None,
                   clips=[bool(s.clip_path and Path(s.clip_path).exists()) for s in gen.scenes],
                   can_redo=gen.status in (GenStatus.READY, GenStatus.FAILED),
                   prompts=[s.prompt for s in gen.scenes],
@@ -96,8 +98,10 @@ def by_hand_page(gen_id: int, request: Request, user=Depends(require_page_user))
     """A Flow video made by hand: the prompt and pictures for the scene that's next, and where to upload its clip."""
     hand = request.app.state.service.hand_scene(gen_id, user.id)
     gen = hand["gen"]
+    svc, settings = request.app.state.service, request.app.state.settings
     return render(request, "by_hand.html", g=gen, scene=hand["scene"], prompt=hand["prompt"], images=hand["images"],
-                  done=sum(1 for s in gen.scenes if s.clip_path), seconds=SCENE_SECONDS.get(gen.provider, 8))
+                  done=sum(1 for s in gen.scenes if s.clip_path), seconds=SCENE_SECONDS.get(gen.provider, 8),
+                  bot_ready=settings.bot_configured and len(gen.scenes) == 1, bot_online=svc.bot_online())
 
 
 HISTORY_STATUSES = {"all": "All", "ready": "Ready", "in_progress": "In progress", "failed": "Failed",

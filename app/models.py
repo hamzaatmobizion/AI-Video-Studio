@@ -51,6 +51,8 @@ class Generation(Base):
     job_kind: Mapped[str] = mapped_column(String(20), default="")  # what worker_job_id is: "" clip | still | check
     provider: Mapped[str] = mapped_column(String(20), default="gemini")  # where the clips are made: gemini | flow
     by_hand: Mapped[bool] = mapped_column(Boolean, default=False)  # Flow: the user makes each clip and uploads it
+    bot_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # by hand: given to the hand bot then
+    bot_note: Mapped[str | None] = mapped_column(Text, nullable=True)  # why the hand bot stopped on it (it waits)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
     scenes: Mapped[list["Scene"]] = relationship(order_by="Scene.position", cascade="all, delete-orphan",

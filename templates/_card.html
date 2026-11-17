@@ -39,7 +39,10 @@
     <p class="meta">#{{ g.id }} · {{ g.aspect }}{% if total > 1 %} · {{ total }} scenes{% endif %} · <time class="local-time" datetime="{{ g.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ g.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</time></p>
     {% if g.error %}<p class="{{ 'card-note' if active else 'card-error' }}"><span class="clamp lines-4">{{ g.error }}</span></p>
     <button type="button" class="link clamp-more" hidden>Show more</button>{% endif %}
+    {% if g.bot_note and g.status == "HAND" %}<p class="card-error"><span class="clamp lines-4">⚠ The bot stopped: {{ g.bot_note }}</span></p>
+    <button type="button" class="link clamp-more" hidden>Show more</button>{% endif %}
     <div class="actions">
+      {% if g.bot_note and g.status == "HAND" %}<button data-post="/generations/{{ g.id }}/bot">Try again</button>{% endif %}
       {% if g.status == "REVIEW" %}<a class="button" href="/generations/{{ g.id }}/script">Review script</a>{% endif %}
       {% if g.status == "HAND" %}<a class="button" href="/generations/{{ g.id }}/by-hand">Make scene {{ done + 1 }}</a>{% endif %}
       {% if g.status == "SAVE_FAILED" %}<button data-post="/generations/{{ g.id }}/save">Try saving again</button>{% endif %}

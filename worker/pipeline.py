@@ -56,11 +56,13 @@ def _span(minutes: int) -> str:
 
 class Runner:
     def __init__(self, settings: WorkerSettings, store: JobStore, generator: VideoGenerator, lock: ProfileLock,
-                 flow: VideoGenerator | None = None):
-        """`generator`: Gemini (clips, plans, portraits, checks); `flow`: Google Flow (clips only)."""
+                 flow: VideoGenerator | None = None, planner=None):
+        """`generator`: Gemini (clips, plans, portraits, checks); `flow`: Google Flow (clips only); `planner`: the
+        Gemini API (worker/gemini_api.py), which writes a Flow video's script, if a key is set."""
         self.settings = settings
         self.store = store
         self.generator = generator
+        self.planner = planner
         self.generators = {"gemini": generator, **({"flow": flow} if flow is not None else {})}
         self.lock = lock
         self.profile = generator.profile
@@ -89,6 +91,15 @@ class Runner:
         gen = self.generators.get(provider)
         return gen.profile if gen is not None else None
 
+    def _api_plan_job(self, blocked: set[str]) -> dict | None:
+        """The oldest runnable queued plan that the Gemini API writes (a Flow video's), which needs no browser."""
+        if self.planner is None or "chat" in blocked:
+            return None
+        now = time.time()
+        return next((j for j in self.store.by_status("queued")
+                     if j["kind"] == "plan" and j["options"].get("provider") == "flow" and not j["cancel_requested"]
+                     and (j["not_before"] is None or j["not_before"] <= now)), None)
+
     def _process_plan(self, job: dict) -> None:
         """Gemini (chat) writes the scene prompts for a long video. Same stop/retry rules as clips."""
         jid = job["id"]
@@ -106,8 +117,27 @@ class Runner:
             j = self.store.get(jid)
             return bool(j and j["cancel_requested"])
 
+        result, by_api = None, self.planner is not None and opts.get("provider") == "flow"
+        if by_api:  # a Flow video's script: the Gemini API first, Gemini's chat if that fails
+            try:
+                result = self.planner.plan(req, should_cancel)
+            except Cancelled:
+                self.store.update(jid, status="cancelled", error="Cancelled.")
+                return
+            except Exception as e:
+                log.warning("job %s api plan failed (%s); writing it in Gemini's chat", jid, type(e).__name__)
+                self.store.event(jid, "api_plan_failed", getattr(e, "user_message", type(e).__name__)[:300])
+                by_api = False
+        borrowed = False  # the profile lock taken here for the chat, when the API ran without it
         try:
-            result = self.generator.plan(req, should_cancel)
+            if result is None:
+                if self.lock.holder != "generation":
+                    if not self.lock.try_acquire("plan"):
+                        self._retry_or_fail(jid, "The Gemini API couldn't write the script, and Gemini's chat is busy "
+                                                 "(its sign-in window is open). Close that window.", "ProfileBusy")
+                        return
+                    borrowed = True
+                result = self.generator.plan(req, should_cancel)
         except Cancelled:
             self.store.update(jid, status="cancelled", error="Cancelled.")
             return
@@ -126,7 +156,10 @@ class Runner:
             log.error("job %s plan unexpected %s", jid, type(e).__name__)
             self._retry_or_fail(jid, "Something unexpected went wrong while planning the scenes.", type(e).__name__)
             return
-        if req.model:  # the next plan starts on the model that just worked
+        finally:
+            if borrowed:
+                self.lock.release("plan")
+        if req.model and not by_api:  # the next plan starts on the chat model that just worked
             self.store.kv_set("plan_model_ok", req.model)
         if not isinstance(result, dict):
             result = {"bible": {}, "scenes": result}
@@ -318,11 +351,17 @@ class Runner:
     def tick(self) -> bool:
         """Run at most one job. Returns True if a job was processed."""
         self._flow_cooldown_over()
-        job = self.store.next_queued(skip_lanes=tuple(sorted(self.blocked_lanes())))
+        blocked = self.blocked_lanes()
+        job = self.store.next_queued(skip_lanes=tuple(sorted(blocked)))
         if job is None:
             return False
         if not self.lock.try_acquire("generation"):
-            return False  # sign-in window or session check holds the profile
+            # sign-in window or session check holds the profile: a Flow script can still be written by the API
+            job = self._api_plan_job(blocked)
+            if job is None:
+                return False
+            self._process(job)
+            return True
         flow = lane(job) == "flow"
         if flow:
             self._flow_started()

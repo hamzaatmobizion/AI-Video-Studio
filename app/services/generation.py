@@ -34,7 +34,7 @@ from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
 from app.script import (CONTINUE_FROM, MAX_PROMPT, MAX_SCENE_IMAGES, STARTS_FROM, cast_sheet, is_structured,
                         merged_sheet,
-                        still_prompt, compile_prompt, ensure_cast, normalize_bible, normalize_scene,
+                        still_prompt, compile_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
                         scene_images, scene_warnings, clean_text, style_from_prompt)
 from app.video_join import JoinError, clip_seconds, frame_at, join_clips, last_frame
 
@@ -84,6 +84,7 @@ class GenerationService:
         self.p = providers
         self.db = providers.db
         self.settings = providers.settings
+        self.bot_seen: datetime | None = None  # when the hand bot last asked for a clip to make
 
     # ---- user actions ----------------------------------------------------
     def create(self, user_id: int, scenes: list[str], aspect: str, images: list[tuple[str, bytes]],
@@ -266,6 +267,49 @@ class GenerationService:
                                    for i, p in enumerate(images)])
             return out
 
+    def next_hand(self, user_id: int) -> int | None:
+        """The by-hand video the user gave the hand bot first ("Create Video") that's still waiting for its clip."""
+        self.bot_seen = utcnow()
+        with self.db.session() as s:
+            return s.scalar(select(Generation.id).where(Generation.user_id == user_id, Generation.by_hand,
+                                                        Generation.status == GenStatus.HAND,
+                                                        Generation.bot_at.is_not(None), Generation.bot_note.is_(None))
+                            .order_by(Generation.bot_at, Generation.id).limit(1))
+
+    def send_to_bot(self, gen_id: int, user_id: int) -> None:
+        """"Create Video": the hand bot makes the waiting clip in Google Flow and uploads it. One-clip (8-second)
+        videos only."""
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            if not gen.by_hand or gen.status != GenStatus.HAND or _next_scene(gen) is None:
+                raise UserError("This video isn't waiting for a clip.")
+            if len(gen.scenes) != 1:
+                raise UserError("The bot makes 8-second (one-clip) videos only. Make this one's clips yourself.")
+            if not self.settings.bot_configured:
+                raise UserError("The hand bot isn't set up: BOT_API_KEY and BOT_USER_EMAIL aren't set.")
+            gen.bot_at, gen.bot_note = gen.bot_at or utcnow(), None  # also "Try again" after the bot stopped
+        log.info("generation %s given to the hand bot", gen_id)
+
+    def take_from_bot(self, gen_id: int, user_id: int) -> None:
+        """"Make it myself": the hand bot leaves the video alone; its clips are made on the by-hand page."""
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            gen.bot_at, gen.bot_note = None, None
+
+    def bot_stopped(self, gen_id: int, user_id: int, message: str) -> None:
+        """The hand bot couldn't make the clip (a CAPTCHA, a refused clip, a button it can't see): why, shown on the
+        video's page and card. It leaves the video alone until "Try again"."""
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            if gen.bot_at is None or gen.status != GenStatus.HAND:
+                return
+            gen.bot_note = (message or "It stopped without saying why.").strip()[:1000]
+        log.info("generation %s: the hand bot stopped: %s", gen_id, message)
+
+    def bot_online(self) -> bool:
+        """Whether the hand bot asked for work in the last 2 minutes (it asks every 30 s while it runs)."""
+        return self.bot_seen is not None and utcnow() - self.bot_seen < timedelta(minutes=2)
+
     def hand_image(self, gen_id: int, user_id: int, index: int) -> Path | None:
         """The `index`-th picture (0-based) of the scene waiting for its clip by hand."""
         images = self.hand_scene(gen_id, user_id)["images"]
@@ -286,7 +330,7 @@ class GenerationService:
             dest.write_bytes(data)
             scene.clip_path = str(dest)
             _first_version(dest).unlink(missing_ok=True)
-            gen.status, gen.error = GenStatus.GENERATING, None
+            gen.status, gen.error, gen.bot_at, gen.bot_note = GenStatus.GENERATING, None, None, None  # remakes: again
             log.info("generation %s scene %d clip uploaded by hand (%d bytes)", gen_id, position, len(data))
             if gen.check_clips and not scene.redos and self._submit_check(gen, scene, self._library(s, user_id)):
                 return
@@ -338,7 +382,7 @@ class GenerationService:
                 job_id = client.plan(gen.prompt, gen.aspect, f"gen-{gen.id}-plan-{uuid.uuid4().hex[:6]}",
                                      len(gen.scenes), cast=cast, style=gen.style or "", language=gen.language or "",
                                      rules=plan_rules(gen.genre or "general", len(gen.scenes)),
-                                     clip_seconds=scene_seconds(gen))
+                                     clip_seconds=scene_seconds(gen), provider=gen.provider or "")
             except GeneratorError as e:
                 pause = _worker_pause(client, "chat")
                 if pause:
@@ -578,9 +622,10 @@ class GenerationService:
                 gen.status, gen.error = GenStatus.FAILED, "Gemini didn't write all the scenes. Retry it."
                 return
             gen.bible = normalize_bible(st.bible)
-            # Only the characters the story has a role for: a picked one that fits no role is left out, never forced
-            # in where Veo would take their picture for someone else.
-            script = [ensure_cast(normalize_scene(item, cast), cast, gen.bible) for item in items[:len(gen.scenes)]]
+            # Every picked character is in the video with their picture, as it is: one the story found no role for
+            # is still put in a scene, as themselves.
+            script = include_cast([ensure_cast(normalize_scene(item, cast), cast, gen.bible)
+                                   for item in items[:len(gen.scenes)]], cast)
             gen.style = gen.style or gen.bible["style"]  # the look Gemini fixed for every scene, shown in the editor
             for scene, sc in zip(gen.scenes, script):
                 for key, value in sc.items():

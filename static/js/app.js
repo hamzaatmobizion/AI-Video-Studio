@@ -297,6 +297,15 @@
     try { await post(handUpload.dataset.url, new FormData(handUpload)); location.reload(); }
     catch (ex) { showError(err, ex.message); btn.disabled = false; btn.textContent = "Upload again"; }
   });
+  // By hand: "Create Video" gives the waiting clip to the hand bot
+  const botCreate = document.getElementById("bot-create");
+  if (botCreate) botCreate.addEventListener("click", async () => {
+    const err = document.getElementById("bot-error");
+    showError(err, "");
+    botCreate.disabled = true; botCreate.textContent = "Starting…";
+    try { await post(botCreate.dataset.url); location.reload(); }
+    catch (ex) { showError(err, ex.message); botCreate.disabled = false; botCreate.textContent = "Create Video"; }
+  });
   if (document.querySelector("[data-reload]")) setTimeout(() => location.reload(), 5000);
 
   // Times are stored in UTC; show them in the viewer's own timezone (the page keeps UTC without JavaScript)

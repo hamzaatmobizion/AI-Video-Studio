@@ -818,6 +818,14 @@ def test_use_prompt_again_for_planned_video_prefills_prompt_and_length(app, auth
     assert re.search(r'<option value="30" selected>', html)
 
 
+def test_plan_says_where_the_clips_are_made(app, authed, drive_connected, net):
+    submit_idea(authed)
+    authed.post("/generations", data={"prompt": "a paper boat", "duration": "24", "aspect": "9:16",
+                                      "provider": "flow"})
+    plans = [s["json"] for s in net.worker.submits if s["path"] == "/plans"]
+    assert plans[0]["provider"] == "gemini" and plans[1]["provider"] == "flow"  # Flow's goes through the Gemini API
+
+
 def test_long_prompt_allowed_for_planned_videos(app, authed, drive_connected, net):
     gid = submit_idea(authed, prompt="a long story " * 400, duration=60).json()["id"]  # ~5,200 characters
     assert gen(app, gid).status == GenStatus.PLANNING and len(gen(app, gid).scenes) == 6
@@ -842,6 +850,14 @@ MP4 = b"\x00\x00\x00\x18ftypmp42" + bytes(range(256)) * 40
 def by_hand(client, scenes, **extra):
     return client.post("/generations", data={"scenes": scenes, "aspect": "9:16", "provider": "flow",
                                              "by_hand": "1", **extra})
+
+
+def test_script_page_of_by_hand_video_links_to_its_next_scene(app, authed, drive_connected, net):
+    gid = by_hand(authed, ["a boat sets off", "the boat reaches the shore"]).json()["id"]
+    page = authed.get(f"/generations/{gid}/script").text
+    assert f'href="/generations/{gid}/by-hand">Make scene 1</a>' in page and "Scene 1 is waiting for its clip" in page
+    authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", MP4, "video/mp4")})
+    assert "Make scene 2</a>" in authed.get(f"/generations/{gid}/script").text
 
 
 def test_by_hand_waits_for_each_clip(app, authed, drive_connected, net):
@@ -889,3 +905,87 @@ def test_by_hand_is_flow_only(app, authed, drive_connected, net):
     gid = authed.post("/generations", data={"scenes": ["a boat"], "aspect": "9:16", "by_hand": "1"}).json()["id"]
     assert not gen(app, gid).by_hand and net.worker.submits  # Gemini clips are always made automatically
     assert authed.get(f"/generations/{gid}/by-hand").status_code == 404
+
+
+# ---- hand bot --------------------------------------------------------------------
+BOT_KEY = "bot-key-1234567890123456789"
+
+
+@pytest.fixture
+def bot(app, client):
+    app.state.settings.BOT_API_KEY, app.state.settings.BOT_USER_EMAIL = BOT_KEY, "owner@example.com"
+    return {"Authorization": f"Bearer {BOT_KEY}"}
+
+
+def test_bot_routes_hidden_until_set_up(client, user):
+    assert client.get("/bot/next", headers={"Authorization": f"Bearer {BOT_KEY}"}).status_code == 404
+
+
+def test_bot_needs_its_key(client, user, bot):
+    assert client.get("/bot/next").status_code == 401
+    assert client.get("/bot/next", headers={"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def test_bot_makes_the_waiting_clip(app, authed, drive_connected, net, bot):
+    assert authed.get("/bot/next", headers=bot).status_code == 204
+    gid = authed.post("/generations", data={"scenes": ["a paper boat at dusk"], "aspect": "9:16", "provider": "flow",
+                                            "by_hand": "1"},
+                      files=[("images", ("ref.png", PNG, "image/png"))]).json()["id"]
+    assert authed.get("/bot/next", headers=bot).status_code == 204  # not given to the bot yet
+    assert "Create Video" in authed.get(f"/generations/{gid}/by-hand").text
+    assert authed.post(f"/generations/{gid}/bot").status_code == 200
+    assert "The bot is making this clip" in authed.get(f"/generations/{gid}/by-hand").text
+    authed.cookies.clear()  # the bot has no session, only its key
+    job = authed.get("/bot/next", headers=bot).json()
+    assert job["gen_id"] == gid and job["position"] == 1 and job["aspect"] == "9:16"
+    assert "a paper boat at dusk" in job["prompt"] and job["images"] == [{"index": 1, "label": "Your reference image"}]
+    assert authed.get(f"/bot/generations/{gid}/images/1", headers=bot).content == PNG
+    bad = authed.post(f"/bot/generations/{gid}/scenes/1/clip", headers=bot, files={"clip": ("x.mp4", PNG, "video/mp4")})
+    assert bad.status_code == 400
+    r = authed.post(f"/bot/generations/{gid}/scenes/1/clip", headers=bot, files={"clip": ("x.mp4", MP4, "video/mp4")})
+    assert r.status_code == 200, r.text
+    g = gen(app, gid)
+    assert g.status == GenStatus.READY, g.error
+    assert net.google.files[g.drive_file_id]["data"] == MP4
+    assert authed.get("/bot/next", headers=bot).status_code == 204
+
+
+def test_bot_takes_eight_second_videos_only(app, authed, drive_connected, bot):
+    long = by_hand(authed, ["a boat sets off", "the boat reaches the shore"]).json()["id"]
+    assert "Create Video" not in authed.get(f"/generations/{long}/by-hand").text  # longer ones are made by hand
+    r = authed.post(f"/generations/{long}/bot")
+    assert r.status_code == 400 and "8-second" in r.json()["detail"]
+    assert authed.get("/bot/next", headers=bot).status_code == 204
+
+
+def test_bot_takes_only_videos_given_to_it(app, authed, drive_connected, bot):
+    first = by_hand(authed, ["a paper boat at dusk"]).json()["id"]
+    second = by_hand(authed, ["a kite over the sea"]).json()["id"]
+    assert authed.get("/bot/next", headers=bot).status_code == 204
+    authed.post(f"/generations/{second}/bot")
+    assert authed.get("/bot/next", headers=bot).json()["gen_id"] == second  # the first stays the user's to make
+    page = authed.get(f"/generations/{first}/by-hand").text
+    assert "Create Video" in page and "The bot is running" not in page and "isn't running" not in page
+
+
+def test_bot_stop_shows_in_the_app_until_tried_again(app, authed, drive_connected, bot):
+    gid = by_hand(authed, ["a paper boat at dusk"]).json()["id"]
+    authed.post(f"/generations/{gid}/bot")
+    assert authed.get("/bot/next", headers=bot).json()["gen_id"] == gid
+    r = authed.post(f"/bot/generations/{gid}/stopped", headers=bot, json={"message": "Google is showing a CAPTCHA."})
+    assert r.status_code == 200
+    page = authed.get(f"/generations/{gid}/by-hand").text
+    assert "The bot stopped:" in page and "Google is showing a CAPTCHA." in page and "Try again" in page
+    assert "Or make it yourself" in page  # the by-hand steps show again
+    assert "The bot stopped: Google is showing a CAPTCHA." in authed.get("/flow").text  # on its card too
+    assert authed.get("/bot/next", headers=bot).status_code == 204  # left alone until "Try again"
+    authed.post(f"/generations/{gid}/bot")  # Try again
+    assert authed.get("/bot/next", headers=bot).json()["gen_id"] == gid
+    assert "The bot stopped" not in authed.get(f"/generations/{gid}/by-hand").text
+    authed.post(f"/generations/{gid}/nobot")  # Make it myself
+    assert authed.get("/bot/next", headers=bot).status_code == 204
+    assert "Create Video" in authed.get(f"/generations/{gid}/by-hand").text
+
+
+def test_bot_stop_needs_the_bot_key(client, user, bot):
+    assert client.post("/bot/generations/1/stopped", json={"message": "x"}).status_code == 401

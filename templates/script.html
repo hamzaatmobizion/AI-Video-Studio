@@ -7,13 +7,18 @@
       <h1>Script · video #{{ g.id }}</h1>
       <p class="muted small">{{ g.aspect }} · {{ g.scenes | length }} scene{{ '' if g.scenes | length == 1 else 's' }} of {{ seconds }} seconds{% if g.provider == 'flow' %} · made in Google Flow{% endif %}</p>
     </div>
-    <a class="button secondary" href="{{ '/flow' if g.provider == 'flow' else '/' }}">Back to {{ 'Flow' if g.provider == 'flow' else 'Studio' }}</a>
+    <div class="script-top-actions">
+      {% if next_hand %}<a class="button" href="/generations/{{ g.id }}/by-hand">Make scene {{ next_hand }}</a>{% endif %}
+      <a class="button secondary" href="{{ '/flow' if g.provider == 'flow' else '/' }}">Back to {{ 'Flow' if g.provider == 'flow' else 'Studio' }}</a>
+    </div>
   </div>
   <p class="prompt">{{ g.prompt }}</p>
   {% if failed %}
     <p class="notice small">This video failed{% if g.error %}: {{ g.error }}{% endif %} Change what caused it (a character's look in the story bible, or a scene's action), then <strong>Save and retry</strong>: finished scenes are kept. To change a finished scene too, use “Remake this scene” under it.</p>
   {% elif editable %}
     <p class="muted small">Check the script and change anything: who is in each shot and where they stand, the camera, the action and the lines. Each scene's clip prompt is built from these fields; open “Clip prompt” to see exactly what Veo will get. Changes are saved as you type.</p>
+  {% elif next_hand %}
+    <p class="notice small">This script was approved. Scene {{ next_hand }} is waiting for its clip: the bot makes it if it's running, or use <strong>Make scene {{ next_hand }}</strong> to make it in Flow yourself. Clips are made from the prompts shown under each scene.</p>
   {% else %}
     <p class="notice small">This script was approved; the clips were made from the prompts shown under each scene.</p>
   {% endif %}
@@ -48,7 +53,7 @@
       <input type="text" id="bible-setting" maxlength="400"{% if not editable %} disabled{% endif %}>
     </label>
     <div id="bible-characters"></div>
-    <p class="muted small">The palette goes into every clip prompt. Each invented character's look and “never” list are added to every scene they're in. For a picked character, what your prompt says about their age, look, outfit or voice is used instead of their saved details; an empty field keeps the saved one.</p>
+    <p class="muted small">The palette goes into every clip prompt. Each invented character's look and “never” list are added to every scene they're in. A picked character always looks exactly as in their picture: their age, look and outfit here are used only for one without a picture. A voice here replaces their saved voice; an empty field keeps the saved one.</p>
   </fieldset>
   {% if unused and g.scenes | selectattr('action') | list %}
     <p class="notice small">Not in any scene: {{ unused | join(", ") }}. The story had no part that fits {{ 'them' if unused | length > 1 else 'this character' }}, so {{ 'they were' if unused | length > 1 else 'it was' }} left out rather than shown as someone else. Add them to a shot below if you want them in.</p>

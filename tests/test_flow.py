@@ -129,15 +129,18 @@ def test_flow_still_pauses_with_flow(app, authed, drive_connected, net):
 def test_out_of_flow_credits_pauses_the_flow_video_and_resume_lifts_flow(app, authed, drive_connected, net, tmp_path):
     net.worker.pauses = {"gemini": None, "chat": None, "flow": None}
     gid = flow_idea(authed, duration=8).json()["id"]
+    assert net.worker.submits[0]["path"] == "/plans"  # an 8-second Flow prompt is scripted too
+    net.worker.jobs["job1"].update(status="done", scenes=["a lighthouse keeper at dawn"])
+    tick(app)
     net.worker.pauses["flow"] = OUT_OF_CREDITS
-    net.worker.jobs["job1"].update(status="failed", error=OUT_OF_CREDITS["message"])
+    net.worker.jobs["job2"].update(status="failed", error=OUT_OF_CREDITS["message"])
     tick(app)
     g = gen(app, gid)
     assert g.status == GenStatus.PAUSED and "out of credits" in g.error and "Flow credits" in g.error
-    net.worker.clips["job2"] = clip_bytes(tmp_path, "job2")
+    net.worker.clips["job3"] = clip_bytes(tmp_path, "job3")
     assert authed.post(f"/generations/{gid}/resume").status_code == 200
     assert net.worker.resumed_sites == ["flow"]
-    finish(net, app, "job2")
+    finish(net, app, "job3")
     assert gen(app, gid).status == GenStatus.READY
 
 

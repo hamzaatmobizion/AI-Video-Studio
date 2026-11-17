@@ -118,6 +118,16 @@ def test_ensure_cast_adds_a_chosen_character_named_in_the_action():
     assert [p["id"] for p in sc["characters"]] == [1, 2]
 
 
+def test_ensure_cast_takes_the_one_chosen_character_for_the_person_a_shot_is_about():
+    sc = script.normalize_scene({"action": "The little boy smiles at the camera and dances bhangra"}, [ALI])
+    assert [p["id"] for p in script.ensure_cast(sc, [ALI])["characters"]] == [1]
+    assert script.scene_images(sc, [ALI], []) == ["/refs/ali.png"]
+    empty = script.normalize_scene({"action": "the kite climbs over the fields"}, [ALI])
+    assert script.ensure_cast(empty, [ALI])["characters"] == []  # nobody in it
+    two = script.normalize_scene({"action": "a little boy dances"}, CAST)
+    assert script.ensure_cast(two, CAST)["characters"] == []  # two chosen: which one isn't guessed
+
+
 def test_ensure_cast_leaves_shots_without_the_cast_alone():
     sc = script.ensure_cast(script.normalize_scene({"action": "the kite climbs"}, CAST), CAST)
     assert sc["characters"] == []
@@ -191,7 +201,7 @@ def test_character_crud_and_image(app, authed):
         assert s.get(Character, cid) is None
 
 
-def test_planning_uses_the_prompt_style_and_only_the_cast_given_a_role(app, authed, drive_connected, net):
+def test_planning_uses_the_prompt_style_and_every_picked_character(app, authed, drive_connected, net):
     ids = [add_character(authed, name=n, image=True).json()["id"] for n in ("Ali", "Sara", "Omar", "Zoya")]
     r = authed.post("/generations", data={"prompt": "Friends chase a kite.\n- Style: Anime, bright", "duration": "20",
                                           "aspect": "9:16", "cast": [str(i) for i in ids]})
@@ -202,8 +212,8 @@ def test_planning_uses_the_prompt_style_and_only_the_cast_given_a_role(app, auth
         {"setting": "park", "characters": [{"name": "Sara"}], "action": "Sara laughs"}])
     tick(app)
     g = gen(app, gid)
-    # Omar and Zoya got no role: they're left out, not forced into a shot where Veo would take them for someone else
-    assert [[p["name"] for p in sc.characters] for sc in g.scenes] == [["Ali"], ["Sara"]]
+    # Omar and Zoya got no role in the script: each still goes into a scene, with their picture, as themselves
+    assert [[p["name"] for p in sc.characters] for sc in g.scenes] == [["Ali", "Omar"], ["Sara", "Zoya"]]
     assert g.scenes[0].prompt.startswith("Vertical 9:16 video.\nAnime, bright.")
     assert script.ANIMATED_REALISM in g.scenes[0].prompt
 
@@ -610,13 +620,14 @@ def test_prompt_check_endpoint(authed):
     assert 'id="prompt-notes"' in authed.get("/").text
 
 
-def test_script_page_names_picked_characters_left_out(app, authed, drive_connected, net):
+def test_picked_character_the_script_left_out_is_still_in_the_video(app, authed, drive_connected, net):
     ids = [add_character(authed, name=n).json()["id"] for n in ("Ali", "Omar")]
     gid = authed.post("/generations", data={"prompt": "Ali flies a kite", "duration": "10", "aspect": "9:16",
                                             "review": "1", "cast": [str(i) for i in ids]}).json()["id"]
     net.worker.jobs["job1"].update(status="done", scenes=[{"characters": [{"name": "Ali"}], "action": "Ali runs"}])
     tick(app)
-    assert "Not in any scene: Omar." in authed.get(f"/generations/{gid}/script").text
+    assert [p["name"] for p in gen(app, gid).scenes[0].characters] == ["Ali", "Omar"]
+    assert "Not in any scene" not in authed.get(f"/generations/{gid}/script").text
 
 
 def test_next_scene_continues_from_the_last_frame(app, authed, drive_connected, net, tmp_path):
@@ -658,8 +669,9 @@ def test_prompt_details_replace_saved_ones_field_by_field():
                                  "dialogue": [{"id": 3, "name": "Female", "line": "Ji"},
                                               {"id": 11, "name": "Saas", "line": "Haan"}]}, [female, saas])
     p = script.compile_prompt(sc, [female, saas], bible=bible)
-    # pictured: the picture's face and hair, the prompt's dress (so "outfit" isn't in the "same …" list)
-    assert "Female, frame right, the same face, hair and style as reference image 1, wearing pink shalwar kameez." in p
+    # pictured: exactly as in the picture, whatever the prompt says about their dress (only its voice is taken)
+    assert "Female, frame right, exactly as in reference image 1 (same face, hair, outfit and style)." in p
+    assert "pink shalwar kameez" not in p
     assert "Female (voice: young, Pakistani Punjabi accent) says: 'Ji'" in p  # the prompt's voice
     # unpictured: the prompt's age (the saved "60 age" dropped) and outfit; the saved voice, which the prompt didn't give
     assert "Saas (age: in her 50s; grey bun; orange shalwar kameez)." in p and "Saas (voice: elderly) says" in p
@@ -837,7 +849,9 @@ def test_a_long_scene_still_continues_from_the_last_frame(app, authed, drive_con
     net.worker.jobs["job1"].update(status="done", scenes=[{"characters": [{"name": "Ali"}], "action": long},
                                                           {"characters": [{"name": "Ali"}], "action": long}])
     tick(app)
-    assert len(gen(app, gid).scenes[1].prompt) >= 1990  # built to fill the limit
+    prompt = gen(app, gid).scenes[1].prompt
+    assert len(prompt) >= 1900  # built to fill the limit, ending on a whole sentence
+    assert "laughing.\n" in prompt and "kite, laughing" in prompt.split("\n")[2][-60:]
     finish(net, app, "job2")
     second = net.worker.submits[2]
     sent = second["content"].split(b'name="prompt"\r\n\r\n')[1].split(b"\r\n--")[0].decode()
@@ -959,8 +973,8 @@ def test_spoken_words_fit_the_clip_length():
 
 
 def test_still_prompt_describes_people_as_the_clip_does():
-    """The locked first frame shows everyone as the clip will: what the prompt says (outfit, look) wins over the saved
-    character and their picture, and a person with no picture gets the bible's look, so nothing changes mid-clip."""
+    """The locked first frame shows everyone as the clip will: a pictured character as in their picture (the prompt
+    never redesigns them), and a person with no picture gets the bible's look, so nothing changes mid-clip."""
     cast = [{"id": 1, "name": "Ali", "appearance": "slim man in his 30s", "outfit": "orange qameez",
              "image_path": "var/characters/1.jpg"}]
     bible = {"cast": [{"name": "Ali", "outfit": "white shalwar kameez and a colorful turban"}],
@@ -969,8 +983,7 @@ def test_still_prompt_describes_people_as_the_clip_does():
                                                          {"id": None, "name": "Seller", "position": "frame right"}],
              "action": "Ali smiles. He runs."}
     text = script.still_prompt(scene, cast, "cartoon", bible)
-    assert "Ali, frame left (picture 1), wearing white shalwar kameez and a colorful turban (not the clothes in the " \
-           "picture)" in text
+    assert "Ali, frame left (picture 1)." in text and "white shalwar kameez" not in text
     assert "Seller (thick mustache, brown kameez and a Sindhi topi), frame right" in text
     assert "orange qameez" not in text
     plain = script.still_prompt(scene, cast, "cartoon", {})
@@ -1050,10 +1063,10 @@ STALL = {"setting": "A Punjabi village street with a biryani stall",
                       {"id": None, "name": "Biryani Seller", "line": "Pay first!"}]}
 
 
-def test_prompt_described_look_takes_only_the_face_from_the_picture():
+def test_prompt_never_redesigns_a_pictured_character():
     text = script.compile_prompt(STALL, [CHACHA], "Pixar-style, cartoon", bible=SELLER_BIBLE)
-    assert "Chacha, frame left, the same face and style as reference image 1, age: in his 50s, thick black " \
-           "mustache, round face, wearing a white shalwar kameez and green turban." in text
+    assert "Chacha, frame left, exactly as in reference image 1 (same face, hair, outfit and style)." in text
+    assert "green turban" not in text
     assert "wearing wearing" not in text
 
 

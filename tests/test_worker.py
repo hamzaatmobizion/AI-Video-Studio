@@ -578,7 +578,8 @@ def test_plan_instruction_carries_cast_style_and_shot_vocabulary():
     assert "At most 3 people or animals in a shot" in text and "never 'a group of friends'" in text
     assert "starts where the previous one ended" in text and "One camera movement per shot" in text
     assert "scene 1 = 0-10 s, scene 2 = 10-20 s, scene 3 = 20-30 s" in text and "keep every moment" in text
-    assert "Leave out a cast member the idea has no fitting role for" in text and "12-year-old is not the baby" in text
+    assert "Every cast member must appear in the video" in text and "12-year-old is not the grandfather" in text
+    assert "never describe, change or redesign their look or outfit" in text
     assert "list everyone who is seen in it, the ones you invented too" in text
     assert "begin every scene's setting with that style" not in text  # a style was given
     six = [{"name": f"P{i}"} for i in range(6)]
@@ -716,10 +717,13 @@ def test_plan_instruction_asks_for_bible_and_carries_type_rules():
     assert "Scene 1 hooks the viewer" in text and "leads into the next" in text
     assert "fix each character's look once in the bible" in text
     cast = gb.plan_instruction(PlanRequest("j", "idea", "9:16", 2, cast=[{"name": "Female", "outfit": "lehenga"}]))
-    assert "where the idea itself says a cast member's age, look, clothes or voice, the idea wins" in cast
+    assert "give only a voice, if the idea says one" in cast and "their picture fixes their age, look and outfit" in cast
     assert '"cast": [{"name": "...", "age": "...", "look": "...", "outfit": "...", "voice": "..."}]' in cast
     assert "Never drop anything the idea writes out" in text and "more scenes than these 3" in text
-    assert "except lines the idea writes out" in text
+    assert "Lines the idea writes out are all kept word for word" in text and "move the later ones" in text
+    # the app's prompt rules (the Rules page) are Gemini's too
+    assert "under about 350 characters" in text and "clothes with their colours" in text
+    assert "never write 'realistic'" in text and "Shahmukhi" in text and "punchline" in text
     assert "Rules for this kind of video" not in gb.plan_instruction(PlanRequest("j", "x", "9:16", 1))
 
 
@@ -1493,3 +1497,102 @@ def test_flow_prompt_box_is_cleared_before_reuse(ws):
     gen._composer_pictures = lambda pg: pg.pictures
     assert gen._clear_inputs(Pg(0)) and gen._clear_inputs(Pg(2))
     assert not gen._clear_inputs(Pg(1, removable=False))  # won't go: a new project instead
+
+
+# ---- a Flow video's script through the Gemini API --------------------------------
+def test_flow_plan_goes_through_api_planner(ws, store, lock):
+    planner = TestPatternGenerator()
+    runner = Runner(ws, store, TestPatternGenerator(), lock, planner=planner)
+    app = create_app(ws, store, runner, make_session(ws, store, lock), start_background=False)
+    with TestClient(app) as c:
+        flow = c.post("/plans", headers=AUTH, json={"prompt": "idea", "aspect": "9:16", "scenes": 2,
+                                                    "provider": "flow"}).json()["job_id"]
+        gemini = c.post("/plans", headers=AUTH, json={"prompt": "idea", "aspect": "9:16", "scenes": 2}).json()["job_id"]
+        assert c.post("/plans", headers=AUTH, json={"prompt": "x", "aspect": "9:16", "scenes": 1,
+                                                    "provider": "sora"}).status_code == 400
+    runner.tick(), runner.tick()
+    assert store.get(flow)["status"] == "done" and store.get(gemini)["status"] == "done"
+    assert [r.job_id for r in planner.calls] == [flow]  # only the Flow video's script
+    assert [r.job_id for r in runner.generator.calls] == [gemini]
+    assert store.kv_get("plan_model_ok") is not None  # set by the chat plan only
+
+
+def test_api_plan_failure_falls_back_to_chat(ws, store, lock):
+    planner = TestPatternGenerator([GenerationError("The Gemini API couldn't write the script (quota).")])
+    runner = Runner(ws, store, TestPatternGenerator(), lock, planner=planner)
+    jid = store.create("idea", "9:16", None, kind="plan", scene_count=2, options={"provider": "flow"})
+    runner.tick()
+    job = store.get(jid)
+    assert job["status"] == "done" and job["attempts"] == 0 and len(job["result"]["scenes"]) == 2
+    assert len(planner.calls) == 1 and len(runner.generator.calls) == 1
+
+
+def _api_reply(text, finish="STOP"):
+    return {"candidates": [{"content": {"parts": [{"text": "thinking...", "thought": True}, {"text": text}]},
+                            "finishReason": finish}]}
+
+
+def test_gemini_api_planner(ws):
+    import httpx
+
+    from worker.gemini_api import GeminiApiPlanner
+    from worker.generator import PlanRequest
+    seen = []
+    script = '{"bible": {"title": "t"}, "scenes": [{"action": "one"}, {"action": "two"}]}'
+
+    def handler(request):
+        seen.append((request.url.path, request.headers.get("x-goog-api-key")))
+        if "lite" not in request.url.path:
+            return httpx.Response(429, json={"error": {"message": "quota"}})
+        return httpx.Response(200, json=_api_reply(script))
+
+    ws.GEMINI_API_KEY = "k" * 39
+    planner = GeminiApiPlanner(ws, transport=httpx.MockTransport(handler))
+    req = PlanRequest(job_id="j", prompt=SECRET_PROMPT, aspect="9:16", scene_count=2, clip_seconds=8)
+    plan = planner.plan(req, lambda: False)
+    assert plan == {"bible": {"title": "t"}, "scenes": [{"action": "one"}, {"action": "two"}]}
+    assert [p for p, _ in seen] == ["/v1beta/models/gemini-3.5-flash:generateContent",
+                                    "/v1beta/models/gemini-3.5-flash-lite:generateContent"]
+    assert all(k == "k" * 39 for _, k in seen) and all("key=" not in p for p, _ in seen)
+
+
+def test_gemini_api_planner_all_models_fail(ws, caplog):
+    import httpx
+
+    from worker.gemini_api import GeminiApiPlanner
+    from worker.generator import PlanRequest
+    replies = iter([httpx.Response(403, json={}), httpx.Response(200, json=_api_reply("{}", finish="MAX_TOKENS"))])
+    planner = GeminiApiPlanner(ws, transport=httpx.MockTransport(lambda r: next(replies)))
+    req = PlanRequest(job_id="j", prompt=SECRET_PROMPT, aspect="9:16", scene_count=2)
+    with caplog.at_level(logging.INFO), pytest.raises(GenerationError) as e:
+        planner.plan(req, lambda: False)
+    assert "key was refused" in e.value.user_message and "MAX_TOKENS" in e.value.user_message
+    assert SECRET_PROMPT not in caplog.text
+
+
+def test_flow_plan_runs_while_sign_in_window_holds_profile(ws, store, lock):
+    runner = Runner(ws, store, TestPatternGenerator(), lock, planner=TestPatternGenerator())
+    chat = store.create("idea", "9:16", None, kind="plan", scene_count=2)  # older, needs the browser
+    flow = store.create("idea", "9:16", None, kind="plan", scene_count=2, options={"provider": "flow"})
+    assert lock.try_acquire("sign-in")
+    assert runner.tick()
+    assert store.get(flow)["status"] == "done" and store.get(chat)["status"] == "queued"
+    assert not runner.tick()  # nothing else it can run without the browser
+    lock.release("sign-in")
+    runner.tick()
+    assert store.get(chat)["status"] == "done"
+
+
+def test_api_failure_while_profile_busy_retries_later(ws, store, lock):
+    planner = TestPatternGenerator([GenerationError("quota")])
+    runner = Runner(ws, store, TestPatternGenerator(), lock, planner=planner)
+    jid = store.create("idea", "9:16", None, kind="plan", scene_count=2, options={"provider": "flow"})
+    assert lock.try_acquire("sign-in")
+    runner.tick()
+    job = store.get(jid)
+    assert job["status"] == "queued" and "sign-in window" in job["error"] and not runner.generator.calls
+    assert lock.holder == "sign-in"  # untouched
+    lock.release("sign-in")
+    store.update(jid, not_before=None)
+    runner.tick()
+    assert store.get(jid)["status"] == "done"

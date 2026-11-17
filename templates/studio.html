@@ -4,7 +4,7 @@
 <section class="panel">
   {% if provider == 'flow' %}
   <h1>New video with Google Flow</h1>
-  <p class="muted">Every clip is made in Google Flow with <strong>Veo 3.1 - Lite</strong>, using your Flow credits, not Gemini's daily video limit. Its duration (up to 1:36) comes from your prompt unless you pick one. Gemini's chat writes the script in 8-second scenes (that uses no Gemini video); Flow makes them one by one and they're joined into one video. Your <a href="/characters">characters</a> work just as they do in Studio.</p>
+  <p class="muted">Every clip is made in Google Flow with <strong>Veo 3.1 - Lite</strong>, using your Flow credits, not Gemini's daily video limit. Its duration (up to 1:36) comes from your prompt unless you pick one. Gemini writes every prompt into a script of 8-second scenes, following the app's rules, with or without characters (that uses no Gemini video); Flow makes them one by one and they're joined into one video. Your <a href="/characters">characters</a> work just as they do in Studio.</p>
   {% else %}
   <h1>New video</h1>
   <p class="muted">Describe your video. Its duration (up to 2 minutes) comes from your prompt, e.g. “a 30-second video…”, unless you pick one. Gemini splits it into 10-second scenes, which are made one by one and joined into one video.</p>

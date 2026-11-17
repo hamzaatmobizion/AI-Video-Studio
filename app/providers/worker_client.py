@@ -59,13 +59,15 @@ class WorkerClient:
         return str(job_id)
 
     def plan(self, prompt: str, aspect: str, ref: str, scenes: int, cast: list[dict] | None = None,
-             style: str = "", language: str = "", rules: str = "", clip_seconds: int | None = None) -> str:
+             style: str = "", language: str = "", rules: str = "", clip_seconds: int | None = None,
+             provider: str = "") -> str:
         """Ask the worker to have Gemini write a `scenes`-scene script from `prompt`, using `cast`
         ([{name, appearance, outfit, voice, personality}]) and the video type's `rules`, each scene `clip_seconds`
-        long (None: the worker's own clip length); returns a job id."""
+        long (None: the worker's own clip length); `provider`: where the clips are made (a Flow video's script goes
+        through the Gemini API); returns a job id."""
         body = {"prompt": prompt, "aspect": aspect, "ref": ref, "scenes": scenes}
         body.update({k: v for k, v in (("cast", cast), ("style", style), ("language", language), ("rules", rules),
-                                       ("clip_seconds", clip_seconds)) if v})
+                                       ("clip_seconds", clip_seconds), ("provider", provider)) if v})
         r = self._request("POST", "/plans", json=body)
         if r.status_code >= 400:
             raise GeneratorError(_detail(r), final=True)

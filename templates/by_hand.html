@@ -13,9 +13,40 @@
   <p class="prompt">{{ g.prompt }}</p>
 </section>
 
+{% if scene and bot_ready %}
+<section class="panel">
+  {% if g.bot_note %}
+    <p class="bot-stopped" role="alert"><strong>⚠ The bot stopped:</strong> {{ g.bot_note }}</p>
+    <p class="muted small">Sort it out in Chrome if it needs you (a CAPTCHA, signing in), then try again, or make the clip yourself below.</p>
+    <div class="actions">
+      <button type="button" data-post="/generations/{{ g.id }}/bot" data-reload>Try again</button>
+      <button type="button" class="secondary" data-post="/generations/{{ g.id }}/nobot" data-reload>Make it myself</button>
+    </div>
+  {% elif g.bot_at %}
+    <p class="hand-wait" data-reload><span class="spinner"></span> The bot is making this clip in Google Flow…</p>
+    {% if bot_online %}
+      <p class="muted small">It downloads the clip and uploads it here; the video is then saved to Google Drive. This page updates by itself.</p>
+    {% else %}
+      <p class="warn small">The bot isn't running. Start it with <code>python -m handbot run</code>: it picks this video up within 30 seconds.</p>
+    {% endif %}
+  {% else %}
+    <div class="script-top">
+      <div>
+        <h2>Let the bot make it</h2>
+        <p class="muted small">The bot opens Google Flow in Chrome, makes this clip, downloads it and uploads it here; the video is then saved to Google Drive.</p>
+      </div>
+      <button type="button" id="bot-create" data-url="/generations/{{ g.id }}/bot">Create Video</button>
+    </div>
+    {% if not bot_online %}<p class="warn small">The bot isn't running right now. Start it with <code>python -m handbot run</code>; it makes this video once it's running.</p>{% endif %}
+    <p class="error" id="bot-error" hidden></p>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if scene %}
+{% if not (bot_ready and g.bot_at and not g.bot_note) %}
 <section class="panel hand-step">
-  <h2>Scene {{ scene.position }} of {{ total }}</h2>
+  <h2>{% if bot_ready %}Or make it yourself · {% endif %}Scene {{ scene.position }} of {{ total }}</h2>
   {% if scene.check_note.startswith("Remade once: ") %}
     <p class="warn small">Gemini's check found a problem with your last clip for this scene ({{ scene.check_note[13:] }}). Make it once more; the prompt below says what to fix.</p>
   {% endif %}
@@ -48,6 +79,7 @@
   </ol>
   <p class="muted small">{% if scene.position < total %}The next scene's prompt appears here once this clip is in{% if images | selectattr("label", "equalto", "Previous scene's last frame") | list %}; each scene continues from the previous clip's last frame{% endif %}.{% else %}This is the last scene: once it's in, the scenes are joined and saved to Google Drive.{% endif %}</p>
 </section>
+{% endif %}
 {% elif g.status == "HAND" %}
 <section class="panel"><p>Every scene has its clip.</p></section>
 {% else %}

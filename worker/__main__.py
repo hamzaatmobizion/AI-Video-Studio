@@ -15,9 +15,18 @@ def _build():
 
     s, store = _store()
     lock = ProfileLock(s.data / "profile.lock")
-    runner = Runner(s, store, GeminiBrowserGenerator(s), lock, flow=_flow_generator(s))
+    runner = Runner(s, store, GeminiBrowserGenerator(s), lock, flow=_flow_generator(s), planner=_api_planner(s))
     session = GeminiSession(s, store, lock)
     return s, store, runner, session
+
+
+def _api_planner(s):
+    """The Gemini API for Flow videos' scripts, when GEMINI_API_KEY is set."""
+    if not s.GEMINI_API_KEY:
+        return None
+    from worker.gemini_api import GeminiApiPlanner
+
+    return GeminiApiPlanner(s)
 
 
 def _store():
@@ -156,6 +165,8 @@ def cmd_doctor(_args) -> int:
     print(f"• Gemini session: {gs['state'] if gs else 'not checked yet (run check-gemini)'}")
     fs = store.kv_get("flow_status")
     print(f"• Google Flow session: {fs['state'] if fs else 'not checked yet (run check-flow)'}")
+    print("• Flow videos' scripts: " + (f"Gemini API ({s.GEMINI_API_PLAN_MODELS}), then Gemini's chat"
+                                         if s.GEMINI_API_KEY else "Gemini's chat (set GEMINI_API_KEY for the API)"))
     for key, name in (("account_pause", "Gemini"), ("account_pause:flow", "Google Flow")):
         pause = store.kv_get(key)
         if pause:

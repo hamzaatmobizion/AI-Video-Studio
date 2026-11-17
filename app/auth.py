@@ -66,3 +66,18 @@ def require_post(request: Request) -> User:
     user = require_api_user(request)
     check_csrf(request)
     return user
+
+
+def require_bot(request: Request) -> User:
+    """The hand bot: `Authorization: Bearer <BOT_API_KEY>`, acting as BOT_USER_EMAIL. Hidden when it's not set up."""
+    settings = request.app.state.settings
+    if not settings.bot_configured:
+        raise HTTPException(404, "Not found.")
+    sent = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not hmac.compare_digest(sent.encode(), settings.BOT_API_KEY.encode()):
+        raise HTTPException(401, "Wrong bot key.")
+    with request.app.state.db.session() as s:
+        user = s.scalar(select(User).where(User.email == settings.BOT_USER_EMAIL))
+    if user is None:
+        raise HTTPException(401, "BOT_USER_EMAIL isn't an account here.")
+    return user

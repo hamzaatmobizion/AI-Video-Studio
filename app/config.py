@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     WORKER_URL: str = "http://127.0.0.1:8100"
     WORKER_API_KEY: str = ""
+    # The hand bot (handbot/) makes by-hand Flow clips for this user, signing in with this key
+    BOT_API_KEY: str = ""
+    BOT_USER_EMAIL: str = ""
 
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
@@ -51,6 +54,10 @@ class Settings(BaseSettings):
         return bool(self.WORKER_URL and self.WORKER_API_KEY)
 
     @property
+    def bot_configured(self) -> bool:
+        return len(self.BOT_API_KEY) >= 24 and bool(self.BOT_USER_EMAIL)
+
+    @property
     def encryption_configured(self) -> bool:
         return bool(self.TOKEN_ENCRYPTION_KEY)
 
@@ -70,6 +77,8 @@ class Settings(BaseSettings):
         out = self.fatal_problems()
         if not self.worker_configured:
             out.append("WORKER_URL / WORKER_API_KEY not set: video generation is disabled.")
+        if self.BOT_API_KEY and not self.bot_configured:
+            out.append("BOT_API_KEY must be at least 24 characters and BOT_USER_EMAIL set: the hand bot is off.")
         if not self.encryption_configured:
             out.append("TOKEN_ENCRYPTION_KEY not set: Google Drive cannot be connected.")
         else:

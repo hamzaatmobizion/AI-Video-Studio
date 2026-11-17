@@ -8,3 +8,5 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+handbot-data/
+handbot/buttons/*.png

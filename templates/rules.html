@@ -12,6 +12,7 @@
     <li>Keeps faces, clothes, places and objects the same from clip to clip: your characters' portraits, a story bible, and each clip starting from the previous one's last frame.</li>
     <li>Gives each picked character the part that fits them, and tells you on the script page if one had no part.</li>
     <li>Tells Gemini the rules it often breaks: one action at a time, two hands each, things keep their state, no on-screen text, no crowds or fast fights in close-up.</li>
+    <li>Ends every clip prompt with the master rules below in short form: a smooth, steady camera, real gravity, constant light, no jumps or slow motion, and nothing added that the scene doesn't ask for. A clip that starts from the previous clip's last frame is told to begin its action naturally from it. A cartoon gets the 3D cartoon rules instead: cartoon physics, models and textures that never deform, and no switch to photorealism or another style.</li>
     <li>Makes a “young man” or “young woman” look clearly adult.</li>
     <li>When it writes the script, rewrites your prompt into scenes by these rules: lines too long for one clip move to the next scene, invented people get clothes with colours and a voice, “realistic” is kept out of a cartoon, Pakistani Punjabi lines are written in Shahmukhi, and each scene ends on a clear reaction.</li>
     <li>Uses the voice your prompt gives a character, else their saved one.</li>
@@ -114,6 +115,133 @@ Voice: young woman, cheeky and sweet, Pakistani Punjabi accent.
 15–20 seconds: Bahu laughs and walks out of the kitchen; Saas shakes her head.
 
 Sound: a cartoon boing at the end. No background music, no subtitles.</pre>
+</section>
+
+<section class="panel rules">
+  <h2>Master rules for any AI video</h2>
+  <p class="muted">The app already adds these to every clip prompt in a few words. Copy the full list to paste under a prompt you send to another AI video tool, or under a prompt you make by hand in Flow.</p>
+  <div class="copy-head"><span class="cp-label">AI video generation – master rules</span><button type="button" class="secondary" data-copy="#master-rules">Copy</button></div>
+<pre class="copy-block" id="master-rules">AI VIDEO GENERATION – MASTER RULES
+
+1. Character Consistency
+Always maintain the exact identity of every character.
+Preserve facial features, hairstyle, skin tone, clothing, body shape, and proportions.
+Never randomly change a character's appearance.
+Keep all characters visually consistent from beginning to end.
+
+2. Scene Consistency
+Maintain the original environment, background, and scene layout.
+Do not introduce unexpected objects, people, or environmental changes.
+Preserve the position and appearance of important objects.
+Maintain visual continuity between frames.
+
+3. Natural Movement
+All movements must look natural, smooth, and realistic.
+Follow realistic human and animal body mechanics.
+Ensure proper walking, running, sitting, standing, and hand movements.
+Avoid robotic, stiff, exaggerated, or unnatural animation.
+Maintain realistic object interactions and physical movements.
+
+4. Realistic Physics
+Follow real-world gravity, momentum, weight, and motion.
+Objects must interact naturally with their surroundings.
+Maintain realistic collisions, contact, and movement.
+Avoid floating objects, unnatural movements, and impossible physical interactions.
+
+5. Camera Control
+Use intentional, professional cinematic camera movements.
+Keep camera movements smooth and controlled.
+Avoid unnecessary camera shaking, random zooming, and sudden angle changes.
+Use only camera movements appropriate to the scene.
+Maintain consistent framing and composition unless a camera movement is required.
+
+6. Facial Expressions
+Maintain realistic facial anatomy and expressions.
+Ensure natural eye movements and blinking.
+Keep facial features consistent throughout the video.
+Avoid distorted faces, unnatural smiles, and facial morphing.
+
+7. Hands and Body Anatomy
+Maintain anatomically correct hands, fingers, and limbs.
+Avoid extra fingers, missing fingers, duplicated limbs, and distorted body parts.
+Ensure natural hand gestures and body posture.
+Maintain correct body proportions during movement.
+
+8. Lighting and Shadows
+Maintain consistent lighting direction and intensity.
+Use realistic shadows, reflections, and highlights.
+Preserve natural exposure and color balance.
+Avoid sudden lighting changes and flickering.
+
+9. Visual Quality
+Maintain high visual fidelity and realistic textures.
+Preserve details in skin, hair, clothing, and environmental surfaces.
+Use natural depth, focus, and cinematic color grading.
+Avoid pixelation, blur, visual artifacts, ghosting, and flickering.
+
+10. Motion Continuity
+Ensure smooth transitions between movements.
+Maintain continuous motion without unnecessary interruptions.
+Avoid sudden position changes, teleportation, and unwanted jumps.
+Keep movement speed and direction consistent with the described action.
+
+11. Start Frame Rules
+Begin the video from the supplied Start Frame.
+Preserve the original composition, subject identity, and environment.
+Do not unnecessarily modify the initial appearance.
+Begin the requested action naturally from the starting position.
+
+12. End Frame Rules
+If an End Frame is supplied, guide the video toward that exact visual composition.
+Reach the final position through natural and continuous movement.
+Preserve character identity and environmental consistency.
+If no End Frame is supplied, generate a natural ending based on the described action.
+Never invent an unnecessary ending or force an unnatural final pose.
+
+13. Prompt and Action Accuracy
+Follow the user's requested scene and actions precisely.
+Do not add unrelated actions or unexpected events.
+Do not introduce unnecessary characters or objects.
+Prioritize the main action over decorative details.
+Keep the generated video faithful to the original prompt.
+
+14. Professional Cinematic Standards
+Use professional cinematic composition.
+Maintain realistic depth and perspective.
+Use appropriate focal length and natural depth of field.
+Keep camera movement, lighting, and subject motion visually coordinated.
+Maintain a polished, professional film-quality appearance.
+
+15. Negative Generation Rules
+Avoid: character identity changes, face and body distortion, unnatural movements, extra fingers and limbs, object duplication, background morphing, flickering and ghosting, sudden camera movements, unwanted scene transitions, random objects or characters, inconsistent lighting, unrealistic physics, unnecessary slow motion, unexpected cuts or changes in composition.
+
+16. Most Important Generation Principle
+Every generated video must prioritize: character consistency, scene consistency, natural and realistic movement, accurate physical interactions, smooth motion continuity, controlled cinematic camera movement, high visual quality, and accurate execution of the requested action.
+
+FINAL INSTRUCTION:
+Generate a visually consistent, realistic, smooth, and professionally cinematic video. Follow the user's description precisely. Preserve the original character and scene identity. Animate only what is necessary to accomplish the requested action. Never sacrifice visual consistency or natural movement for unnecessary cinematic effects.</pre>
+
+  <div class="copy-head"><span class="cp-label">Additional rules for 3D cartoon animation</span><button type="button" class="secondary" data-copy="#cartoon-rules">Copy</button></div>
+<pre class="copy-block" id="cartoon-rules">ADDITIONAL RULES FOR 3D CARTOON ANIMATION
+
+Maintain consistent 3D character models, including facial design, colors, textures, proportions, and clothing.
+Preserve the original cartoon art style throughout the entire video.
+Use smooth, professional 3D character animation with expressive and believable movements.
+Maintain consistent character proportions, even during exaggerated cartoon actions.
+Use natural cartoon facial expressions, eye movements, blinking, and lip synchronization when speaking.
+Maintain consistent 3D geometry, textures, materials, and object shapes.
+Use believable cartoon physics while preserving the intended animation style.
+Ensure natural contact between characters and objects.
+Maintain consistent lighting, shadows, reflections, and environmental details.
+Avoid character model deformation, unwanted morphing, texture flickering, and inconsistent proportions.
+Use expressive body language and appealing character poses.
+Maintain smooth transitions between animation poses and actions.
+Preserve the original 3D cartoon visual style. Do not unexpectedly switch to photorealism, 2D animation, anime, or another art style.
+Maintain consistent camera perspective, depth, and cinematic composition.
+Keep the animation visually polished, clean, colorful, and professionally rendered.
+
+FINAL 3D CARTOON INSTRUCTION:
+Prioritize consistent character design, appealing animation, expressive emotions, smooth movement, believable cartoon physics, and consistent 3D rendering quality. Preserve the original visual style throughout the entire video.</pre>
 </section>
 
 <section class="panel rules">

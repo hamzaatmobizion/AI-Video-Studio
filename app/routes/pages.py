@@ -13,6 +13,7 @@ from app.auth import (csrf_token, current_user, hash_password, require_page_user
                       verify_password)
 from app import script as sc
 from app.genres import GENRE_LABELS
+from app.timeline import missing_lines
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.models import Character, Generation, User
 from app.routes.views import cards_for, settings_context
@@ -60,7 +61,7 @@ def _prefill(gen: Generation | None) -> dict:
     if gen is None:
         return {"prefill_prompt": "", "prefill_duration": None, "prefill_scenes": [""], "prefill_manual": False,
                 "prefill_cast": [], "prefill_style": "", "prefill_language": "", "prefill_review": True,
-                "prefill_genre": "", "prefill_lock": False, "prefill_check": False, "prefill_by_hand": False}
+                "prefill_genre": "", "prefill_lock": False, "prefill_check": None, "prefill_by_hand": False}
     manual = not gen.planned and len(gen.scenes) > 1
     return {"prefill_prompt": "" if manual else gen.prompt,
             "prefill_duration": max(len(gen.scenes), 1) * SCENE_SECONDS.get(gen.provider, 10),
@@ -79,7 +80,11 @@ def script_page(gen_id: int, request: Request, user=Depends(require_page_user)):
     # Picked characters the story had no role for (Gemini leaves them out rather than cast them as someone else)
     used = {p.get("id") for sc in scenes for p in sc["characters"]}
     unused = [c["name"] for c in library if c["id"] in (gen.cast_ids or []) and c["id"] not in used]
+    # A Flow video's lines that the script dropped or reworded (the scenes start out empty until it's written)
+    missing = missing_lines(gen.prompt, scenes) if gen.provider == Provider.FLOW and gen.planned and any(
+        s["action"] or s["dialogue"] for s in scenes) else []
     return render(request, "script.html", g=gen, scenes=scenes, library=library, genres=GENRE_LABELS, unused=unused,
+                  missing=missing,
                   editable=gen.status in (GenStatus.REVIEW, GenStatus.FAILED),
                   failed=gen.status == GenStatus.FAILED,
                   # a by-hand video waiting for a clip: the scene number its by-hand page makes next

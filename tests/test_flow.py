@@ -171,3 +171,59 @@ def test_prompt_check_counts_flow_clips(authed):
     notes = authed.post("/api/prompt-check", content=json.dumps(body),
                         headers={"content-type": "application/json"}).json()["notes"]
     assert any("2 clips of 8 seconds" in n["text"] for n in notes)
+
+
+def test_flow_pictured_character_wears_the_outfit_the_prompt_gives_them(app, authed, drive_connected, net, tmp_path):
+    """On Flow the prompt's clothes win over the picture's (a suit in the portrait, a kurta in the story); Gemini
+    keeps the picture's."""
+    from app import script
+    ali = add_character(authed, image=True, outfit="navy suit").json()["id"]
+    sheet = {"id": ali, "name": "Ali", "outfit": "navy suit", "image_path": "ali.png"}
+    bible = {"cast": [{"name": "Ali", "outfit": "blue kurta", "voice": "deep"}]}
+    assert script.merged_sheet(sheet, bible)["from_prompt"] == {"voice": "deep"}
+    assert script.merged_sheet(sheet, bible, outfits=True)["from_prompt"]["outfit"] == "blue kurta"
+    gid = flow_idea(authed, prompt="Ali in a blue kurta waves", duration=8, cast=str(ali)).json()["id"]
+    net.worker.jobs["job1"].update(status="done", bible={"cast": [{"name": "Ali", "outfit": "blue kurta"}]},
+                                   scenes=[{"characters": [{"id": ali, "name": "Ali"}], "action": "Ali waves."}])
+    tick(app)
+    prompt = gen(app, gid).scenes[0].prompt
+    assert "wearing blue kurta (not the clothes in the picture)" in prompt and "same face, hair and style" in prompt
+
+
+def test_flow_keeps_its_length_and_stops_only_for_a_crammed_clip(app, authed, drive_connected, net):
+    """A tight clip (up to 20 words) is made as written, never split into more scenes; only more than 20 words in
+    8 seconds waits for the user to shorten a line."""
+    line = "ek do teen char panch chhe saat aath"  # 8 words
+    tight = [{"name": "Ali", "line": f"{line} one"}, {"name": "Sara", "line": f"{line} two"},
+             {"name": "Ali", "line": "phir milenge"}]  # 20 words
+    gid = flow_idea(authed, prompt=f'Ali says: "{line} one" and Sara says: "{line} two"', duration=16).json()["id"]
+    net.worker.jobs["job1"].update(status="done", scenes=[{"action": "Ali waves.", "dialogue": tight},
+                                                          {"action": "They walk off."}])
+    tick(app)
+    g = gen(app, gid)
+    assert len(g.scenes) == 2 and g.status != GenStatus.REVIEW
+    crammed = [*tight, {"name": "Ali", "line": "phir milenge yaar"}]  # 23 words
+    gid = flow_idea(authed, prompt=f'Ali says: "{line} one" and Sara says: "{line} two"', duration=8).json()["id"]
+    net.worker.jobs[gen(app, gid).worker_job_id].update(status="done", scenes=[{"action": "Ali waves.",
+                                                                                "dialogue": crammed}])
+    tick(app)
+    g = gen(app, gid)
+    assert len(g.scenes) == 1 and g.status == GenStatus.REVIEW
+
+
+def test_flow_script_that_drops_a_line_waits_for_review(app, authed, drive_connected, net):
+    gid = flow_idea(authed, prompt='Ali says: "chalo ghar chalein" and then "kal milenge yaar"', duration=8).json()["id"]
+    net.worker.jobs["job1"].update(status="done", scenes=[
+        {"action": "Ali waves.", "dialogue": [{"name": "Ali", "line": "Chalo, ghar chalein!"}]}])
+    tick(app)
+    g = gen(app, gid)
+    assert g.status == GenStatus.REVIEW  # punctuation doesn't count; the second line is missing
+    page = authed.get(f"/generations/{gid}/script").text
+    assert "Not said in any scene" in page and "“kal milenge yaar”" in page and "“chalo ghar chalein”" not in page
+
+
+def test_check_each_clip_is_ticked_on_the_flow_screen_only(authed, drive_connected):
+    flow = authed.get("/flow").text
+    assert 'name="check_clips" value="1" checked' in flow
+    assert 'name="check_clips" value="1" checked' not in authed.get("/").text
+

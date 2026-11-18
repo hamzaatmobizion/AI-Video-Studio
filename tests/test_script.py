@@ -37,7 +37,8 @@ def test_compile_repeats_library_words_camera_and_voice():
         "shot": {"framing": "medium", "angle": "eye level", "movement": "static", "lens": "50mm lens"},
         "action": "Ali hands Sara a red kite", "dialogue": [{"name": "Ali", "line": "Hold it tight."}],
         "sound": "wind, kite string humming"}, CAST)
-    text = script.compile_prompt(sc, CAST, style="Cinematic film", language="Urdu", aspect="16:9")
+    text = script.compile_prompt(sc, CAST, style="Cinematic film", language="Urdu", aspect="16:9",
+                                 room=script.FLOW_MAX_PROMPT)
     assert text.splitlines() == [
         "Widescreen 16:9 video.",
         "Cinematic film.",
@@ -50,7 +51,7 @@ def test_compile_repeats_library_words_camera_and_voice():
         "Sound: Wind, kite string humming.",
         "Only the named characters speak, clearly and in sync with their lips. " + script.SPEAKERS + " "
         + script.LIP_SYNC,
-        " ".join([script.ONE_SHOT, script.CONTINUITY, script.REALISM, script.NO_TEXT]),
+        " ".join([script.ONE_SHOT, script.CONTINUITY, script.REALISM, script.CINEMATIC, script.NO_TEXT]),
         script.ACTING + " " + script.QUALITY_FILM,  # how every clip should look and perform
     ]
 
@@ -162,13 +163,23 @@ def test_fit_shortens_the_action_and_keeps_the_rules():
     assert fitted.startswith("Vertical 9:16 video.\nA beach.\nWaves roll in")
 
 
+
+def test_master_rules_close_a_prompt_that_has_room_for_them():
+    sc = script.normalize_scene({"setting": "a beach", "action": "waves roll in " * 80}, [])
+    flow = script.compile_prompt(sc, [], aspect="9:16", room=script.FLOW_MAX_PROMPT)
+    assert script.CINEMATIC in flow
+    tight = script.compile_prompt(sc, [], aspect="9:16")  # an unfitted Gemini prompt leaves them out to fit
+    assert script.CINEMATIC not in tight and len(tight) <= script.MAX_PROMPT
+    cartoon = script.compile_prompt({"setting": "a farm", "action": "a cow moos"}, [], style="Pixar-style cartoon")
+    assert "One Pixar-style cartoon look throughout" in cartoon and script.CINEMATIC not in cartoon
+
 def test_fit_shortens_the_rules_before_the_action():
     # the clip 4 that lost its robot: a turn, two people, a line, and an action that only fits once the rules are short
     action = ("Ammi swings her straw broom down onto the robot vacuum. The robot spins around and rolls away across "
               "the courtyard. Ammi leaps back in surprise, lowering her broom and staring at it. ") * 3
     sc = script.normalize_scene({"setting": "a village courtyard", "action": action, "characters": [
         {"name": "Ammi"}, {"name": "Abba"}], "dialogue": [{"name": "Ammi", "line": "ہائے ربا!"}]}, [])
-    full = script.compile_prompt(sc, [], style="Pixar-style cartoon", aspect="9:16")
+    full = script.compile_prompt(sc, [], style="Pixar-style cartoon", aspect="9:16", room=script.FLOW_MAX_PROMPT)
     fitted = script.compile_prompt(sc, [], style="Pixar-style cartoon", aspect="9:16", fit=True)
     assert len(full) > script.MAX_PROMPT >= len(fitted)
     assert action.strip() in fitted  # all of the action is kept
@@ -1233,9 +1244,10 @@ def test_by_hand_scene_with_the_same_people_starts_from_the_last_frame(app, auth
     hand = svc.hand_scene(gid, gen(app, gid).user_id)  # scene 2, the same people: Frames, from scene 1's last frame
     assert hand["mode"] == "frames" and hand["start_at"] == 0 and len(hand["images"]) == 1
     assert "reference image" not in hand["prompt"] and "exactly as in the start frame" in hand["prompt"]
-    assert hand["prompt"].endswith(script.FRAME_START)
+    assert hand["prompt"].endswith(script.FRAME_START)  # the same people: nobody is said to leave or arrive
     assert "put this picture in <strong>Start" in authed.get(f"/generations/{gid}/by-hand").text
     authed.post(f"/generations/{gid}/scenes/2/clip", files={"clip": ("x.mp4", clip, "video/mp4")})
     hand = svc.hand_scene(gid, gen(app, gid).user_id)  # scene 3, Sara is new: her picture, as Ingredients
     assert hand["mode"] == "ingredients" and len(hand["images"]) == 3
     assert "reference image" in hand["prompt"] and script.FRAME_START not in hand["prompt"]
+    assert script.ENTER_SHOT.format(names="Sara") in hand["prompt"]  # she isn't in the frame it starts from

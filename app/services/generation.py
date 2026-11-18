@@ -29,13 +29,14 @@ from sqlalchemy import func, select
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.factories import Providers
 from app.genres import plan_rules, valid_genre
-from app.timeline import bible_from_prompt, script_from_timeline
+from app.timeline import bible_from_prompt, missing_lines, script_from_timeline
 from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
-from app.script import (CONTINUE_FROM, FRAME_START, MAX_SCENE_IMAGES, STARTS_FROM, cast_sheet, is_structured,
-                        merged_sheet,
+from app.script import (CONTINUE_FROM, ENTER_SHOT, FRAME_START, LEAVE_SHOT, MAX_SCENE_IMAGES, STARTS_FROM,
+                        cast_sheet, is_structured, merged_sheet,
                         still_prompt, compile_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
-                        scene_images, scene_warnings, clean_text, style_from_prompt, prompt_limit)
+                        scene_images, scene_warnings, clean_text, style_from_prompt, prompt_limit,
+                        FLOW_MOST_WORDS, spoken_words)
 from app.video_join import JoinError, clip_seconds, frame_at, join_clips, last_frame
 
 log = logging.getLogger("app.generation")
@@ -195,7 +196,8 @@ class GenerationService:
                     # scenes start from the previous clip's real last frame: a redraw of it would change things.
                     paths = scene_images(scene.script(), library, gen.ref_images)
                     images = [Path(p) for p in paths[:len(names)]] + ([frame] if frame else [])
-                    job_id = gen_client.still(still_prompt(scene.script(), library, gen.style, gen.bible), gen.aspect,
+                    job_id = gen_client.still(still_prompt(scene.script(), library, gen.style, gen.bible,
+                                                           gen.provider == Provider.FLOW), gen.aspect,
                                               ref, images, names, previous=bool(frame), provider=gen.provider)
                     gen.worker_job_id, gen.job_kind, gen.submitted_at, gen.poll_errors = \
                         job_id, f"still:{scene.position}", utcnow(), 0
@@ -238,6 +240,8 @@ class GenerationService:
             extra.append((STARTS_FROM if start or gen.lock_frames else CONTINUE_FROM).format(n=pictured + 1))
         if frames:
             extra.append(FRAME_START)
+        if gen.provider == Provider.FLOW and (frames or frame and lead == frame):  # it starts from the last frame
+            extra += _cast_changes(gen, scene)
         if scene.redos and scene.check_note.startswith("Remade once: "):  # say what went wrong last time
             extra.append(f"Fix from the last try: {_fit_text(scene.check_note[13:].rstrip('.'), 300)}.")
         limit = prompt_limit(gen.provider)
@@ -377,7 +381,8 @@ class GenerationService:
                   for i, at in enumerate(CHECK_STILLS, 1)] if length else []
         # clothes the prompt asks for instead of a pictured character's own (app/script.py merged_sheet)
         by_name = {c["name"]: c for c in library}
-        outfits = {n: merged_sheet(by_name[n], gen.bible).get("from_prompt", {}).get("outfit", "")
+        outfits = {n: merged_sheet(by_name[n], gen.bible, gen.provider == Provider.FLOW)
+                   .get("from_prompt", {}).get("outfit", "")
                    for n in names if n in by_name}
         try:
             job_id = client.review_clip(names, scene.action or "", lines, f"gen-{gen.id}-c{scene.position}",
@@ -646,6 +651,11 @@ class GenerationService:
             # is still put in a scene, as themselves.
             script = include_cast([ensure_cast(normalize_scene(item, cast), cast, gen.bible)
                                    for item in items[:len(gen.scenes)]], cast)
+            # A Flow script that dropped or reworded a line, or crams a clip with more words than 8 seconds can say:
+            # the user sees it first. Its length stays as asked; the script page warns of a tight clip.
+            if gen.provider == Provider.FLOW and (missing_lines(gen.prompt, script)
+                                                  or any(spoken_words(sc) > FLOW_MOST_WORDS for sc in script)):
+                gen.review = True
             gen.style = gen.style or gen.bible["style"]  # the look Gemini fixed for every scene, shown in the editor
             for scene, sc in zip(gen.scenes, script):
                 for key, value in sc.items():
@@ -987,11 +997,25 @@ class GenerationService:
 def _prompt_options(gen: Generation, scene_count: int | None = None) -> dict:
     """The video-wide inputs of every clip prompt: its bible and type, whether a clip may carry music (only a
     one-clip video: each clip would make up its own tune, which jumps at every cut), and how long it may be where
-    its clips are made."""
+    its clips are made. A Flow video's pictured characters wear the clothes its prompt gives them."""
     count = len(gen.scenes) if scene_count is None else scene_count
     return {"bible": gen.bible or {}, "genre": gen.genre or "",
             "music": (count == 1 or gen.genre == "music") and not gen.music_path,  # our track replaces the clips
-            "room": prompt_limit(gen.provider)}
+            "room": prompt_limit(gen.provider), "outfits": gen.provider == Provider.FLOW}
+
+
+def _cast_changes(gen: Generation, scene: Scene) -> list[str]:
+    """Who is in the previous scene's last frame but not in this scene, and who is new in it, said so Flow takes
+    them out of or brings them into a clip that starts from that frame."""
+    before = next((sc for sc in gen.scenes if sc.position == scene.position - 1), None)
+    if before is None:
+        return []
+    then = [p["name"] for p in before.characters or []]
+    now = [p["name"] for p in scene.characters or []]
+    gone = [n for n in then if n.lower() not in {x.lower() for x in now}]
+    new = [n for n in now if n.lower() not in {x.lower() for x in then}]
+    return [*([LEAVE_SHOT.format(names=" and ".join(gone))] if gone else []),
+            *([ENTER_SHOT.format(names=" and ".join(new))] if new else [])]
 
 
 def _first_version(clip: Path) -> Path:

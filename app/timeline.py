@@ -85,6 +85,18 @@ def bible_from_prompt(prompt: str, cast: list[dict]) -> dict:
     return {"characters": people, "cast": mine}
 
 
+def missing_lines(prompt: str, scenes: list[dict]) -> list[str]:
+    """Each line the prompt writes in quotes (of two words or more) that no scene says word for word: the script
+    dropped or reworded it. Punctuation, spacing and capitals don't count."""
+    said = re.sub(r"[\W_]+", "", " ".join(d["line"] for sc in scenes for d in sc.get("dialogue") or [])).casefold()
+    out = []
+    for line in re.findall(rf"{QUOTE}([^\"“”„«»\n]+){QUOTE}", prompt or ""):
+        words = re.sub(r"[\W_]+", "", line).casefold()
+        if len(line.split()) > 1 and words and words not in said and line.strip() not in out:
+            out.append(line.strip())
+    return out
+
+
 def _speech(action: str, names: list[str]) -> tuple[str, list[dict]]:
     """The spoken lines written into a moment (`Shinda says: "…"`) as dialogue, and the action without their words,
     so they're spoken in each person's voice and in sync, and never taken for on-screen text."""

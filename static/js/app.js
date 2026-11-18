@@ -15,6 +15,12 @@
 
   function showError(el, msg) { if (!el) return alert(msg); el.textContent = msg; el.hidden = !msg; }
 
+  // Words in a spoken line, for timing (line_words in app/script.py): in writing without spaces (Chinese, Japanese,
+  // Thai…) every 2 characters count as a word, so a whole sentence there isn't one word
+  const NO_SPACE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff]/g;
+  const lineWords = (text) => (text || "").trim().split(/\s+/).filter(Boolean)
+    .reduce((n, t) => { const c = (t.match(NO_SPACE) || []).length; return n + (c ? Math.ceil(c / 2) : 1); }, 0);
+
   // "Copy" buttons: put the text of the element their data-copy names on the clipboard
   document.querySelectorAll("[data-copy]").forEach((btn) => btn.addEventListener("click", async () => {
     const text = document.querySelector(btn.dataset.copy).innerText;
@@ -206,12 +212,13 @@
     }
   }
   // A note when the lines written in the prompt (in quotes) need more time than the length gives them
-  const WORDS_PER_CLIP = Math.round(25 * SCENE_SECONDS / 10);  // words_per_clip in app/script.py: 25 per 10 s
+  // words_per_clip in app/script.py: 25 per 10-second Gemini clip; 14 per 8-second Flow clip, as stories talk in turns
+  const WORDS_PER_CLIP = SCENE_SECONDS === 8 ? 14 : Math.round(25 * SCENE_SECONDS / 10);
   function syncTalk() {
     const note = document.getElementById("talk-note");
     if (!note || manual()) { if (note) note.hidden = true; return; }
     const text = form.querySelector("textarea[name=prompt]").value;
-    const words = [...text.matchAll(/["“”]([^"“”\n]{2,})["“”]/g)].reduce((n, m) => n + m[1].trim().split(/\s+/).length, 0);
+    const words = [...text.matchAll(/["“”]([^"“”\n]{2,})["“”]/g)].reduce((n, m) => n + lineWords(m[1]), 0);
     const clips = chosenDuration() / SCENE_SECONDS, need = Math.ceil(words / WORDS_PER_CLIP);
     note.hidden = need <= clips;
     note.textContent = `Your lines have about ${words} spoken words, but ${lengthFor(clips)} fits about ` +
@@ -641,16 +648,19 @@
         editable ? el("button", { type: "button", class: "link", text: "Remove",
           onclick: () => { list.splice(j, 1); redraw(); changed(); } }) : "");
     }
-    function words(sc) { return sc.dialogue.reduce((n, d) => n + (d.line.trim() ? d.line.trim().split(/\s+/).length : 0), 0); }
+    function words(sc) { return sc.dialogue.reduce((n, d) => n + lineWords(d.line), 0); }
+    // what fits: fewer words when two or more people talk (words_per_clip in app/script.py)
+    const fits = (sc) => (new Set(sc.dialogue.filter((d) => d.line.trim()).map((d) => d.name.toLowerCase())).size > 1
+      ? data.max_words_more : data.max_words);
 
     function card(sc, i) {
       sc.shot = sc.shot || {};
       const castRows = el("div", { class: "rows" }), lineRows = el("div", { class: "rows" });
       const count = el("span", { class: "muted small" });
       const updateCount = () => {
-        const n = words(sc);
-        count.textContent = n ? `${n} spoken word${n === 1 ? "" : "s"}${n > data.max_words ? ` (about ${data.max_words} fit in ${data.seconds || 10} seconds)` : ""}` : "";
-        count.className = n > data.max_words ? "warn" : "muted small";
+        const n = words(sc), max = fits(sc);
+        count.textContent = n ? `${n} spoken word${n === 1 ? "" : "s"}${n > max ? ` (about ${max} fit in ${data.seconds || 10} seconds)` : ""}` : "";
+        count.className = n > max ? "warn" : "muted small";
       };
       function drawCast() {
         castRows.replaceChildren(...sc.characters.map((p, j) => el("div", { class: "line" },
@@ -669,7 +679,7 @@
       }
       function drawLines() {
         lineRows.replaceChildren(...sc.dialogue.map((d, j) => el("div", { class: "line" },
-          personSelect(d, sc.characters, (np) => { Object.assign(d, np); changed(); }),
+          personSelect(d, sc.characters, (np) => { Object.assign(d, np); updateCount(); changed(); }),
           (() => {
             const input = el("input", { type: "text", maxlength: 400, disabled: !editable, placeholder: "What they say",
               "aria-label": "Line", oninput: (e) => { d.line = e.target.value; updateCount(); changed(); } });
@@ -683,7 +693,7 @@
       const propRows = el("div", { class: "rows" });
       function drawProps() {
         propRows.replaceChildren(...sc.props.map((_, j) => propRow(sc.props, j,
-          { key: "state", label: "Where it is", placeholder: "Where it is, who holds it, e.g. in Abba's right hand" }, drawProps)));
+          { key: "state", label: "Where it is", placeholder: "Where it is when the scene starts, who holds it, e.g. in Abba's right hand" }, drawProps)));
       }
       drawCast(); drawLines(); drawProps(); updateCount();
       const firstPerson = () => sc.characters[0] || people[0] || { id: null, name: "Narrator" };

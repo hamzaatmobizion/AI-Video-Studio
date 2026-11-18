@@ -89,7 +89,8 @@ def script_page(gen_id: int, request: Request, user=Depends(require_page_user)):
                   prompts=[s.prompt for s in gen.scenes],
                   options={"framing": sc.FRAMINGS, "angle": sc.ANGLES, "movement": sc.MOVEMENTS, "lens": sc.LENSES,
                            "position": sc.POSITIONS, "time_of_day": sc.TIMES_OF_DAY, "style": sc.STYLES},
-                  max_words=sc.words_per_clip(SCENE_SECONDS.get(gen.provider, 10)), max_prompt=sc.prompt_limit(gen.provider),
+                  max_words=sc.words_per_clip(SCENE_SECONDS.get(gen.provider, 10)),
+                  max_words_more=sc.words_per_clip(SCENE_SECONDS.get(gen.provider, 10), 2), max_prompt=sc.prompt_limit(gen.provider),
                   seconds=SCENE_SECONDS.get(gen.provider, 10))
 
 

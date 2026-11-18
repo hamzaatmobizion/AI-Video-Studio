@@ -48,8 +48,10 @@ def test_compile_repeats_library_words_camera_and_voice():
         "Ali hands Sara a red kite.",
         "Ali (voice: deep, calm, slow) says in Urdu: 'Hold it tight.'",
         "Sound: Wind, kite string humming.",
-        "Only the named characters speak, clearly and in sync with their lips. " + script.SPEAKERS,
+        "Only the named characters speak, clearly and in sync with their lips. " + script.SPEAKERS + " "
+        + script.LIP_SYNC,
         " ".join([script.ONE_SHOT, script.CONTINUITY, script.REALISM, script.NO_TEXT]),
+        script.ACTING + " " + script.QUALITY_FILM,  # how every clip should look and perform
     ]
 
 
@@ -59,7 +61,7 @@ def test_turning_scene_says_how_the_body_turns_and_frees_the_face():
     text = script.compile_prompt(sc, CAST)
     assert "Ali: same person, hair, outfit and style as reference image 1; the picture only shows them" in text
     assert "exactly as in reference image" not in text
-    assert text.splitlines()[-2] == script.TURN_NOTE
+    assert text.splitlines()[-3] == script.TURN_NOTE
     calm = script.compile_prompt(script.normalize_scene({"setting": "a courtyard", "characters": [{"id": 1}],
                                                          "action": "Ali sits and talks"}, CAST), CAST)
     assert "exactly as in reference image 1 (same face" in calm and script.TURN_NOTE not in calm
@@ -138,7 +140,7 @@ def test_ensure_cast_leaves_shots_without_the_cast_alone():
 def test_plain_action_keeps_its_words_and_gets_format_and_rules():
     text = script.compile_prompt(script.normalize_scene("a paper boat\nat dusk", []), [], aspect="9:16")
     assert text == "\n".join(["Vertical 9:16 video.", "a paper boat", "at dusk",
-                              script.quality_rules({"action": "a paper boat"})])
+                              script.quality_rules({"action": "a paper boat"}), script.QUALITY_FILM])
 
 
 def test_rules_fit_the_style_and_any_text_on_screen():
@@ -156,22 +158,25 @@ def test_fit_shortens_the_action_and_keeps_the_rules():
     full = script.compile_prompt(sc, [], aspect="9:16")
     fitted = script.compile_prompt(sc, [], aspect="9:16", fit=True)
     assert len(full) > script.MAX_PROMPT >= len(fitted)
-    assert fitted.endswith(script.NO_TEXT) and fitted.startswith("Vertical 9:16 video.\nA beach.\nWaves roll in")
+    assert fitted.endswith(script.NO_TEXT + "\n" + script.QUALITY_FILM)
+    assert fitted.startswith("Vertical 9:16 video.\nA beach.\nWaves roll in")
 
 
 def test_fit_shortens_the_rules_before_the_action():
     # the clip 4 that lost its robot: a turn, two people, a line, and an action that only fits once the rules are short
     action = ("Ammi swings her straw broom down onto the robot vacuum. The robot spins around and rolls away across "
-              "the courtyard. Ammi leaps back in surprise, lowering her broom and staring at it. ") * 5
+              "the courtyard. Ammi leaps back in surprise, lowering her broom and staring at it. ") * 3
     sc = script.normalize_scene({"setting": "a village courtyard", "action": action, "characters": [
         {"name": "Ammi"}, {"name": "Abba"}], "dialogue": [{"name": "Ammi", "line": "ہائے ربا!"}]}, [])
     full = script.compile_prompt(sc, [], style="Pixar-style cartoon", aspect="9:16")
     fitted = script.compile_prompt(sc, [], style="Pixar-style cartoon", aspect="9:16", fit=True)
     assert len(full) > script.MAX_PROMPT >= len(fitted)
     assert action.strip() in fitted  # all of the action is kept
-    # the turning note is said in fewer words first; that's enough here, so the other rules stay whole
+    # the turning note, then the speaker and quality rules are said in fewer words; how it should look and perform
+    # (lip-sync, acting, quality) is never shortened
     assert script.TURN_NOTE_SHORT in fitted and script.TURN_NOTE not in fitted
-    assert script.SPEAKERS in fitted and script.CONTINUITY in fitted and fitted.endswith(script.NO_TEXT)
+    assert script.SPEAKERS_SHORT in fitted and script.CONTINUITY_SHORT in fitted
+    assert script.LIP_SYNC in fitted and fitted.endswith(script.ACTING + " " + script.QUALITY_ANIMATED)
     # with room to spare nothing is shortened
     roomy = script.compile_prompt(sc, [], style="Pixar-style cartoon", aspect="9:16", fit=True,
                                   room=script.prompt_limit("flow"))
@@ -179,9 +184,9 @@ def test_fit_shortens_the_rules_before_the_action():
     # only when even the short rules leave too little room is the action cut
     huge = {**sc, "action": action * 3}
     cut = script.compile_prompt(huge, [], style="Pixar-style cartoon", aspect="9:16", fit=True)
-    assert len(cut) <= script.MAX_PROMPT and cut.endswith(script.NO_TEXT) and huge["action"].strip() not in cut
+    assert len(cut) <= script.MAX_PROMPT and cut.endswith(script.QUALITY_ANIMATED) and huge["action"].strip() not in cut
     assert script.SPEAKERS_SHORT in cut and script.CONTINUITY_SHORT in cut and "Avoid" not in cut
-    assert cut.count("Ammi swings") >= 5  # what's left for the action is all the short rules freed
+    assert cut.count("Ammi swings") >= 4  # what's left for the action is all the short rules freed
 
 
 def test_props_keep_their_look_and_state_in_every_clip():
@@ -194,12 +199,36 @@ def test_props_keep_their_look_and_state_in_every_clip():
     assert sc["props"] == [{"name": "Tea cup", "state": "in Abba's right hand"}, {"name": "Shoe", "state": ""}]
     p = script.compile_prompt(sc, [], aspect="9:16", bible=bible)
     line = next(x for x in p.splitlines() if x.startswith("Objects"))
-    assert "Tea cup (steel tea cup): in Abba's right hand" in line and "; Shoe;" in line
-    # a bible object the action names is described even when the scene doesn't list it
-    assert "Robot vacuum (small round flat black robot vacuum, one blue light on top, no arms)." in line
+    assert "Tea cup (steel tea cup): in Abba's right hand" in line and "; Shoe. When they appear" in line
+    # a bible object the action only names gets its look, not a place at the start (it may appear during the clip)
+    assert line.endswith(" When they appear: Robot vacuum (small round flat black robot vacuum, one blue light on "
+                         "top, no arms).")
+    assert "Robot vacuum" not in line.split("When they appear")[0]
     assert p.index(line) < p.index("The robot vacuum rolls away.")
-    assert "Objects, each" not in script.compile_prompt({"action": "a boat"}, [], bible=bible)
+    assert "Objects when" not in script.compile_prompt({"action": "a boat"}, [], bible=bible)
     assert "Tea cup (steel tea cup): in Abba's right hand" in script.still_prompt(sc, [], bible=bible)
+
+
+def test_style_keeps_only_the_look():
+    # a "Style:" line that also gives the format and length: an 8-second clip is never told "40 seconds"
+    style = script.style_from_prompt("Style: Funny Pixar-style 3D cartoon animation, colorful Pakistani village "
+                                     "environment, expressive faces, cinematic camera angles, vertical 9:16, 40 seconds.")
+    assert style == ("Funny Pixar-style 3D cartoon animation, colorful Pakistani village environment, expressive faces, "
+                     "cinematic camera angles")
+    assert script.look_only("Vintage 1990s film, 35mm grain") == "Vintage 1990s film, 35mm grain"  # a look, kept
+    p = script.compile_prompt({"action": "a fox naps", "characters": [{"name": "Fox"}, {"name": "Owl"}]}, [],
+                              style="Pixar-style 3D, 4K, 30-second video")
+    assert "Pixar-style 3D." in p and "30-second" not in p and "4K" not in p
+    name = script._style_name("Funny Pixar-style 3D cartoon animation, colorful Pakistani village environment")
+    assert name == "Funny Pixar-style 3D cartoon animation colorful Pakistani" and len(name) <= 60  # whole words
+
+
+def test_every_clip_says_how_it_should_look_and_perform():
+    talk = script.compile_prompt(script.normalize_scene({"action": "Ali laughs", "dialogue": [
+        {"name": "Ali", "line": "Hi"}]}, CAST), CAST, style="Pixar-style 3D animation")
+    assert script.LIP_SYNC in talk and talk.endswith(script.ACTING + " " + script.QUALITY_ANIMATED)
+    scenery = script.compile_prompt({"action": "waves roll in", "setting": "a beach"}, [])
+    assert scenery.endswith("\n" + script.QUALITY_FILM) and script.ACTING not in scenery and script.LIP_SYNC not in scenery
 
 
 def test_review_shows_and_saves_objects(app, authed, drive_connected, net):
@@ -207,7 +236,8 @@ def test_review_shows_and_saves_objects(app, authed, drive_connected, net):
     r = authed.post(f"/generations/{gid}/script", json={
         "scenes": [{"action": "Ali rows the boat", "props": [{"name": "Oar", "state": "in Ali's left hand"}]}],
         "bible": {"props": [{"name": "Oar", "look": "long red wooden oar"}]}})
-    assert "Objects, each exactly the same in every clip: Oar (long red wooden oar): in Ali's left hand." \
+    assert "each looking the same in every clip (only the action changes them): Oar (long red wooden oar): " \
+        "in Ali's left hand." \
         in r.json()["scenes"][0]["prompt"]
     g = gen(app, gid)
     assert g.scenes[0].props == [{"name": "Oar", "state": "in Ali's left hand"}]
@@ -524,7 +554,8 @@ def test_compile_uses_bible_locks_and_avoid_list():
     assert "Ali, exactly as in reference image 1 (same face, hair, outfit and style); always trimmed beard, " \
            "white kurta." in p
     assert "Avoid: scary faces, sharp teeth, danger, violence, upright ears, glasses, hat." in p
-    assert p.endswith(script.NO_MUSIC) and script.ANIMATED_REALISM in p
+    assert p.splitlines()[-2].endswith(script.NO_MUSIC) and script.ANIMATED_REALISM in p
+    assert p.splitlines()[-1] == script.ACTING + " " + script.QUALITY_ANIMATED
     assert script.NO_MUSIC not in script.compile_prompt(sc, [locked], bible=bible)  # one clip keeps its music
     sung = {**sc, "sound": "she sings a song"}
     assert script.NO_MUSIC not in script.compile_prompt(sung, [], music=False)  # asked for in the scene
@@ -808,7 +839,7 @@ def test_music_upload_goes_under_the_video_and_clips_make_none(app, authed, driv
                     files=[("music", ("track.mp3", _music(tmp_path), "audio/mpeg"))])
     gid = r.json()["id"]
     g = gen(app, gid)
-    assert g.music_path.endswith("music.mp3") and g.scenes[0].prompt.endswith(script.NO_MUSIC)
+    assert g.music_path.endswith("music.mp3") and g.scenes[0].prompt.splitlines()[-2].endswith(script.NO_MUSIC)
     finish(net, app, "job1")
     assert gen(app, gid).status == GenStatus.READY  # joined with the track (a single clip is re-encoded for it)
     bad = authed.post("/generations", data={"prompt": "a boat", "aspect": "9:16"},
@@ -1023,10 +1054,27 @@ def test_prompt_rules_page(authed):
 
 
 def test_spoken_words_fit_the_clip_length():
-    assert script.words_per_clip(10) == 25 and script.words_per_clip(8) == 20
+    assert script.words_per_clip(10) == 25 and script.words_per_clip(10, 2) == 25  # Gemini's 10 s as before
+    assert script.words_per_clip(8) == 16 and script.words_per_clip(8, 2) == 14  # Flow: one speaker, two or more
     scene = {"dialogue": [{"name": "Ali", "line": " ".join(["word"] * 22)}]}
     assert not any("spoken words" in w for w in script.scene_warnings(scene, "p"))  # 22 fit in 10 s
-    assert any("about 20 fit in 8 seconds" in w for w in script.scene_warnings(scene, "p", seconds=8))
+    assert any("about 16 fit in 8 seconds, so" in w for w in script.scene_warnings(scene, "p", seconds=8))
+    talk = {"dialogue": [{"name": "Ali", "line": " ".join(["word"] * 8)}, {"name": "Sara", "line": " ".join(["w"] * 7)}]}
+    assert script.speaker_count(talk) == 2
+    assert any("about 14 fit in 8 seconds with two or more people talking" in w
+               for w in script.scene_warnings(talk, "p", seconds=8))  # 15 words: fine alone, too many in turns
+    alone = {"dialogue": [{"name": "Ali", "line": " ".join(["word"] * 15)}]}
+    assert not any("spoken words" in w for w in script.scene_warnings(alone, "p", seconds=8))
+
+
+def test_words_are_counted_in_languages_written_without_spaces():
+    assert script.line_words("اوئے شانی! توں ناشتہ کر کے آیا ایں؟") == 8  # Shahmukhi: by spaces, as before
+    assert script.line_words("Hold it tight.") == 3
+    assert script.line_words("你好，我今天很高兴见到你。") == 6  # 11 Chinese characters: about 6 words, not 1
+    assert script.line_words("こんにちは 元気") == 4  # 5 + 2 characters
+    assert script.line_words("") == 0
+    long = {"dialogue": [{"name": "Li", "line": "我" * 40}]}
+    assert any("20 spoken words" in w for w in script.scene_warnings(long, "p", seconds=8))
 
 
 def test_still_prompt_describes_people_as_the_clip_does():

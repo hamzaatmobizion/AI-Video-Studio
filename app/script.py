@@ -27,7 +27,15 @@ SHOT_OPTIONS = {"framing": FRAMINGS, "angle": ANGLES, "movement": MOVEMENTS, "le
 
 MAX_PROMPT = 2000  # one clip prompt, as Gemini's video tool takes it
 FLOW_MAX_PROMPT = 3300  # Google Flow follows a longer one to its last line (a 3,298-character prompt was tested)
-MAX_SPOKEN_WORDS = 25  # about what fits in one 10-second clip (words_per_clip for other lengths)
+MAX_SPOKEN_WORDS = 25  # about what fits in one 10-second Gemini clip (words_per_clip for other lengths)
+# Google Flow's 8-second clip has about 6 seconds for speech once the start and the closing reaction have theirs:
+# 20 words ran the lines back to back with no pause. Each change of speaker also needs a short gap.
+FLOW_SECONDS = 8
+FLOW_WORDS = {"one": 16, "more": 14}  # spoken words with one speaker, and with two or more
+# Writing without spaces between words (Chinese, Japanese, Thai, Lao, Khmer, Burmese): 2 characters count as a word
+NO_SPACE_SCRIPT = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿฀-໿က-႟"
+                             r"ក-៿]")
+CHARS_PER_WORD = 2
 MAX_IN_SHOT = 6
 MAX_LINES = 8
 MAX_SCENE_IMAGES = 3  # reference pictures attached to one clip
@@ -97,6 +105,21 @@ SAME_STYLE = "Everyone in the same {style} style, none more realistic."
 SPEAKERS = "Each line is said only by the person named before it, in their voice; nobody else says or mouths it."
 SPEAKERS_IN_ORDER = "Lines in the order written."
 SPEAKERS_SHORT = "Only the named characters speak, in sync with their lips, each line by the person named before it."
+# How every clip should look and perform, whatever its story: said in every clip prompt and never shortened away
+LIP_SYNC = ("Lip-sync: the speaker's mouth shapes match every syllable of the line, starting and stopping exactly with "
+            "the words, with natural pauses between lines so nobody rushes.")
+ACTING = ("Acting: expressive, believable performances; faces, eyes and eyebrows clearly show each feeling and match the "
+          "words; natural blinking and eye contact; whoever listens reacts with their mouth closed; the key or funny "
+          "moment gets a clear, held reaction.")
+QUALITY_ANIMATED = ("Premium animated feature-film quality: detailed skin, hair and fabric textures, soft natural "
+                    "lighting and shadows, smooth fluid animation, correct hands and fingers, clean frames with no "
+                    "flicker or glitches.")
+QUALITY_FILM = ("Premium cinematic quality: sharp focus, natural skin and fabric detail, soft natural lighting, smooth "
+                "natural motion, correct hands and fingers, clean frames with no flicker or glitches.")
+# What a "Style:" line may also say that isn't a look ("vertical 9:16, 40 seconds"): each clip has its own format
+FORMAT_WORDS = re.compile(r"\b\d+\s*[:x×/]\s*\d+\b|\bvertical\b|\bhorizontal\b|\bwide-?screen\b|\bportrait (?:video|"
+                          r"format|mode)\b|\blandscape (?:video|format|mode)\b|\b\d+[\s-]?(?:secs?|seconds?|minutes?|"
+                          r"mins?)\b|\bduration\b|\b(?:4k|1080p|720p|\d+\s*fps)\b", re.I)
 # Each clip would make up its own tune, so the music would jump at every cut of a multi-scene video.
 NO_MUSIC = "No background music: only the spoken lines and natural sound effects."
 MUSIC = re.compile(r"\b(music\w*|songs?|sings?|singing|melod\w*|soundtrack|beat|band|instrumental)\b", re.I)
@@ -268,13 +291,13 @@ def style_from_prompt(prompt: str) -> str:
     """The visual style a prompt asks for: its "Style:" line, else the style words in its opening, else ""."""
     m = STYLE_LINE.search(prompt or "")
     if m:
-        return clean_text(m.group(1), 300)
+        return look_only(clean_text(m.group(1), 300))
     words = {}
     for w in STYLE_WORDS.findall((prompt or "")[:400]):
         words.setdefault(w.lower(), w)
     if any(ANIMATED.search(w) for w in words):  # "realistic 3D animation" means detailed, not photographic
         words = {k: w for k, w in words.items() if not re.fullmatch(r"(photo-?)?realistic", k)}
-    return clean_text(", ".join(words.values()), 300)
+    return look_only(clean_text(", ".join(words.values()), 300))
 
 
 # The shape a prompt asks for. "portrait" and "landscape" alone are a picture and scenery, not a format.
@@ -296,10 +319,22 @@ def aspect_from_prompt(prompt: str) -> str:
     return min(found)[2] if found else ""
 
 
+def look_only(style: str) -> str:
+    """A style without the format, length or resolution a "Style:" line may add ("…, vertical 9:16, 40 seconds"):
+    each clip prompt says its own format, and a clip told "40 seconds" is still 8 or 10."""
+    parts = [p.strip(" .") for p in re.split(r"[,;]", style or "")]
+    if not any(FORMAT_WORDS.search(p) for p in parts):
+        return style or ""
+    return ", ".join(p for p in parts if p and not FORMAT_WORDS.search(p))
+
+
 def _style_name(style: str) -> str:
-    """The video's style as a short name for SAME_STYLE ("Pixar-style, cartoon" → "Pixar-style cartoon")."""
+    """The video's style as a short name for SAME_STYLE ("Pixar-style, cartoon" → "Pixar-style cartoon"), cut at a
+    whole word."""
     name = re.sub(r"[.;]+.*$", "", (style or "").strip()).replace(", ", " ").strip()
-    return name[:60] if name else "cartoon"
+    if len(name) > 60:
+        name = name[:61].rsplit(" ", 1)[0]
+    return name or "cartoon"
 
 
 def wearing(outfit: str) -> str:
@@ -359,20 +394,25 @@ def prompt_limit(provider: str = "") -> int:
 
 
 def props_line(scene: dict, bible: dict | None = None) -> str:
-    """The "Objects" line of a clip prompt: each object the scene lists (or whose bible name its action says), with
-    its fixed look from the bible and where it is now or who holds it, so every clip draws it the same way."""
-    looks = {p["name"].lower(): p["look"] for p in (bible or {}).get("props") or []}
+    """The "Objects" line of a clip prompt: each object the scene lists, with its fixed look from the bible and where
+    it is when the clip starts or who holds it, so every clip draws it the same way. A bible object the action only
+    names (a peel thrown away during the clip) gets its look alone: it isn't there from the start."""
+    looks = {p["name"].lower(): p["look"].rstrip(" .") for p in (bible or {}).get("props") or []}
     states = {p["name"].lower(): p for p in scene.get("props") or []}
     text = " ".join([scene.get("action") or ""] + [d["line"] for d in scene.get("dialogue") or []])
     named = [p["name"] for p in (bible or {}).get("props") or []
              if p["name"].lower() not in states and re.search(rf"(?<!\w){re.escape(p['name'])}(?!\w)", text, re.I)]
     items = []
-    for name in [p["name"] for p in scene.get("props") or []] + named:
-        look, state = looks.get(name.lower(), ""), (states.get(name.lower()) or {}).get("state", "")
-        items.append(name + (f" ({look.rstrip(' .')})" if look else "") + (f": {state.rstrip(' .')}" if state else ""))
-    if not items:
-        return ""
-    return _fit("Objects, each exactly the same in every clip: " + "; ".join(items) + ".", MAX_PROPS_LINE)
+    for p in scene.get("props") or []:
+        look, state = looks.get(p["name"].lower(), ""), p.get("state", "").rstrip(" .")
+        items.append(p["name"] + (f" ({look})" if look else "") + (f": {state}" if state else ""))
+    out = []
+    if items:
+        out.append("Objects when the clip starts, each looking the same in every clip (only the action changes them): "
+                   + "; ".join(items) + ".")
+    if named:
+        out.append("When they appear: " + "; ".join(f"{n} ({looks[n.lower()]})" for n in named) + ".")
+    return _fit(" ".join(out), MAX_PROPS_LINE)
 
 
 # An age in a saved appearance ("60 age", "aged 12", "in her 30s", "a 5-year-old"), dropped when the prompt gives one
@@ -439,7 +479,7 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
     by_id = {c["id"]: c for c in cast}
     bible = bible or {}
     invented = {c["name"].lower(): c for c in bible.get("characters") or []}
-    style = style or bible.get("style") or ""
+    style = look_only(style or bible.get("style") or "")
     plain = not is_structured(scene) and not style
     head, tail, avoid = [], [], clip_avoid(genre)
     if aspect in FORMATS:
@@ -512,9 +552,9 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         speakers = {d["name"] for d in scene["dialogue"]}
         no_subs = "" if NO_TEXT in rules else " No subtitles."
         in_order = " " + SPEAKERS_IN_ORDER if len(scene["dialogue"]) > 1 and len(speakers) > 1 else ""
-        shorter.append((len(tail), SPEAKERS_SHORT + no_subs + in_order))
+        shorter.append((len(tail), SPEAKERS_SHORT + no_subs + in_order + " " + LIP_SYNC))
         tail.append("Only the named characters speak, clearly and in sync with their lips." + no_subs + " "
-                    + SPEAKERS + in_order)
+                    + SPEAKERS + in_order + " " + LIP_SYNC)
     if NO_TEXT in rules and SIGNAGE_PLACES.search(" ".join([scene.get("setting") or "", action])):
         avoid.append(NO_TEXT_AVOID)
     if _avoid(avoid):
@@ -522,6 +562,9 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         tail.append(_avoid(avoid))
     shorter.append((len(tail), quality_rules(scene, style, music, short=True)))
     tail.append(rules)
+    # how it should look and perform: in every clip, never shortened
+    tail.append(" ".join(([ACTING] if scene.get("characters") or scene.get("dialogue") else [])
+                         + [QUALITY_ANIMATED if animated(scene, style) else QUALITY_FILM]))
     if action and fit:
         action = action if plain else _sentence(action)
         for i, words in shorter:
@@ -542,7 +585,7 @@ def still_prompt(scene: dict, cast: list[dict], style: str = "", bible: dict | N
     over their saved character and picture, so the frame and the clip agree and nothing changes mid-clip."""
     by_id, bible = {c["id"]: c for c in cast}, bible or {}
     invented = {c["name"].lower(): c for c in bible.get("characters") or []}
-    lines = [_sentence(x) for x in (style or bible.get("style") or "",
+    lines = [_sentence(x) for x in (look_only(style or bible.get("style") or ""),
                                     f"Colour palette: {bible['palette']}" if bible.get("palette") else "") if x]
     place = ", ".join(x.rstrip(" .,;") for x in (scene.get("setting"), scene.get("time_of_day")) if x)
     if place:
@@ -577,8 +620,22 @@ def still_prompt(scene: dict, cast: list[dict], style: str = "", bible: dict | N
     return _fit("\n".join(lines), MAX_PROMPT - 600)  # room for the worker's own lines
 
 
+def line_words(text: str) -> int:
+    """How many words a line is, for timing: words between spaces, and in a script written without spaces (Chinese,
+    Japanese, Thai…) every CHARS_PER_WORD characters, so a whole sentence there isn't one word."""
+    n = 0
+    for token in (text or "").split():
+        chars = len(NO_SPACE_SCRIPT.findall(token))
+        n += -(-chars // CHARS_PER_WORD) if chars else 1
+    return n
+
+
 def spoken_words(scene: dict) -> int:
-    return sum(len(d["line"].split()) for d in scene.get("dialogue") or [])
+    return sum(line_words(d["line"]) for d in scene.get("dialogue") or [])
+
+
+def speaker_count(scene: dict) -> int:
+    return len({d["name"].lower() for d in scene.get("dialogue") or [] if d["line"].strip()})
 
 
 def busy_hands(scene: dict) -> bool:
@@ -587,8 +644,11 @@ def busy_hands(scene: dict) -> bool:
     return bool(BOTH_HANDS.search(action) and GESTURE.search(action))
 
 
-def words_per_clip(seconds: int = 10) -> int:
-    """About how many spoken words fit in a `seconds`-long clip: 25 in Gemini's 10 s, 20 in Flow's 8 s."""
+def words_per_clip(seconds: int = 10, speakers: int = 1) -> int:
+    """About how many spoken words fit in a `seconds`-long clip, said clearly with room to pause: 25 in Gemini's 10 s;
+    in Flow's 8 s, 16 with one speaker and 14 with two or more."""
+    if seconds == FLOW_SECONDS:
+        return FLOW_WORDS["more" if speakers > 1 else "one"]
     return round(MAX_SPOKEN_WORDS * seconds / 10)
 
 
@@ -600,10 +660,12 @@ def scene_warnings(scene: dict, prompt: str, cast: list[dict] = (), seconds: int
         out.append("Someone holds something in both hands and also points, waves or gestures: the video may grow "
                    "a third hand. Say which hand does what (e.g. 'holds the roti in her left hand, points with her "
                    "right').")
-    words = spoken_words(scene)
-    if words > words_per_clip(seconds):
-        out.append(f"{words} spoken words: about {words_per_clip(seconds)} fit in {seconds} seconds, so lines may be "
-                   "cut short.")
+    words, speakers = spoken_words(scene), speaker_count(scene)
+    fit = words_per_clip(seconds, speakers)
+    if words > fit:
+        talking = " with two or more people talking" if speakers > 1 and fit != words_per_clip(seconds) else ""
+        out.append(f"{words} spoken words: about {fit} fit in {seconds} seconds{talking}, so lines may be rushed or "
+                   "cut short. Move a line to the next scene.")
     if len(prompt) > limit:
         out.append(f"The clip prompt is {len(prompt):,} characters and {limit:,} can be sent, so it's shortened when "
                    "it's sent: the app's own rules are said in fewer words, and if that isn't enough the end of the "

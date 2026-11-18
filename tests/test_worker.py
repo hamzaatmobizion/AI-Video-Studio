@@ -1057,7 +1057,8 @@ def test_plan_instruction_asks_for_objects_and_sizes_the_action():
     from worker.generator import PlanRequest
     text = gb.plan_instruction(PlanRequest("j", "idea", "9:16", 3))
     assert '"props": [{"name": "...", "look": "..."}]' in text and '"props": [{"name": "...", "state": "..."}]' in text
-    assert "who holds it in which hand" in text and "still holds it, in the same hand" in text
+    assert "where it is at the START of the scene" in text and "still holds it, in the same hand" in text
+    assert "Never put what happens during the scene in a state" in text
     assert "under about 350 characters" in text
     flow = gb.plan_instruction(PlanRequest("j", "idea", "9:16", 3, clip_seconds=8, provider="flow"))
     assert "under about 600 characters (about 100 words)" in flow
@@ -1285,7 +1286,8 @@ def test_plan_instruction_sizes_lines_for_the_clip_length():
     import worker.gemini_browser as gb
     from worker.generator import PlanRequest
     eight = gb.plan_instruction(PlanRequest("j", "x", "9:16", 3, clip_seconds=8))
-    assert "at most about 20 words per scene" in eight and "share a 8-second scene" in eight
+    assert "at most 16 words when one person speaks and 14 when two or more do per scene" in eight
+    assert "share a 8-second scene" in eight and "count every 2 characters as a word" in eight
     assert "10-second" not in eight
     ten = gb.plan_instruction(PlanRequest("j", "x", "9:16", 3))
     assert "at most about 25 words per scene" in ten and "share a 10-second scene" in ten

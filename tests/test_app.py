@@ -709,7 +709,7 @@ def test_one_prompt_gemini_plans_scenes_then_they_are_made(app, authed, drive_co
     g = gen(app, gid)
     assert g.status == GenStatus.GENERATING and [sc.prompt.splitlines()[:2] for sc in g.scenes] == \
         [["Vertical 9:16 video.", x] for x in ("dawn at the lighthouse", "noon storm", "night beam")]
-    assert all(sc.prompt.endswith(script.NO_TEXT + " " + script.NO_MUSIC) for sc in g.scenes)
+    assert all(sc.prompt.splitlines()[-2].endswith(script.NO_TEXT + " " + script.NO_MUSIC) for sc in g.scenes)
     assert net.worker.submits[1]["path"] == "/videos" and b"dawn at the lighthouse" in net.worker.submits[1]["body"]
 
     for job in ("job2", "job3", "job4"):

@@ -67,6 +67,7 @@ MOVEMENTS = ["static", "slow push-in", "pull-out", "pan left", "pan right", "til
 LENSES = ["24mm wide-angle lens", "35mm lens", "50mm lens", "85mm lens with shallow depth of field"]
 POSITIONS = ["frame left", "center", "frame right", "foreground", "background"]
 MAX_SPOKEN_WORDS = 25  # per 10 seconds (as app/script.py): a shorter clip gets proportionally fewer
+FLOW_SECONDS, FLOW_WORDS = 8, {"one": 16, "more": 14}  # as app/script.py: Flow's 8 s, one speaker or more
 MAX_SCENE_IMAGES, MAX_IN_SHOT = 3, 6  # as app/script.py: pictures one clip takes, people one shot may hold
 _BIBLE_EXAMPLE = ('{"title": "...", "style": "...", "palette": "...", "setting": "...", "motif": "...", '
                   '"characters": [{"name": "...", "look": "...", "voice": "...", "never": "..."}], '
@@ -85,6 +86,9 @@ def plan_instruction(req: PlanRequest) -> str:
     total = req.scene_count * req.clip_seconds
     # what a clip prompt has room for after the cast, objects, lines and rules: Google Flow takes longer prompts
     action_chars = 600 if req.provider == "flow" else 350
+    words = (f"at most {FLOW_WORDS['one']} words when one person speaks and {FLOW_WORDS['more']} when two or more do"
+             if req.clip_seconds == FLOW_SECONDS
+             else f"at most about {round(MAX_SPOKEN_WORDS * req.clip_seconds / 10)} words")
     if req.cast:
         sheets = "\n".join(
             f"- {c['name']}: " + "; ".join(x for x in (c.get("appearance"), c.get("outfit")) if x)
@@ -163,11 +167,15 @@ def plan_instruction(req: PlanRequest) -> str:
         "holds, eats, drinks, throws, carries, breaks or puts down (a robot, a tea cup, a ball, a phone, a plate of "
         "food), with look = its fixed appearance in one line: shape, size, colours, material, and what it never has "
         "('small round flat black robot vacuum with one blue light on top, no arms, no face'). In each scene's props, "
-        "list every bible prop seen in that scene, by the same name, with state = where it is now and who holds it "
-        "in which hand, and anything that has happened to it ('in Abba's right hand', 'on the ground in front of the "
-        "charpai', 'half eaten, on the plate', 'thrown onto the roof'). A state carries on from scene to scene until "
-        "the action changes it: someone holding a cup at the end of one scene still holds it, in the same hand, at "
-        "the start of the next. Name each prop the same way in the action. Leave props empty when the story has none.\n"
+        "list each bible prop that is already in view when that scene starts, by the same name, with state = where "
+        "it is at the START of the scene, who holds it and in which hand, how many there are, and anything that has "
+        "already happened to it ('in Abba's right hand', 'one banana in Shani's pocket, none in anyone's hand', "
+        "'on the ground in front of the charpai', 'half eaten, on the plate'). Never put what happens during the scene "
+        "in a state (a peel that is thrown later is not in the basket yet): that goes only in the action, and a prop "
+        "taken out or brought in during the scene is listed in the next scene. A state carries on from scene to scene "
+        "until the action changes it: someone holding a cup at the end of one scene still holds it, in the same hand, "
+        "at the start of the next. Name each prop the same way in the action. Leave props empty when the story has "
+        "none.\n"
         "- When one scene has to hold several of the idea's moments, keep each one small and slow. At most one fast "
         "movement (a run, a chase, a jump) per scene, at its end, and never in the same scene as a long line. A "
         "fast move gets the whole scene if it's the point of the scene.\n"
@@ -190,9 +198,9 @@ def plan_instruction(req: PlanRequest) -> str:
         "the person facing one way and use movement 'orbit' instead of making them spin.\n"
         f"- framing is one of: {', '.join(FRAMINGS)}. angle is one of: {', '.join(ANGLES)}. movement is one of: "
         f"{', '.join(MOVEMENTS)}. lens is one of: {', '.join(LENSES)}. position is one of: {', '.join(POSITIONS)}.\n"
-        f"- Spoken lines must fit in {req.clip_seconds} seconds: at most about "
-        f"{round(MAX_SPOKEN_WORDS * req.clip_seconds / 10)} words per scene "
-        "in total. Lines the idea writes out are all kept word for word: when one scene's lines run over that, move "
+        f"- Spoken lines must fit in {req.clip_seconds} seconds, said clearly with natural pauses: {words} per "
+        "scene in total. In a language written without spaces (Chinese, Japanese, Thai) count every 2 characters as "
+        "a word. Lines the idea writes out are all kept word for word: when one scene's lines run over that, move "
         "the later ones to the next scene (a short silent moment can go with them) rather than cramming them in, so "
         "nobody has to rush. Leave dialogue empty when nobody speaks.\n"
         f"- Keep each scene's action under about {action_chars} characters (about {action_chars // 6} words), "

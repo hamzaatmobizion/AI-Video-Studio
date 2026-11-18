@@ -100,7 +100,7 @@ def by_hand_page(gen_id: int, request: Request, user=Depends(require_page_user))
     gen = hand["gen"]
     svc, settings = request.app.state.service, request.app.state.settings
     return render(request, "by_hand.html", g=gen, scene=hand["scene"], prompt=hand["prompt"], images=hand["images"],
-                  done=sum(1 for s in gen.scenes if s.clip_path), seconds=SCENE_SECONDS.get(gen.provider, 8),
+                  mode=hand["mode"], done=sum(1 for s in gen.scenes if s.clip_path), seconds=SCENE_SECONDS.get(gen.provider, 8),
                   bot_ready=settings.bot_configured,bot_online=svc.bot_online())
 
 

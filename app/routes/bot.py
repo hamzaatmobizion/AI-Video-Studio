@@ -23,7 +23,7 @@ def next_scene(request: Request, user=Depends(require_bot)):
         return Response(status_code=204)
     return {"gen_id": gen_id, "position": hand["scene"].position, "scenes": len(hand["gen"].scenes),
             "prompt": hand["prompt"],
-            "aspect": hand["gen"].aspect, "start_at": hand["start_at"],
+            "aspect": hand["gen"].aspect, "start_at": hand["start_at"], "mode": hand["mode"],
             "images": [{"index": i + 1, "label": im["label"]} for i, im in enumerate(hand["images"])]}
 
 

@@ -1107,3 +1107,30 @@ def test_next_scene_starts_from_the_very_last_frame(tmp_path):
                           "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
     r, g, b = rgb[:3]
     assert b > 150 and r < 100, (r, g, b)  # the blue final frame
+
+
+def test_by_hand_scene_with_the_same_people_starts_from_the_last_frame(app, authed, drive_connected, net, tmp_path):
+    from app.models import Generation
+    ali = add_character(authed, image=True).json()["id"]
+    sara = add_character(authed, name="Sara", image=True).json()["id"]
+    gid = authed.post("/generations", data={"scenes": ["Ali runs", "Ali waves", "Sara arrives"], "aspect": "9:16",
+                                            "provider": "flow", "by_hand": "1"}).json()["id"]
+    with app.state.db.session() as s:
+        g = s.get(Generation, gid)
+        for sc, cast in zip(g.scenes, ([ali], [ali], [ali, sara])):
+            sc.characters = [{"id": c, "name": "Ali" if c == ali else "Sara", "position": ""} for c in cast]
+            sc.prompt = f"{sc.prompt}. Ali, exactly as in reference image 1 (same face, hair, outfit and style)."
+    page = authed.get(f"/generations/{gid}/by-hand").text  # scene 1: the pictures, as Ingredients
+    assert "Ingredients</strong>, in this order" in page and "put this picture in <strong>Start" not in page
+    clip = clip_bytes(tmp_path, "c1")
+    authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", clip, "video/mp4")})
+    svc = app.state.service
+    hand = svc.hand_scene(gid, gen(app, gid).user_id)  # scene 2, the same people: Frames, from scene 1's last frame
+    assert hand["mode"] == "frames" and hand["start_at"] == 0 and len(hand["images"]) == 1
+    assert "reference image" not in hand["prompt"] and "exactly as in the start frame" in hand["prompt"]
+    assert hand["prompt"].endswith(script.FRAME_START)
+    assert "put this picture in <strong>Start" in authed.get(f"/generations/{gid}/by-hand").text
+    authed.post(f"/generations/{gid}/scenes/2/clip", files={"clip": ("x.mp4", clip, "video/mp4")})
+    hand = svc.hand_scene(gid, gen(app, gid).user_id)  # scene 3, Sara is new: her picture, as Ingredients
+    assert hand["mode"] == "ingredients" and len(hand["images"]) == 3
+    assert "reference image" in hand["prompt"] and script.FRAME_START not in hand["prompt"]

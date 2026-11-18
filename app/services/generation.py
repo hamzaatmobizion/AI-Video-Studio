@@ -32,7 +32,7 @@ from app.genres import plan_rules, valid_genre
 from app.timeline import bible_from_prompt, script_from_timeline
 from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
-from app.script import (CONTINUE_FROM, MAX_PROMPT, MAX_SCENE_IMAGES, STARTS_FROM, cast_sheet, is_structured,
+from app.script import (CONTINUE_FROM, FRAME_START, MAX_PROMPT, MAX_SCENE_IMAGES, STARTS_FROM, cast_sheet, is_structured,
                         merged_sheet,
                         still_prompt, compile_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
                         scene_images, scene_warnings, clean_text, style_from_prompt)
@@ -219,9 +219,10 @@ class GenerationService:
             log.info("generation %s scene %d submitted as %s", gen_id, scene.position, job_id)
 
     def _clip_inputs(self, gen: Generation, scene: Scene, library: list[dict],
-                     frame: Path | None) -> tuple[str, list[Path], int | None]:
+                     frame: Path | None, frames: bool = False) -> tuple[str, list[Path], int | None]:
         """One scene's clip prompt, the pictures that go with it, and which of them is its start frame (if any).
-        `frame`: the previous clip's last frame."""
+        `frame`: the previous clip's last frame. `frames`: the prompt for Flow's Frames mode, where the previous clip's
+        last frame is the Start frame and there are no reference pictures (its people are as in that frame)."""
         paths, pictured = gen.ref_images, 0
         if scene.characters:  # the pictures of who is in this shot first, then the video's own uploads
             pictured = len(_pictured_names(scene, library))
@@ -235,12 +236,16 @@ class GenerationService:
         if lead and pictured < MAX_SCENE_IMAGES:
             paths = [*paths[:pictured], str(lead), *paths[pictured:]][:MAX_SCENE_IMAGES]
             extra.append((STARTS_FROM if start or gen.lock_frames else CONTINUE_FROM).format(n=pictured + 1))
+        if frames:
+            extra.append(FRAME_START)
         if scene.redos and scene.check_note.startswith("Remade once: "):  # say what went wrong last time
             extra.append(f"Fix from the last try: {_fit_text(scene.check_note[13:].rstrip('.'), 300)}.")
         room = MAX_PROMPT - len("\n".join(extra)) - 1
         if extra and len(prompt) > room:
             prompt = compile_prompt(scene.script(), library, gen.style, gen.language, gen.aspect, fit=True,
                                     room=room, **_prompt_options(gen))
+        if frames:  # its people are as in the start frame
+            prompt = re.sub(r"\breference image \d+\b", "the start frame", prompt)
         prompt = "\n".join([prompt, *extra])[:MAX_PROMPT]
         images = [Path(p) for p in paths if Path(p).exists()]
         start_at = images.index(Path(lead)) if lead and Path(lead) in images else None
@@ -255,17 +260,33 @@ class GenerationService:
             if not gen.by_hand:
                 raise UserError("This video's clips are made automatically.", 404)
             scene = _next_scene(gen) if gen.status == GenStatus.HAND else None
-            out = {"gen": gen, "scene": scene, "prompt": "", "images": [], "start_at": None}
+            out = {"gen": gen, "scene": scene, "prompt": "", "images": [], "start_at": None, "mode": "ingredients"}
             if scene is not None:
                 library = self._library(s, user_id)
-                prompt, images, start_at = self._clip_inputs(gen, scene, library,
-                                                             self._previous_frame(gen, scene))
+                frame = self._previous_frame(gen, scene)
+                if self._frames_scene(gen, scene, frame):
+                    prompt, _, _ = self._clip_inputs(gen, scene, library, None, frames=True)
+                    out.update(prompt=prompt, start_at=0, mode="frames",
+                               images=[{"path": frame, "label": "Previous scene's last frame"}])
+                    return out
+                prompt, images, start_at = self._clip_inputs(gen, scene, library, frame)
                 names = _pictured_names(scene, library) if scene.characters else []
                 out.update(prompt=prompt, start_at=start_at,
                            images=[{"path": p, "label": "Previous scene's last frame" if i == start_at
                                     else names[i] if i < len(names) else "Your reference image"}
                                    for i, p in enumerate(images)])
             return out
+
+    @staticmethod
+    def _frames_scene(gen: Generation, scene: Scene, frame: Path | None) -> bool:
+        """Whether a by-hand scene is made in Flow's Frames mode, starting exactly from the previous clip's last frame
+        (no jump at the join): when there is that frame and everyone pictured in this scene was in the previous one
+        (so they're in the frame). A scene with someone new is made with Ingredients, their picture among them."""
+        if not (gen.by_hand and frame and scene.position > 1 and not scene.still_path):
+            return False
+        before = next((sc for sc in gen.scenes if sc.position == scene.position - 1), None)
+        ids = {p.get("id") for p in scene.characters or [] if p.get("id") is not None}
+        return before is not None and ids <= {p.get("id") for p in before.characters or []}
 
     def next_hand(self, user_id: int) -> int | None:
         """The by-hand video the user gave the hand bot first ("Create Video") that's still waiting for its clip."""

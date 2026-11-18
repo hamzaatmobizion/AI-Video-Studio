@@ -54,6 +54,10 @@ TURN_NOTE = ("As anyone turns, their head, shoulders, hips and feet rotate toget
 CONTINUE_FROM = ("Reference image {n} is the last frame of the previous shot: carry straight on from it, keeping the "
                  "place, light and every person's clothes and colours exactly the same.")
 
+# A by-hand Flow scene made in Frames mode: the previous clip's last frame is its Start frame (no reference pictures)
+FRAME_START = ("The clip starts exactly from the start frame, the last frame of the previous shot, and carries straight "
+               "on from it, keeping the place, light and every person's face, clothes and colours exactly the same.")
+
 # With "Lock characters", each scene is first drawn as a still from the pictures; the clip then starts from it.
 STARTS_FROM = ("Reference image {n} is this shot's first frame: start the clip exactly from it, keeping the same "
                "people, clothes, place and light.")

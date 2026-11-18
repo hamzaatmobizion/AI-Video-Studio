@@ -52,7 +52,17 @@
   {% endif %}
   <ol class="hand-steps">
     <li>Open <a href="https://flow.google.com" target="_blank" rel="noopener">Google Flow</a> in your normal browser{% if scene.position > 1 %}, in the project you used for scene 1{% endif %}. Choose <strong>Video</strong>, <strong>{{ g.aspect }}</strong>, <strong>{{ seconds }} s</strong>.</li>
-    {% if images %}
+    {% if images and mode == "frames" %}
+    <li>Choose <strong>Frames</strong> (not Ingredients) and put this picture in <strong>Start</strong>: the clip starts exactly from the last frame of scene {{ scene.position - 1 }}, so the scenes join without a jump. Everyone in this scene is already in it.
+      <ul class="hand-images">
+        <li>
+          <a href="/generations/{{ g.id }}/by-hand/images/1" target="_blank" rel="noopener"><img src="/generations/{{ g.id }}/by-hand/images/1" alt="Start frame: the previous scene's last frame"></a>
+          <span><strong>Start</strong> · Previous scene's last frame</span>
+          <a class="small" href="/generations/{{ g.id }}/by-hand/images/1?download=1">Download</a>
+        </li>
+      </ul>
+    </li>
+    {% elif images %}
     <li>Add these pictures as <strong>Ingredients</strong>, in this order: the prompt calls them “reference image 1”, “2”…
       <ul class="hand-images">
         {% for im in images %}

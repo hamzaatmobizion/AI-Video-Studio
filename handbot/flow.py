@@ -31,6 +31,10 @@ BUTTONS = {
     "settings": ("required", "\"Video · 720p · 8s\" on the settings chip left of the → (not its aspect icon)", BOTTOM),
     "opt_video": ("required", "Video (with its camera icon) in the settings panel", EITHER),
     "opt_ingredients": ("required", "Ingredients in the settings panel (used when the clip has pictures)", EITHER),
+    "opt_frames": ("required", "Frames with its [ ] icon in the settings panel (a scene that starts from the last "
+                               "frame)", EITHER),
+    # anywhere on the screen: with a long prompt pasted, the prompt bar grows up and Start goes with it
+    "frame_start": ("required", "the word \"Start\" in the Start box of the prompt bar, in Frames mode", {}),
     "aspect_9_16": ("required", "9:16 with its tall icon in the settings panel", EITHER),
     "aspect_16_9": ("required", "16:9 with its wide icon in the settings panel", EITHER),
     "model_option": ("required", "\"Veo 3.1 - Lite\" (the clip model's name, without the ▾)", {}),
@@ -77,6 +81,11 @@ PICKED_SHADE = 46
 FIRST_ITEM = (237, 15)
 # The picker's list of uploads (names start here), from the same spot: x and y ranges (points)
 LIST_BOX = ((100, 340), (-10, 430))
+# A picker: the button its list is found from, the list's x and y ranges from it, and the first item's spot from it.
+# The + opens one with "All" top left; Start (Frames mode) opens "Select a frame image", which has no "All": its list
+# is found from its "Upload media" (the rows are 170 points right of it and 140–430 above it)
+PICKER = ("picker_all", LIST_BOX, FIRST_ITEM)
+FRAME_PICKER = ("upload_media", ((120, 380), (-455, -20)), (173, -425))
 ADD_TRIES = 4  # Add to prompt clicks before the bot gives up on a picture whose upload Flow is still processing
 
 
@@ -275,13 +284,13 @@ class FlowHand:
             return self.sc.find("new_project", 40) is not None
         return False
 
-    def choose_settings(self, aspect: str, pictures: bool) -> None:
-        """Open the settings chip and look: Video, Ingredients (with pictures), the aspect, the model and x1. An option
-        that isn't picked is clicked; one that already is, is mostly left alone (now and then clicked anyway, as a
-        person checking would). Then the panel is closed (Esc or the chip again)."""
+    def choose_settings(self, aspect: str, pictures: bool, frames: bool = False) -> None:
+        """Open the settings chip and look: Video, Ingredients (with pictures) or Frames (`frames`), the aspect, the
+        model and x1. An option that isn't picked is clicked; one that already is, is mostly left alone (now and then
+        clicked anyway, as a person checking would). Then the panel is closed (Esc or the chip again)."""
         self._click("settings")
         time.sleep(random.uniform(0.5, 1.2))  # looking the panel over
-        names = ["opt_video", *(["opt_ingredients"] if pictures else []),
+        names = ["opt_video", *(["opt_frames"] if frames else ["opt_ingredients"] if pictures else []),
                  "aspect_9_16" if aspect == "9:16" else "aspect_16_9"]
         for name in names:
             self._pick(name)
@@ -317,44 +326,55 @@ class FlowHand:
         time.sleep(random.uniform(0.6, 1.3))
 
     def add_images(self, images: list[Path], typed: bool = False) -> None:
-        """Each picture into the prompt bar, in order: + opens Flow's picker. A picture already uploaded to this project
-        (a character in an earlier scene) is found by its name in the picker's list and picked; a new one (such as the
-        previous clip's last frame), or one that can't be picked, is uploaded: Upload media, then the Mac file dialog
-        (the path pasted after ⌘⇧G), and the upload is picked in the list. Then Add to prompt. `typed`: the prompt is
-        already pasted."""
+        """Each picture into the prompt bar as an Ingredient, in order, with the + and its picker (`_put_picture`).
+        `typed`: the prompt is already pasted."""
         for path in images:
-            self._click("add_image")
-            picked = self._pick_uploaded(path) if path.name in self.uploaded else None
-            if picked == "added":  # clicking the row added it at once
-                continue
-            if picked == "picked":
-                self._add_to_prompt(path)
-                continue
-            if self.sc.find("picker_all", 3) is None:  # the picker closed meanwhile: open it again
-                self._click("add_image")
-            self._open_file_dialog(path)
-            self.sc.keys("command", "shift", "g")
-            time.sleep(0.6)
-            # pasted, not typed: key by key, the temp folder's "__" opened the Emoji viewer, which took the rest
-            self.sc.paste(str(path.resolve()))
-            self.sc.press("enter")
-            time.sleep(random.uniform(0.8, 1.4))
-            self.sc.press("enter")  # Open
-            time.sleep(random.uniform(4, 6))  # the upload; it's put first in the list
-            listed = self.sc.find("picker_all", 10)
-            if listed is None:
-                raise self._stop(f"The picker didn't come back after uploading {path.name}.", "picker")
-            row = self._listed(path, listed)
-            self.sc.click_at(*(row.point() if row else (listed.x + FIRST_ITEM[0] + random.randint(-40, 40),
-                                                       listed.y + FIRST_ITEM[1] + random.randint(-6, 6))))
-            log.info("picked the upload %s%s", path.name, "" if row else " (first in the list)")
-            time.sleep(random.uniform(1, 2))
-            self._add_to_prompt(path)
-            self.uploaded.add(path.name)
+            self._put_picture(path, PICKER, "add_image")
         # the prompt bar shows its ✕ once something is in it: with nothing typed yet, only the pictures can show it
         if images and not typed and self.sc.find("prompt_clear", 8, **BUTTONS["prompt_clear"][2]) is None:
             raise self._stop("The picture didn't arrive in the prompt bar, so the clip would be made without the "
                              "character. Check Flow's picker in Chrome.", "pictures")
+
+    def set_start_frame(self, path: Path) -> None:
+        """Frames mode: the previous clip's last frame into Start (its own picker, "Select a frame image")."""
+        self._put_picture(path, FRAME_PICKER, "frame_start")
+        if not self.sc.wait_gone("frame_start", 8):  # the Start box shows the picture instead of its word
+            self.sc.save(self.s.logs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-start-frame.jpg")
+            log.warning("the Start box still shows \"Start\" after adding %s", path.name)
+
+    def _put_picture(self, path: Path, picker: tuple, opener: str) -> None:
+        """One picture in through a picker that `opener` opens (+, or Start in Frames mode). One uploaded to this
+        project before (a character in an earlier scene) is found by its name in the picker's list and picked; a new
+        one (such as the previous clip's last frame), or one that can't be picked, is uploaded: Upload media, then the
+        Mac file dialog (the path pasted after ⌘⇧G), and the upload is picked in the list. Then Add to prompt."""
+        self._click(opener)
+        picked = self._pick_uploaded(path, picker) if path.name in self.uploaded else None
+        if picked == "added":  # clicking the row added it at once
+            return
+        if picked == "picked":
+            self._add_to_prompt(path)
+            return
+        if self.sc.find("upload_media", 3) is None:  # the picker closed meanwhile: open it again
+            self._click(opener)
+        self._open_file_dialog(path)
+        self.sc.keys("command", "shift", "g")
+        time.sleep(0.6)
+        # pasted, not typed: key by key, the temp folder's "__" opened the Emoji viewer, which took the rest
+        self.sc.paste(str(path.resolve()))
+        self.sc.press("enter")
+        time.sleep(random.uniform(0.8, 1.4))
+        self.sc.press("enter")  # Open
+        time.sleep(random.uniform(4, 6))  # the upload; it's put first in the list
+        anchor = self.sc.find(picker[0], 10)
+        if anchor is None:
+            raise self._stop(f"The picker didn't come back after uploading {path.name}.", "picker")
+        row = self._listed(path, anchor, picker[1])
+        first = (anchor.x + picker[2][0] + random.randint(-40, 40), anchor.y + picker[2][1] + random.randint(-6, 6))
+        self.sc.click_at(*(row.point() if row else first))
+        log.info("picked the upload %s%s", path.name, "" if row else " (first in the list)")
+        time.sleep(random.uniform(1, 2))
+        self._add_to_prompt(path)
+        self.uploaded.add(path.name)
 
     def _open_file_dialog(self, path: Path) -> None:
         """Click Upload media and wait for the Mac file dialog (its Cancel and Open buttons read off the screen), so
@@ -371,15 +391,15 @@ class FlowHand:
             log.info("the file dialog didn't open for %s (try %d)", path.name, attempt + 1)
         raise self._stop(f"The Mac file dialog didn't open after clicking Upload media for {path.name}.", "file_dialog")
 
-    def _pick_uploaded(self, path: Path) -> str | None:
+    def _pick_uploaded(self, path: Path, picker: tuple) -> str | None:
         """In the open picker, click the row of a picture uploaded to this project before (the list shows every upload
         by name). "picked": Add to prompt shows for it. "added": the picker closed at once, with the picture in the
         prompt bar (the picker opens with its top row selected, and clicking a selected row adds it). None if it isn't
         listed or nothing happened: then it's uploaded."""
-        listed = self.sc.find("picker_all", 10)
-        if listed is None:
-            raise self._stop("Flow's picker didn't open after clicking +.", "picker")
-        row = self._listed(path, listed)
+        anchor = self.sc.find(picker[0], 10)
+        if anchor is None:
+            raise self._stop("Flow's picker didn't open.", "picker")
+        row = self._listed(path, anchor, picker[1])
         if row is None:
             log.info("%s isn't in the picker's list; uploading it", path.name)
             return None
@@ -391,7 +411,7 @@ class FlowHand:
                 log.info("picked %s, already in the project (not uploaded again)", path.name)
                 time.sleep(random.uniform(0.5, 1.2))
                 return "picked"
-            if self.sc.locate("picker_all") is None:
+            if self.sc.locate("upload_media") is None:
                 log.info("clicking %s added it to the prompt at once (not uploaded again)", path.name)
                 time.sleep(random.uniform(0.5, 1.2))
                 return "added"
@@ -399,15 +419,14 @@ class FlowHand:
         log.info("picking %s in the list did nothing; uploading it", path.name)
         return None
 
-    def _listed(self, path: Path, listed: Match) -> Text | None:
-        """The picture's row in the picker's list (the column right of All), found by its name's 6 content digits read
+    def _listed(self, path: Path, anchor: Match, box: tuple) -> Text | None:
+        """The picture's row in the picker's list (`box` from the picker's `anchor` button), found by its name's 6 content digits read
         off the screen. Letters that the text recognition mixes up with digits are read as those digits."""
         def plain(s: str) -> str:
             return s.lower().translate(str.maketrans("oil", "011"))
 
         key = plain(path.name.split("-")[0])
-        x0, x1, y0, y1 = (listed.x + LIST_BOX[0][0], listed.x + LIST_BOX[0][1],
-                          listed.y + LIST_BOX[1][0], listed.y + LIST_BOX[1][1])
+        x0, x1, y0, y1 = (anchor.x + box[0][0], anchor.x + box[0][1], anchor.y + box[1][0], anchor.y + box[1][1])
         for t in self.sc.texts():
             if key in plain(t.text) and x0 <= t.x <= x1 and y0 <= t.y <= y1:
                 return t
@@ -419,7 +438,7 @@ class FlowHand:
         for attempt in range(1, ADD_TRIES + 1):
             end = time.monotonic() + (20 if attempt == 1 else 2)  # it shows once the upload is picked
             while self.sc.locate("add_to_prompt") is None:
-                if self.sc.locate("picker_all") is None:  # the picker closed: the picture went in (or a slow close)
+                if self.sc.locate("upload_media") is None:  # the picker closed: the picture went in (or a slow close)
                     log.info("the picker closed by itself with %s", path.name)
                     return
                 if time.monotonic() >= end:
@@ -568,16 +587,23 @@ class FlowHand:
         log.info("clicked the failed clip's ↻ to make it again")
         return True
 
-    def _fill(self, prompt: str, aspect: str, images: list[Path], settings: bool) -> None:
-        """Set the settings (Video, aspect…), add the pictures and paste the prompt, in a random order each time, as a
-        person does it differently from one clip to the next. Generate is clicked after."""
+    def _fill(self, prompt: str, aspect: str, images: list[Path], settings: bool, frames: bool = False) -> None:
+        """Set the settings (Video, aspect…), add the pictures (or the Start frame, `frames`) and paste the prompt, in
+        a random order each time, as a person does it differently from one clip to the next. The settings always come
+        before the pictures: switching between Ingredients and Frames changes what the prompt bar takes. Generate is
+        clicked after."""
         steps = ["prompt", *(["images"] if images else []), *(["settings"] if settings else [])]
         random.shuffle(steps)
-        log.info("this clip's order: %s", ", ".join(steps))
+        if "settings" in steps and "images" in steps and steps.index("settings") > steps.index("images"):
+            steps.remove("settings")
+            steps.insert(steps.index("images"), "settings")
+        log.info("this clip's order: %s%s", ", ".join(steps), " (from the start frame)" if frames else "")
         typed = False
         for step in steps:
             if step == "settings":
-                self.choose_settings(aspect, bool(images))
+                self.choose_settings(aspect, bool(images), frames)
+            elif step == "images" and frames:
+                self.set_start_frame(images[0])
             elif step == "images":
                 self.add_images(images, typed)
             else:
@@ -585,9 +611,11 @@ class FlowHand:
                 typed = True
             time.sleep(random.uniform(0.5, 1.5))
 
-    def make_clip(self, gen_id: int, prompt: str, aspect: str, images: list[Path], dest: Path) -> Path:
+    def make_clip(self, gen_id: int, prompt: str, aspect: str, images: list[Path], dest: Path,
+                  frames: bool = False) -> Path:
         """One scene's clip. A video's scenes all go in one Flow project: only its first scene opens Flow and starts
-        the project; the next ones are made in the same project, in the same tab."""
+        the project; the next ones are made in the same project, in the same tab. `frames`: made in Frames mode, from
+        the Start frame `images[0]` (the previous clip's last frame), else with the pictures as Ingredients."""
         chrome_front()
         try:
             if self.project_gen == gen_id and not self._in_project():
@@ -610,7 +638,7 @@ class FlowHand:
                 else:
                     if attempt:  # the same prompt and pictures again, from an empty prompt bar
                         self._maybe("prompt_clear", 2)
-                    self._fill(prompt, aspect, images, settings=not attempt)
+                    self._fill(prompt, aspect, images, settings=not attempt, frames=frames)
                     failed_before = self._failures()
                     self.generate()
                 try:

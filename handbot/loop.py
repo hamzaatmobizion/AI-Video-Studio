@@ -71,13 +71,14 @@ def run(settings: BotSettings) -> None:
 
 def _one(settings: BotSettings, app: AppClient, pace: Pace, hand: FlowHand, job: dict) -> None:
     gen, pos = job["gen_id"], job["position"]
-    log.info("video %s scene %s: %d picture(s), %s", gen, pos, len(job["images"]), job["aspect"])
+    log.info("video %s scene %s: %d picture(s), %s, %s", gen, pos, len(job["images"]), job["aspect"],
+             "from the last frame (Frames)" if job.get("mode") == "frames" else "Ingredients")
     with tempfile.TemporaryDirectory(prefix="handbot-") as tmp:
         images = app.images(job, Path(tmp))
         pace.started()
         try:
             clip = hand.make_clip(gen, job["prompt"], job["aspect"], images,
-                                   settings.clips_dir / f"{gen}-scene-{pos}.mp4")
+                                   settings.clips_dir / f"{gen}-scene-{pos}.mp4", job.get("mode") == "frames")
         except Stop as e:
             log.error("stopped: %s%s", e.message, f"  (screenshot: {e.shot})" if e.shot else "")
             _tell_app(settings, app, hand, job, e.message)

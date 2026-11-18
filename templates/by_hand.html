@@ -23,7 +23,7 @@
       <button type="button" class="secondary" data-post="/generations/{{ g.id }}/nobot" data-reload>Make it myself</button>
     </div>
   {% elif g.bot_at %}
-    <p class="hand-wait" data-reload><span class="spinner"></span> The bot is making {% if total > 1 %}scene {{ scene.position }} of {{ total }}{% else %}this clip{% endif %} in Google Flow…</p>
+    <p class="hand-wait" data-refresh><span class="spinner"></span> The bot is making {% if total > 1 %}scene {{ scene.position }} of {{ total }}{% else %}this clip{% endif %} in Google Flow…</p>
     {% if bot_online %}
       <p class="muted small">It downloads each clip and uploads it here{% if total > 1 %}, then makes the next scene in the same Flow project, starting from the last frame of the clip before{% endif %}; once all the clips are in, the video is joined and saved to Google Drive. This page updates by itself.</p>
     {% else %}
@@ -88,7 +88,7 @@
 {% else %}
 <section class="panel">
   {% if g.status in ("GENERATING", "PLANNING", "SAVING") %}
-    <p class="hand-wait" data-reload><span class="spinner"></span>
+    <p class="hand-wait" data-refresh><span class="spinner"></span>
       {%- if g.status == "PLANNING" %} Gemini is writing the script…
       {%- elif (g.job_kind or "").startswith("check:") %} Gemini is checking scene {{ g.job_kind[6:] }}…
       {%- elif g.status == "SAVING" %} Saving to Google Drive…

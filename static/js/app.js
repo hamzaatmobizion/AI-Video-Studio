@@ -306,7 +306,9 @@
     try { await post(botCreate.dataset.url); location.reload(); }
     catch (ex) { showError(err, ex.message); botCreate.disabled = false; botCreate.textContent = "Create Video"; }
   });
-  if (document.querySelector("[data-reload]")) setTimeout(() => location.reload(), 5000);
+  // A page waiting on the bot or Gemini (data-refresh) checks back every 5 seconds. Not data-reload: that marks a
+  // button that reloads once it's clicked, and those are on pages where a reload would wipe what you're typing.
+  if (document.querySelector("[data-refresh]")) setTimeout(() => location.reload(), 5000);
 
   // Times are stored in UTC; show them in the viewer's own timezone (the page keeps UTC without JavaScript)
   function localTimes(root) {

@@ -53,6 +53,10 @@
       <input type="text" id="bible-setting" maxlength="400"{% if not editable %} disabled{% endif %}>
     </label>
     <div id="bible-characters"></div>
+    <h3 class="sub">Objects <span class="muted small">· drawn the same way in every clip</span></h3>
+    <div id="bible-props"></div>
+    <datalist id="prop-options"></datalist>
+    <p class="muted small">Each object's look goes into every clip it's in, with where it is in that scene and who holds it (set under each scene).</p>
     <p class="muted small">The palette goes into every clip prompt. Each invented character's look and “never” list are added to every scene they're in. A picked character always looks exactly as in their picture: their age, look and outfit here are used only for one without a picture. A voice here replaces their saved voice; an empty field keeps the saved one.</p>
   </fieldset>
   {% if unused and g.scenes | selectattr('action') | list %}

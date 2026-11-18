@@ -32,10 +32,10 @@ from app.genres import plan_rules, valid_genre
 from app.timeline import bible_from_prompt, script_from_timeline
 from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
-from app.script import (CONTINUE_FROM, FRAME_START, MAX_PROMPT, MAX_SCENE_IMAGES, STARTS_FROM, cast_sheet, is_structured,
+from app.script import (CONTINUE_FROM, FRAME_START, MAX_SCENE_IMAGES, STARTS_FROM, cast_sheet, is_structured,
                         merged_sheet,
                         still_prompt, compile_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
-                        scene_images, scene_warnings, clean_text, style_from_prompt)
+                        scene_images, scene_warnings, clean_text, style_from_prompt, prompt_limit)
 from app.video_join import JoinError, clip_seconds, frame_at, join_clips, last_frame
 
 log = logging.getLogger("app.generation")
@@ -120,7 +120,7 @@ class GenerationService:
                 style = style or style_from_prompt(prompt)  # a style written in the prompt reaches every scene
             else:
                 prompt = scenes[0] if len(scenes) == 1 else "\n\n".join(f"Scene {i}: {p}" for i, p in enumerate(scenes, 1))
-                opts = {"genre": genre, "music": music}
+                opts = {"genre": genre, "music": music, "room": prompt_limit(provider)}
                 rows = [self._scene_row(i, {"action": text, "characters": [{"id": c["id"]} for c in cast]}, cast,
                                         style, language, aspect, compile_now=not review, **opts)
                         if cast or style or review
@@ -240,13 +240,14 @@ class GenerationService:
             extra.append(FRAME_START)
         if scene.redos and scene.check_note.startswith("Remade once: "):  # say what went wrong last time
             extra.append(f"Fix from the last try: {_fit_text(scene.check_note[13:].rstrip('.'), 300)}.")
-        room = MAX_PROMPT - len("\n".join(extra)) - 1
+        limit = prompt_limit(gen.provider)
+        room = limit - len("\n".join(extra)) - 1
         if extra and len(prompt) > room:
             prompt = compile_prompt(scene.script(), library, gen.style, gen.language, gen.aspect, fit=True,
-                                    room=room, **_prompt_options(gen))
+                                    **{**_prompt_options(gen), "room": room})
         if frames:  # its people are as in the start frame
             prompt = re.sub(r"\breference image \d+\b", "the start frame", prompt)
-        prompt = "\n".join([prompt, *extra])[:MAX_PROMPT]
+        prompt = "\n".join([prompt, *extra])[:limit]
         images = [Path(p) for p in paths if Path(p).exists()]
         start_at = images.index(Path(lead)) if lead and Path(lead) in images else None
         return prompt, images, start_at
@@ -913,9 +914,9 @@ class GenerationService:
                 for i, (sc, prompt) in enumerate(zip(script, prompts), 1):
                     if not (sc["action"] or sc["dialogue"]):
                         raise UserError(f"Scene {i} is empty: describe what happens in it.")
-                    if len(prompt) > MAX_PROMPT:
+                    if len(prompt) > opts["room"]:
                         raise UserError(f"Scene {i}'s clip prompt is {len(prompt):,} characters; "
-                                        f"shorten it to under {MAX_PROMPT:,}.")
+                                        f"shorten it to under {opts['room']:,}.")
             gen.style, gen.language = style, language
             used = [p["id"] for sc in script for p in sc["characters"] + sc["dialogue"] if p["id"]]
             gen.cast_ids = list(dict.fromkeys([*(gen.cast_ids or []), *used]))
@@ -932,7 +933,7 @@ class GenerationService:
                     if failed else prompt if approve else ""
             if approve and not failed:
                 gen.status, gen.error = GenStatus.GENERATING, None
-            out = [{"prompt": p, "length": len(p), "warnings": scene_warnings(sc, p, library, scene_seconds(gen))}
+            out = [{"prompt": p, "length": len(p), "warnings": scene_warnings(sc, p, library, scene_seconds(gen), opts["room"])}
                    for sc, p in zip(script, prompts)]
         if approve and failed:
             log.info("generation %s script edited after failing: retrying", gen_id)
@@ -943,9 +944,10 @@ class GenerationService:
         return out
 
     def _scene_row(self, position: int, raw: dict, cast: list[dict], style: str, language: str, aspect: str,
-                   compile_now: bool, genre: str = "", music: bool = True) -> Scene:
+                   compile_now: bool, genre: str = "", music: bool = True, room: int = 0) -> Scene:
         sc = normalize_scene(raw, cast)
-        prompt = compile_prompt(sc, cast, style, language, aspect, fit=True, genre=genre, music=music) \
+        prompt = compile_prompt(sc, cast, style, language, aspect, fit=True, genre=genre, music=music,
+                                room=room or prompt_limit()) \
             if compile_now else ""
         return Scene(position=position, prompt=prompt, **sc)
 
@@ -983,11 +985,13 @@ class GenerationService:
 
 
 def _prompt_options(gen: Generation, scene_count: int | None = None) -> dict:
-    """The video-wide inputs of every clip prompt: its bible and type, and whether a clip may carry music (only a
-    one-clip video: each clip would make up its own tune, which jumps at every cut)."""
+    """The video-wide inputs of every clip prompt: its bible and type, whether a clip may carry music (only a
+    one-clip video: each clip would make up its own tune, which jumps at every cut), and how long it may be where
+    its clips are made."""
     count = len(gen.scenes) if scene_count is None else scene_count
     return {"bible": gen.bible or {}, "genre": gen.genre or "",
-            "music": (count == 1 or gen.genre == "music") and not gen.music_path}  # our track replaces the clips
+            "music": (count == 1 or gen.genre == "music") and not gen.music_path,  # our track replaces the clips
+            "room": prompt_limit(gen.provider)}
 
 
 def _first_version(clip: Path) -> Path:

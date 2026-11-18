@@ -602,7 +602,7 @@
       n.append(...kids);
       return n;
     };
-    const blank = () => ({ setting: "", time_of_day: "", action: "", sound: "", shot: {}, characters: [], dialogue: [] });
+    const blank = () => ({ setting: "", time_of_day: "", action: "", sound: "", shot: {}, characters: [], dialogue: [], props: [] });
     let scenes = data.scenes.length ? data.scenes : [blank()];
 
     // A person is a library character (by id) or a name Gemini made up; the select's value encodes which.
@@ -625,6 +625,21 @@
         oninput: (e) => { onInput(e.target.value); changed(); } });
       input.value = value || "";
       return el("label", {}, label, input);
+    }
+    // An object row (name, then its look or state) with a Remove link, for the bible and each scene
+    function propRow(list, j, second, redraw) {
+      const p = list[j];
+      const input = (k, attrs) => {
+        const box = el("input", { type: "text", disabled: !editable, ...attrs,
+          oninput: (e) => { p[k] = e.target.value; changed(); if (k === "name" && redraw === drawBibleProps) syncPropOptions(); } });
+        box.value = p[k] || "";
+        return box;
+      };
+      return el("div", { class: "line" },
+        input("name", { maxlength: 60, list: "prop-options", placeholder: "Object, e.g. Tea cup", "aria-label": "Object" }),
+        input(second.key, { maxlength: 200, placeholder: second.placeholder, "aria-label": second.label }),
+        editable ? el("button", { type: "button", class: "link", text: "Remove",
+          onclick: () => { list.splice(j, 1); redraw(); changed(); } }) : "");
     }
     function words(sc) { return sc.dialogue.reduce((n, d) => n + (d.line.trim() ? d.line.trim().split(/\s+/).length : 0), 0); }
 
@@ -664,7 +679,13 @@
           editable ? el("button", { type: "button", class: "link", text: "Remove",
             onclick: () => { sc.dialogue.splice(j, 1); drawLines(); updateCount(); changed(); } }) : "")));
       }
-      drawCast(); drawLines(); updateCount();
+      sc.props = sc.props || [];
+      const propRows = el("div", { class: "rows" });
+      function drawProps() {
+        propRows.replaceChildren(...sc.props.map((_, j) => propRow(sc.props, j,
+          { key: "state", label: "Where it is", placeholder: "Where it is, who holds it, e.g. in Abba's right hand" }, drawProps)));
+      }
+      drawCast(); drawLines(); drawProps(); updateCount();
       const firstPerson = () => sc.characters[0] || people[0] || { id: null, name: "Narrator" };
       const prompt = el("pre", { class: "prompt-text", text: data.prompts[i] || "" });
       const warns = el("div", { class: "warnings" });
@@ -686,6 +707,9 @@
         el("div", { class: "line" }, editable ? el("button", { type: "button", class: "link", text: "+ Add line",
           onclick: () => { sc.dialogue.push({ ...firstPerson(), line: "" }); drawLines(); changed(); } }) : "", " ", count),
         field("Sound", sc.sound, (v) => { sc.sound = v; }, { maxlength: 300, placeholder: "Wind, distant traffic, kite strings" }),
+        el("h3", { class: "sub", text: "Objects in this scene" }), propRows,
+        editable ? el("button", { type: "button", class: "link", text: "+ Add object",
+          onclick: () => { sc.props.push({ name: "", state: "" }); drawProps(); changed(); } }) : "",
         warns,
         // the finished clip, to watch it and remake just this scene (the others are kept)
         data.clips && data.clips[i] ? el("div", { class: "scene-clip" },
@@ -705,7 +729,7 @@
     draw();
 
     // Story bible: what every scene shares (app/script.py normalize_bible)
-    const bible = { title: "", style: "", palette: "", setting: "", motif: "", characters: [], cast: [], ...data.bible };
+    const bible = { title: "", style: "", palette: "", setting: "", motif: "", characters: [], cast: [], props: [], ...data.bible };
     const genreIn = document.getElementById("script-genre");
     genreIn.value = data.genre;
     for (const k of ["title", "palette", "setting", "motif"]) {
@@ -726,6 +750,21 @@
             field(`${c.name} (from your prompt): ${k}`, c[k], (v) => { c[k] = v; }, { maxlength: n, placeholder: "saved one" })))));
     }
     drawBibleCast();
+    // The story's objects: their fixed look; each scene says where they are (app/script.py props_line)
+    const bibleProps = document.getElementById("bible-props");
+    function syncPropOptions() {
+      document.getElementById("prop-options").replaceChildren(
+        ...bible.props.filter((p) => p.name.trim()).map((p) => new Option(p.name.trim())));
+    }
+    function drawBibleProps() {
+      bibleProps.replaceChildren(
+        ...bible.props.map((_, j) => propRow(bible.props, j,
+          { key: "look", label: "Look", placeholder: "Its look, e.g. small round flat black robot vacuum, one blue light" }, drawBibleProps)),
+        editable ? el("button", { type: "button", class: "link", text: "+ Add object",
+          onclick: () => { bible.props.push({ name: "", look: "" }); drawBibleProps(); changed(); } }) : "");
+      syncPropOptions();
+    }
+    drawBibleProps();
 
     // Autosave (and refresh the clip prompts) shortly after each change
     const status = document.getElementById("script-status"), err = document.getElementById("script-error");
@@ -757,7 +796,8 @@
       if (addShot) addShot.addEventListener("click", () => {
         if (scenes.length >= 12) return showError(err, "A video can have at most 12 scenes.");
         const prev = scenes[scenes.length - 1] || blank();
-        scenes.push({ ...blank(), setting: prev.setting, time_of_day: prev.time_of_day, characters: prev.characters.map((p) => ({ ...p })) });
+        scenes.push({ ...blank(), setting: prev.setting, time_of_day: prev.time_of_day, characters: prev.characters.map((p) => ({ ...p })),
+          props: (prev.props || []).map((p) => ({ ...p })) });  // objects stay where the last scene left them
         draw(); changed();
         editor.lastElementChild.scrollIntoView({ behavior: "smooth" });
       });

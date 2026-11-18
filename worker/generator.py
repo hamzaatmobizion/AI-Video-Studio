@@ -34,6 +34,7 @@ class PlanRequest:
     rules: str = ""
     attempt: int = 1
     model: str = ""  # the chat model to write it with ("" = whatever is selected in Gemini)
+    provider: str = ""  # "flow": the clips are made in Google Flow, whose clip prompts can be longer
 
 
 @dataclass

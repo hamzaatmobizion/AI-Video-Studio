@@ -1043,6 +1043,26 @@ def test_flow_clip_goes_to_flow(flow_api, store):
     assert health["providers"]["flow"] == {"max_clip_duration": 8, "model": "Veo 3.1 - Lite"}
 
 
+def test_flow_clip_prompts_can_be_longer(flow_api):
+    long = "a boat drifts. " * 200  # 3,000 characters: more than Gemini's video tool takes, within Flow's
+    assert flow_api.post("/videos", headers=AUTH, json={"prompt": long, "aspect": "9:16", "provider": "flow"}
+                         ).status_code == 200
+    assert flow_api.post("/videos", headers=AUTH, json={"prompt": long, "aspect": "9:16"}).status_code == 400
+    assert flow_api.post("/videos", headers=AUTH, json={"prompt": long * 2, "aspect": "9:16", "provider": "flow"}
+                         ).status_code == 400
+
+
+def test_plan_instruction_asks_for_objects_and_sizes_the_action():
+    from worker import gemini_browser as gb
+    from worker.generator import PlanRequest
+    text = gb.plan_instruction(PlanRequest("j", "idea", "9:16", 3))
+    assert '"props": [{"name": "...", "look": "..."}]' in text and '"props": [{"name": "...", "state": "..."}]' in text
+    assert "who holds it in which hand" in text and "still holds it, in the same hand" in text
+    assert "under about 350 characters" in text
+    flow = gb.plan_instruction(PlanRequest("j", "idea", "9:16", 3, clip_seconds=8, provider="flow"))
+    assert "under about 600 characters (about 100 words)" in flow
+
+
 def test_unknown_provider_refused(api, flow_api):
     assert api.post("/videos", headers=AUTH, json={"prompt": "x", "aspect": "9:16", "provider": "flow"}).status_code == 400
     assert flow_api.post("/videos", headers=AUTH,

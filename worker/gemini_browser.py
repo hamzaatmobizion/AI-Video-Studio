@@ -70,10 +70,11 @@ MAX_SPOKEN_WORDS = 25  # per 10 seconds (as app/script.py): a shorter clip gets 
 MAX_SCENE_IMAGES, MAX_IN_SHOT = 3, 6  # as app/script.py: pictures one clip takes, people one shot may hold
 _BIBLE_EXAMPLE = ('{"title": "...", "style": "...", "palette": "...", "setting": "...", "motif": "...", '
                   '"characters": [{"name": "...", "look": "...", "voice": "...", "never": "..."}], '
-                  '"cast": [{"name": "...", "age": "...", "look": "...", "outfit": "...", "voice": "..."}]}')
+                  '"cast": [{"name": "...", "age": "...", "look": "...", "outfit": "...", "voice": "..."}], '
+                  '"props": [{"name": "...", "look": "..."}]}')
 _EXAMPLE = ('{"setting": "...", "time_of_day": "...", "characters": [{"name": "...", "position": "..."}], '
             '"shot": {"framing": "...", "angle": "...", "movement": "...", "lens": "..."}, "action": "...", '
-            '"dialogue": [{"name": "...", "line": "..."}], "sound": "..."}')
+            '"dialogue": [{"name": "...", "line": "..."}], "sound": "...", "props": [{"name": "...", "state": "..."}]}')
 
 
 TEXT_ONLY = ("TEXT ONLY: this is a writing task. Do not create, generate or start any video, image, audio or other "
@@ -82,6 +83,8 @@ TEXT_ONLY = ("TEXT ONLY: this is a writing task. Do not create, generate or star
 
 def plan_instruction(req: PlanRequest) -> str:
     total = req.scene_count * req.clip_seconds
+    # what a clip prompt has room for after the cast, objects, lines and rules: Google Flow takes longer prompts
+    action_chars = 600 if req.provider == "flow" else 350
     if req.cast:
         sheets = "\n".join(
             f"- {c['name']}: " + "; ".join(x for x in (c.get("appearance"), c.get("outfit")) if x)
@@ -156,6 +159,15 @@ def plan_instruction(req: PlanRequest) -> str:
         "injuries, where each person stands and which way they face, and the place itself (doors and windows, "
         "lights, weather, time of day, anything spilled, moved or knocked over). When something changes, show the "
         "moment it changes. At the start of every scene, say the state of everything that matters in it.\n"
+        "- Objects: list in the bible's props every object the story uses in more than one scene or that someone "
+        "holds, eats, drinks, throws, carries, breaks or puts down (a robot, a tea cup, a ball, a phone, a plate of "
+        "food), with look = its fixed appearance in one line: shape, size, colours, material, and what it never has "
+        "('small round flat black robot vacuum with one blue light on top, no arms, no face'). In each scene's props, "
+        "list every bible prop seen in that scene, by the same name, with state = where it is now and who holds it "
+        "in which hand, and anything that has happened to it ('in Abba's right hand', 'on the ground in front of the "
+        "charpai', 'half eaten, on the plate', 'thrown onto the roof'). A state carries on from scene to scene until "
+        "the action changes it: someone holding a cup at the end of one scene still holds it, in the same hand, at "
+        "the start of the next. Name each prop the same way in the action. Leave props empty when the story has none.\n"
         "- When one scene has to hold several of the idea's moments, keep each one small and slow. At most one fast "
         "movement (a run, a chase, a jump) per scene, at its end, and never in the same scene as a long line. A "
         "fast move gets the whole scene if it's the point of the scene.\n"
@@ -183,7 +195,8 @@ def plan_instruction(req: PlanRequest) -> str:
         "in total. Lines the idea writes out are all kept word for word: when one scene's lines run over that, move "
         "the later ones to the next scene (a short silent moment can go with them) rather than cramming them in, so "
         "nobody has to rush. Leave dialogue empty when nobody speaks.\n"
-        "- Keep each scene's action under about 350 characters (about 60 words), written in order so its last "
+        f"- Keep each scene's action under about {action_chars} characters (about {action_chars // 6} words), "
+        "written in order so its last "
         "sentence is the scene's ending: the clip prompt has a length limit (the cast, lines and rules take most of "
         "it), and anything past it is cut off. When the idea crams more into one scene than fits, keep its key "
         "moments and the ending (the punchline) in fewer words rather than dropping any.\n"
@@ -205,7 +218,8 @@ def plan_instruction(req: PlanRequest) -> str:
         "one line (age, hair, face, build, and clothes with their colours: 'red and teal striped sari', never just "
         "'sari'), voice = how they sound (empty if the idea gives no hint), and never = the details a generator might get wrong about them ('upright ears, "
         "brown fur'); cast = one entry per cast member, named as in the cast list, with only the voice the idea "
-        "gives them (empty when it says none): their picture fixes their age, look and outfit.\n"
+        "gives them (empty when it says none): their picture fixes their age, look and outfit; props = the "
+        "story's objects, each with its fixed look (see Objects above).\n"
         f"- Reply with ONLY one compact JSON object: {{\"bible\": {{...}}, \"scenes\": [...]}}, where scenes holds "
         f"{req.scene_count} objects, one per scene, in order, each scene object on a single line with no "
         f"indentation. The bible is like:\n{_BIBLE_EXAMPLE}\nand each scene like:\n"

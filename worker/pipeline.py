@@ -110,7 +110,7 @@ class Runner:
                           clip_seconds=int(opts.get("clip_seconds") or self.profile.get("max_clip_duration") or 10),
                           cast=opts.get("cast") or [], style=opts.get("style") or "",
                           language=opts.get("language") or "", rules=opts.get("rules") or "",
-                          attempt=job["attempts"] + 1,
+                          attempt=job["attempts"] + 1, provider=opts.get("provider") or "",
                           model=self.settings.plan_model(job["attempts"] + 1, self.store.kv_get("plan_model_ok", "")))
 
         def should_cancel() -> bool:

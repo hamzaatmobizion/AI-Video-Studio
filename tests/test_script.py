@@ -159,10 +159,67 @@ def test_fit_shortens_the_action_and_keeps_the_rules():
     assert fitted.endswith(script.NO_TEXT) and fitted.startswith("Vertical 9:16 video.\nA beach.\nWaves roll in")
 
 
+def test_fit_shortens_the_rules_before_the_action():
+    # the clip 4 that lost its robot: a turn, two people, a line, and an action that only fits once the rules are short
+    action = ("Ammi swings her straw broom down onto the robot vacuum. The robot spins around and rolls away across "
+              "the courtyard. Ammi leaps back in surprise, lowering her broom and staring at it. ") * 5
+    sc = script.normalize_scene({"setting": "a village courtyard", "action": action, "characters": [
+        {"name": "Ammi"}, {"name": "Abba"}], "dialogue": [{"name": "Ammi", "line": "ہائے ربا!"}]}, [])
+    full = script.compile_prompt(sc, [], style="Pixar-style cartoon", aspect="9:16")
+    fitted = script.compile_prompt(sc, [], style="Pixar-style cartoon", aspect="9:16", fit=True)
+    assert len(full) > script.MAX_PROMPT >= len(fitted)
+    assert action.strip() in fitted  # all of the action is kept
+    # the turning note is said in fewer words first; that's enough here, so the other rules stay whole
+    assert script.TURN_NOTE_SHORT in fitted and script.TURN_NOTE not in fitted
+    assert script.SPEAKERS in fitted and script.CONTINUITY in fitted and fitted.endswith(script.NO_TEXT)
+    # with room to spare nothing is shortened
+    roomy = script.compile_prompt(sc, [], style="Pixar-style cartoon", aspect="9:16", fit=True,
+                                  room=script.prompt_limit("flow"))
+    assert roomy == full and script.prompt_limit("flow") == script.FLOW_MAX_PROMPT > script.prompt_limit("gemini")
+    # only when even the short rules leave too little room is the action cut
+    huge = {**sc, "action": action * 3}
+    cut = script.compile_prompt(huge, [], style="Pixar-style cartoon", aspect="9:16", fit=True)
+    assert len(cut) <= script.MAX_PROMPT and cut.endswith(script.NO_TEXT) and huge["action"].strip() not in cut
+    assert script.SPEAKERS_SHORT in cut and script.CONTINUITY_SHORT in cut and "Avoid" not in cut
+    assert cut.count("Ammi swings") >= 5  # what's left for the action is all the short rules freed
+
+
+def test_props_keep_their_look_and_state_in_every_clip():
+    bible = script.normalize_bible({"props": [
+        {"name": "Robot vacuum", "look": "small round flat black robot vacuum, one blue light on top, no arms"},
+        {"name": "Tea cup", "look": "steel tea cup"}, {"name": "tea cup", "look": "again"}, {"name": "Lamp"}, "junk"]})
+    assert [p["name"] for p in bible["props"]] == ["Robot vacuum", "Tea cup"]  # unique, and only with a look
+    sc = script.normalize_scene({"action": "The robot vacuum rolls away.", "props": [
+        {"name": "Tea cup", "state": "in Abba's right hand"}, {"name": "Shoe"}, {"state": "nameless"}]}, [])
+    assert sc["props"] == [{"name": "Tea cup", "state": "in Abba's right hand"}, {"name": "Shoe", "state": ""}]
+    p = script.compile_prompt(sc, [], aspect="9:16", bible=bible)
+    line = next(x for x in p.splitlines() if x.startswith("Objects"))
+    assert "Tea cup (steel tea cup): in Abba's right hand" in line and "; Shoe;" in line
+    # a bible object the action names is described even when the scene doesn't list it
+    assert "Robot vacuum (small round flat black robot vacuum, one blue light on top, no arms)." in line
+    assert p.index(line) < p.index("The robot vacuum rolls away.")
+    assert "Objects, each" not in script.compile_prompt({"action": "a boat"}, [], bible=bible)
+    assert "Tea cup (steel tea cup): in Abba's right hand" in script.still_prompt(sc, [], bible=bible)
+
+
+def test_review_shows_and_saves_objects(app, authed, drive_connected, net):
+    gid = authed.post("/generations", data={"scenes": ["a boat"], "aspect": "9:16", "review": "1"}).json()["id"]
+    r = authed.post(f"/generations/{gid}/script", json={
+        "scenes": [{"action": "Ali rows the boat", "props": [{"name": "Oar", "state": "in Ali's left hand"}]}],
+        "bible": {"props": [{"name": "Oar", "look": "long red wooden oar"}]}})
+    assert "Objects, each exactly the same in every clip: Oar (long red wooden oar): in Ali's left hand." \
+        in r.json()["scenes"][0]["prompt"]
+    g = gen(app, gid)
+    assert g.scenes[0].props == [{"name": "Oar", "state": "in Ali's left hand"}]
+    assert g.bible["props"] == [{"name": "Oar", "look": "long red wooden oar"}]
+    assert 'id="bible-props"' in authed.get(f"/generations/{gid}/script").text
+
+
 def test_warnings_for_long_lines_and_prompts():
     sc = script.normalize_scene({"dialogue": [{"name": "Ali", "line": "word " * 30}]}, CAST)
     assert "30 spoken words" in script.scene_warnings(sc, "short")[0]
-    assert "is cut when it's sent" in script.scene_warnings({"dialogue": []}, "x" * 2001)[0]
+    assert "shortened when it's sent" in script.scene_warnings({"dialogue": []}, "x" * 2001)[0]
+    assert script.scene_warnings({"dialogue": []}, "x" * 2001, limit=script.prompt_limit("flow")) == []
     pictured = [{"id": i, "image_path": f"/refs/{i}.png"} for i in range(1, 5)]
     crowd = {"characters": [{"id": i} for i in range(1, 5)]}
     assert "4 pictured characters" in script.scene_warnings(crowd, "short", pictured)[0]

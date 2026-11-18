@@ -77,14 +77,15 @@ class Scene(Base):
     shot: Mapped[dict] = mapped_column(JSON, default=dict)  # framing, angle, movement, lens
     characters: Mapped[list] = mapped_column(JSON, default=list)  # [{id, name, position}]
     dialogue: Mapped[list] = mapped_column(JSON, default=list)  # [{id, name, line}]
+    props: Mapped[list] = mapped_column(JSON, default=list)  # [{name, state}]: where each object is, who holds it
     still_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # its locked first frame
     check_note: Mapped[str] = mapped_column(Text, default="")  # what Gemini's clip check said
     redos: Mapped[int] = mapped_column(Integer, default=0)  # automatic remakes after a failed check
 
-    SCRIPT_FIELDS = ("setting", "time_of_day", "action", "sound", "shot", "characters", "dialogue")
+    SCRIPT_FIELDS = ("setting", "time_of_day", "action", "sound", "shot", "characters", "dialogue", "props")
 
     def script(self) -> dict:
-        return {k: getattr(self, k) or ({} if k == "shot" else [] if k in ("characters", "dialogue") else "")
+        return {k: getattr(self, k) or ({} if k == "shot" else [] if k in ("characters", "dialogue", "props") else "")
                 for k in self.SCRIPT_FIELDS}
 
 

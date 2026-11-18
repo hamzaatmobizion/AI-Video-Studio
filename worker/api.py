@@ -22,6 +22,7 @@ log = logging.getLogger("worker.api")
 MAX_BODY = 35 * 1024 * 1024  # 3 images × 10 MB + form overhead
 MAX_IMAGE = 10 * 1024 * 1024
 MAX_PROMPT = 2000  # one clip prompt
+FLOW_MAX_PROMPT = 3300  # one Google Flow clip prompt (as app/script.py)
 MAX_IDEA = 10000  # a plan's prompt (Gemini's chat condenses it into clip prompts)
 MAX_SCENES = 12
 MAX_CAST = 8
@@ -187,8 +188,9 @@ def create_app(settings: WorkerSettings, store: JobStore, runner: Runner, sessio
             raise HTTPException(409, pause["message"])
         frame = body.get("frame")
         frame = int(frame) if isinstance(frame, int) or (isinstance(frame, str) and frame.isdigit()) else None
-        if not prompt or len(prompt) > MAX_PROMPT:
-            raise HTTPException(400, f"The prompt must be 1–{MAX_PROMPT} characters.")
+        limit = FLOW_MAX_PROMPT if provider == "flow" else MAX_PROMPT
+        if not prompt or len(prompt) > limit:
+            raise HTTPException(400, f"The prompt must be 1–{limit} characters.")
         if aspect not in profile["aspects"]:
             raise HTTPException(400, f"Aspect must be one of {', '.join(profile['aspects'])}.")
         if len(uploads) > 3:

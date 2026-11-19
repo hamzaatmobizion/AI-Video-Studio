@@ -718,7 +718,7 @@ def inspect(settings: WorkerSettings, ui: dict | None = None, in_project: bool =
     label = settings.flow_profile()["model_label"]
     result: dict = {"state": "needs_attention", "message": "", "model": None, "selectors": {}, "screenshot": None}
     with sync_playwright() as p:
-        ctx = launch_context(p, settings, headless=True)
+        ctx = launch_context(p, settings, headless=False)  # on screen: Flow flags a hidden browser sooner
         try:
             install_navigation_guard(ctx, ui["allowed_hosts"])
             page = ctx.pages[0] if ctx.pages else ctx.new_page()

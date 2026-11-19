@@ -60,8 +60,8 @@ def _prefill(gen: Generation | None) -> dict:
     """Studio form values for "Use prompt again": one prompt + duration, or the user's own scenes."""
     if gen is None:
         return {"prefill_prompt": "", "prefill_duration": None, "prefill_scenes": [""], "prefill_manual": False,
-                "prefill_cast": [], "prefill_style": "", "prefill_language": "", "prefill_review": True,
-                "prefill_genre": "", "prefill_lock": False, "prefill_check": None, "prefill_by_hand": False}
+                "prefill_cast": [], "prefill_style": "", "prefill_language": "", "prefill_review": None,
+                "prefill_genre": "", "prefill_lock": False, "prefill_check": None, "prefill_by_hand": True}
     manual = not gen.planned and len(gen.scenes) > 1
     return {"prefill_prompt": "" if manual else gen.prompt,
             "prefill_duration": max(len(gen.scenes), 1) * SCENE_SECONDS.get(gen.provider, 10),

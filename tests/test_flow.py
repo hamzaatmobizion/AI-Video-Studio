@@ -206,10 +206,12 @@ def test_flow_script_that_drops_a_line_waits_for_review(app, authed, drive_conne
     assert "Not said in any scene" in page and "“kal milenge yaar”" in page and "“chalo ghar chalein”" not in page
 
 
-def test_check_each_clip_is_ticked_on_the_flow_screen_only(authed, drive_connected):
+def test_flow_screen_ticks_only_making_the_clips_by_hand(authed, drive_connected):
     flow = authed.get("/flow").text
-    assert 'name="check_clips" value="1" checked' in flow
-    assert 'name="check_clips" value="1" checked' not in authed.get("/").text
+    assert 'name="by_hand" value="1" checked' in flow
+    assert 'name="review" value="1" checked' not in flow and 'name="check_clips" value="1" checked' not in flow
+    studio = authed.get("/").text  # the Studio keeps its own defaults
+    assert 'name="review" value="1" checked' in studio and 'name="check_clips" value="1" checked' not in studio
 
 
 

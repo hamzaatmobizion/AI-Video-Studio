@@ -99,11 +99,10 @@ BOTH_HANDS = re.compile(r"\b(?:in|with) both hands\b|\bboth hands (?:on|around|h
 GESTURE = re.compile(r"\b(gestur\w*|point\w*|wav\w*|clap\w*|thumbs?[- ]up|beckon\w*|shak\w* (?:a|her|his) finger|"
                      r"wag\w* (?:a|her|his) finger|throws? (?:her|his) hands?|raises? (?:a|her|his) hand)\b", re.I)
 # Holding something and clapping: Veo claps with both hands and leaves the thing standing or floating on its own
+# (a Flow clip's "Objects" rule, flow_rules, says what is held stays in hand)
 HOLDING = re.compile(r"\b(?:holds?|holding|held|grips?|gripping|clutch\w*|carr(?:y|ies|ying))\b|"
                      r"\bin (?:her|his|their|one) (?:right|left) hand\b", re.I)
 CLAPPING = re.compile(r"\b(?:clap\w*|applau\w*)\b", re.I)
-HOLD_NOTE = ("Whoever holds something keeps it in that hand the whole time, or puts it down where it then stays; "
-             "nothing is ever left standing up or floating on its own.")
 REALISM = ("Realistic physics and natural anatomy: correct hands and fingers, feet planted on the ground, natural "
            "motion speed, stable background.")
 ANIMATED_REALISM = "Consistent proportions and smooth, natural motion."
@@ -390,6 +389,37 @@ def quality_rules(scene: dict, style: str = "", music: bool = True, short: bool 
     return " ".join(rules)
 
 
+def flow_rules(scene: dict, style: str = "", music: bool = True) -> list[str]:
+    """The rules that close a Flow clip prompt: one short line each for the shot and camera, the people, the
+    objects, how things move, who speaks and how it looks. Veo follows a few plain lines better than paragraphs,
+    and they leave the action its room."""
+    cartoon = animated(scene, style)
+    action = scene.get("action") or ""
+    lines = ["Shot: one continuous shot, no cuts; smooth, steady camera doing only the move above, with no shake, "
+             "zoom or sudden angle change."]
+    if scene.get("characters") or scene.get("dialogue"):
+        lines.append("People: same face, hair, body, clothes and colours throughout; nobody new appears, "
+                     "vanishes or morphs; two hands, five fingers each; natural, expressive acting.")
+    lines.append("Objects: keep their look, place and state unless the action changes them; what is held stays in "
+                 "that hand or is put down; nothing floats or stands up on its own.")
+    lines.append("Motion: believable cartoon physics, steady proportions, smooth with no jumps or slow motion."
+                 if cartoon else "Motion: real gravity and weight, feet on the ground, natural speed, no jumps or "
+                                 "slow motion.")
+    if scene.get("dialogue"):
+        lines.append("Speech: only the named person says each line, in order, lips in sync with every syllable and "
+                     "natural pauses; listeners keep their mouths closed.")
+    look = [f"one {_style_name(style)} look for everyone, never photorealistic" if cartoon else "",
+            "constant light, sharp detail, no flicker"]
+    if not ON_SCREEN_TEXT.search(SPOKEN_LINE.sub(" ", action)):
+        look.append("no on-screen text, subtitles or logos")
+    elif scene.get("dialogue"):
+        look.append("no subtitles")
+    if not music and not MUSIC.search(" ".join([action, scene.get("sound") or ""])):
+        look.append("no background music")
+    lines.append("Look: " + "; ".join(x for x in look if x) + ".")
+    return lines
+
+
 def normalize_bible(raw) -> dict:
     """The story bible as stored: known fields only, bounded; characters by unique name."""
     raw = raw if isinstance(raw, dict) else {}
@@ -448,15 +478,15 @@ AGE_WORDS = re.compile(r"\b(?:aged?\s*\d{1,3}|\d{1,3}\s*(?:-\s*)?(?:years?(?:[\s
                        r"in (?:his|her|their) (?:early |mid |late )?\d0s|an? \d{1,3}-year-old)\b[\s,;]*", re.I)
 
 
-def merged_sheet(sheet: dict, bible: dict | None, outfits: bool = False) -> dict:
+def merged_sheet(sheet: dict, bible: dict | None) -> dict:
     """A picked character as this video shows them: each age, look, outfit or voice the prompt gives (the bible's
     cast entry) replaces their saved one; whatever the prompt doesn't say stays as saved. A character with a picture
-    keeps their look as pictured: only a voice is taken from the prompt, and with `outfits` (a Flow video) the
-    clothes the prompt gives them too. `from_prompt` names the prompt's own entry (only the fields it gives)."""
+    keeps their look as pictured: only a voice is taken from the prompt. `from_prompt` names the prompt's own entry
+    (only the fields it gives)."""
     name = (sheet.get("name") or "").lower()
     over = next((c for c in (bible or {}).get("cast") or [] if name and c["name"].lower() == name), None)
     if over and sheet.get("image_path"):  # their picture is the reference: the prompt never redesigns it, only voices it
-        over = {k: over[k] for k in ("voice", *(["outfit"] if outfits else [])) if over.get(k)} or None
+        over = {"voice": over["voice"]} if over.get("voice") else None
     if not over:
         return sheet
     out = {**sheet, "from_prompt": {k: v for k, v in over.items() if k != "name" and v}}
@@ -504,8 +534,7 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
     (the turning note, the "Avoid" line, the speaker and quality rules), and only then is the action shortened.
     `bible`: the video's story bible; `genre`: its type (app/genres.py); `music`: allow a soundtrack in the clip.
     `room`: the length `fit` keeps it within (prompt_limit, less when lines are added when it's sent).
-    `flow` (a Flow video): a pictured character wears the clothes the prompt gives them (merged_sheet), anyone who
-    holds something and claps is told to keep hold of it (HOLD_NOTE), and a music video's lines are sung."""
+    `flow` (a Flow video): it closes with the short flow_rules, and a music video's lines are sung."""
     by_id = {c["id"]: c for c in cast}
     bible = bible or {}
     invented = {c["name"].lower(): c for c in bible.get("characters") or []}
@@ -531,15 +560,14 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
     turns = turning(scene)
     people, pictured = [], 0
     for p in scene.get("characters") or []:
-        sheet = merged_sheet(by_id[p["id"]], bible, flow) if p.get("id") in by_id \
+        sheet = merged_sheet(by_id[p["id"]], bible) if p.get("id") in by_id \
             else invented.get(p["name"].lower()) or {}
         where = f", {p['position']}" if p.get("position") else ""
         told = sheet.get("from_prompt") or {}
         # what the prompt says about a pictured character, after their picture (a new outfit replaces the picture's)
         said = "".join(x for x in (f", age: {told['age']}" if told.get("age") else "",
                                    f", {_fit(told['look'], 200)}" if told.get("look") else "",
-                                   f", wearing {wearing(told['outfit'])} (not the clothes in the picture)"
-                                   if told.get("outfit") else ""))
+                                   f", wearing {wearing(told['outfit'])}" if told.get("outfit") else ""))
         locked = f"; always {sheet['locked'].rstrip(' .')}" if sheet.get("locked") else ""
         avoid.append(sheet.get("never") or "")
         look = "; ".join(x.strip(" .,;") for x in (sheet.get("appearance"), sheet.get("outfit"), sheet.get("look"))
@@ -568,7 +596,9 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         head.append(props_line(scene, bible))
     action = scene.get("action") or ""
     shorter = []  # (tail index, the same in fewer words), tried in this order before the action is cut
-    if turns:
+    if turns and flow:
+        tail.append(TURN_NOTE_SHORT)
+    elif turns:
         shorter.append((len(tail), TURN_NOTE_SHORT))
         tail.append(TURN_NOTE)
     lang = f" in {language}" if language else ""
@@ -579,10 +609,8 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         tail.append(f"{who} {'sings' if flow and genre == 'music' else 'says'}{lang}: '{d['line']}'")
     if scene.get("sound"):
         tail.append(f"Sound: {_sentence(scene['sound'])}")
-    if flow and holds_and_claps(scene):
-        tail.append(HOLD_NOTE)
     rules = quality_rules(scene, style, music)
-    if scene.get("dialogue"):
+    if scene.get("dialogue") and not flow:
         speakers = {d["name"] for d in scene["dialogue"]}
         no_subs = "" if NO_TEXT in rules else " No subtitles."
         in_order = " " + SPEAKERS_IN_ORDER if len(scene["dialogue"]) > 1 and len(speakers) > 1 else ""
@@ -594,12 +622,16 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
     if _avoid(avoid):
         shorter.insert(min(1, len(shorter)), (len(tail), ""))
         tail.append(_avoid(avoid))
-    shorter.append((len(tail), quality_rules(scene, style, music, short=True)))
-    ruled = len(tail)
-    tail.append(rules)
-    # how it should look and perform: in every clip, never shortened
-    tail.append(" ".join(([ACTING] if scene.get("characters") or scene.get("dialogue") else [])
-                         + [QUALITY_ANIMATED if animated(scene, style) else QUALITY_FILM]))
+    ruled = None
+    if flow:  # a few short lines, never shortened: the action gets the room
+        tail += flow_rules(scene, style, music)
+    else:
+        shorter.append((len(tail), quality_rules(scene, style, music, short=True)))
+        ruled = len(tail)
+        tail.append(rules)
+        # how it should look and perform: in every clip, never shortened
+        tail.append(" ".join(([ACTING] if scene.get("characters") or scene.get("dialogue") else [])
+                             + [QUALITY_ANIMATED if animated(scene, style) else QUALITY_FILM]))
     if action and fit:
         action = action if plain else _sentence(action)
         for i, words in shorter:
@@ -610,18 +642,16 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         action = _fit(action, room - len("\n".join(head + tail)) - 1)
     if action:
         head.append(action if plain or fit else _sentence(action))
-    if not fit and len("\n".join(head + tail)) > room:  # an unfitted prompt, as a reviewed script's, may still fit
+    if ruled is not None and not fit and len("\n".join(head + tail)) > room:  # an unfitted one may still fit
         tail[ruled] = quality_rules(scene, style, music, cinematic=False)
     return "\n".join(head + tail)
 
 
-def still_prompt(scene: dict, cast: list[dict], style: str = "", bible: dict | None = None,
-                 outfits: bool = False) -> str:
+def still_prompt(scene: dict, cast: list[dict], style: str = "", bible: dict | None = None) -> str:
     """What a scene's locked first frame shows: the look, the place, the camera, who is where (the pictured ones by
     their picture's number, as scene_images orders them) and the first moment of the action. Everyone is described
     as the clip prompt describes them (compile_prompt): what the prompt says about a person (age, look, outfit) wins
-    over their saved character and picture, so the frame and the clip agree and nothing changes mid-clip; `outfits`
-    as compile_prompt."""
+    over their saved character and picture, so the frame and the clip agree and nothing changes mid-clip."""
     by_id, bible = {c["id"]: c for c in cast}, bible or {}
     invented = {c["name"].lower(): c for c in bible.get("characters") or []}
     lines = [_sentence(x) for x in (look_only(style or bible.get("style") or ""),
@@ -634,7 +664,7 @@ def still_prompt(scene: dict, cast: list[dict], style: str = "", bible: dict | N
         lines.append(_sentence(f"{framing} shot" if "shot" not in framing else framing))
     people, pictured = [], 0
     for p in scene.get("characters") or []:
-        sheet = merged_sheet(by_id[p["id"]], bible, outfits) if p.get("id") in by_id \
+        sheet = merged_sheet(by_id[p["id"]], bible) if p.get("id") in by_id \
             else invented.get(p["name"].lower()) or {}
         where = f", {p['position']}" if p.get("position") else ""
         locked = f"; always {sheet['locked'].rstrip(' .')}" if sheet.get("locked") else ""
@@ -676,6 +706,25 @@ def spoken_words(scene: dict) -> int:
 
 def speaker_count(scene: dict) -> int:
     return len({d["name"].lower() for d in scene.get("dialogue") or [] if d["line"].strip()})
+
+
+def keep_places(script: list[dict]) -> list[dict]:
+    """The script with everyone who was in the scene before standing where they stood there (Veo, carrying on from
+    that scene's last frame, tells people apart by where they stand: a swap gives each the other's lines). A newcomer
+    keeps the place the script gives them. Where the action names the place it moved them to ("Shani stands on frame
+    left"), it says the kept one instead."""
+    out, before = [], {}
+    for sc in script:
+        people, action = [], sc.get("action") or ""
+        for p in sc.get("characters") or []:
+            was, now = before.get(p["name"].lower()), p.get("position") or ""
+            if was and now and was != now:
+                action = re.sub(rf"((?<!\w){re.escape(p['name'])}(?!\w)[^.]{{0,40}}?){re.escape(now)}",
+                                lambda m: m.group(1) + was, action, flags=re.I)
+            people.append({**p, "position": was or now})
+        before = {p["name"].lower(): p["position"] for p in people if p["position"]}
+        out.append({**sc, "characters": people, "action": action})
+    return out
 
 
 def holds_and_claps(scene: dict) -> bool:

@@ -3,105 +3,92 @@
 {% block content %}
 <section class="panel rules">
   <h1>How to write a prompt for the best video</h1>
-  <p class="muted">Videos are made in short clips that are joined together: 10-second clips in the Studio (Gemini), 8-second clips on the Flow screen (Google Flow). Each clip is made on its own. The app already does most of the work of keeping them consistent; a few things only you can do.</p>
+  <p class="muted">Videos are made in short clips that are joined together: 10-second clips in the Studio (Gemini), 8-second clips on the Flow screen (Google Flow). The app keeps them consistent; a few things only you can do.</p>
 
-  <h2>The app does this for you</h2>
-  <p class="muted small">No need to write these in your prompt.</p>
+  <h2>The rules every clip gets</h2>
+  <p class="muted small">The app adds these to the end of every Flow clip prompt, so you don't need to write them. Copy them if you make a clip in Flow yourself or use another AI video tool.</p>
+  <div class="copy-head"><span class="cp-label">Clip rules</span><button type="button" class="secondary" data-copy="#clip-rules">Copy</button></div>
+<pre class="copy-block" id="clip-rules">{{ clip_rules | join("\n") }}</pre>
+  <p class="muted small">In a cartoon, the Motion and Look lines become:<br>{{ cartoon_rules | join("<br>" | safe) }}</p>
+
+  <h2>The app also does this for you</h2>
   <ul>
-    <li>Splits your story into clips (10 seconds with Gemini, 8 with Google Flow), keeping every timed moment and every line you wrote.</li>
-    <li>Keeps faces, clothes, places and objects the same from clip to clip: your characters' portraits, a story bible, and each clip starting from the previous one's last frame.</li>
-    <li>Gives each picked character the part that fits them, and tells you on the script page if one had no part.</li>
-    <li>Tells Gemini the rules it often breaks: one action at a time, two hands each, things keep their state, no on-screen text, no crowds or fast fights in close-up.</li>
-    <li>Ends every clip prompt with the master rules below in short form: a smooth, steady camera, real gravity, constant light, no jumps or slow motion, and nothing added that the scene doesn't ask for. A clip that starts from the previous clip's last frame is told to begin its action naturally from it. A cartoon gets the 3D cartoon rules instead: cartoon physics, models and textures that never deform, and no switch to photorealism or another style.</li>
-    <li>Makes a “young man” or “young woman” look clearly adult.</li>
-    <li>When it writes the script, rewrites your prompt into scenes by these rules: lines too long for one clip move to the next scene, invented people get clothes with colours and a voice, “realistic” is kept out of a cartoon, Pakistani Punjabi lines are written in Shahmukhi, and each scene ends on a clear reaction.</li>
-    <li>Uses the voice your prompt gives a character, else their saved one.</li>
-    <li>Leaves music out of the clips (it would change at every cut) and adds your <strong>Background music</strong> track under the whole video.</li>
-    <li>Reads the length, style and 9:16 or 16:9 shape from your prompt.</li>
+    <li>Splits your story into clips, keeping every line you wrote. On Flow, a prompt written in time steps (0–8 seconds, 8–16 seconds…) keeps its actions, camera, lines and voices exactly as you wrote them; only what's missing, like where each object starts, is added. If a line goes missing or a clip has more than 20 words, the script waits for you to check it.</li>
+    <li>Keeps people, clothes, places and objects the same from clip to clip: portraits, a story bible, and each clip starting from the previous one's last frame.</li>
+    <li>Trims a cut to another shot from the end of a Flow clip.</li>
+    <li>Reads the length, style and 9:16 or 16:9 shape from your prompt, and leaves music out of the clips (add a <strong>Background music</strong> track instead).</li>
   </ul>
-  <p class="muted small">So you can leave out long “STRICT RULES” lists: they make the prompt longer, not the video better.</p>
 
   <h2>What only you can do</h2>
   <table class="rules-table">
     <thead><tr><th>Rule</th><th>Example</th></tr></thead>
     <tbody>
-      <tr><td><strong>At most 2 moments per clip</strong> (10 seconds with Gemini, 8 with Flow). A moment is one action and its reaction or line. Give running, chasing, jumping or fighting its own clip.</td>
-          <td>10 s → 2 moments, 20 s → 4, 30 s → 6</td></tr>
-      <tr><td><strong>Keep lines short:</strong> about 25 spoken words per 10-second Gemini clip, everyone together. In an 8-second Flow clip, 16 when one person speaks and 14 when two or more do. In Chinese, Japanese or Thai, every 2 characters count as a word.</td>
-          <td>Split a long speech across two clips.</td></tr>
-      <tr><td><strong>Use characters with good portraits:</strong> full body, in the same style as the video. Name them in the prompt as they're named in your library.</td>
-          <td>A Pixar-style 3D portrait for a cartoon video.</td></tr>
-      <tr><td><strong>Adults must look adult.</strong> If Gemini takes someone for a child, it refuses any scene with romance, shouting, chasing or hitting.</td>
-          <td>“a man in his 30s with a thick mustache”, not “a boy” or “a young lad”</td></tr>
-      <tr><td><strong>Describe clothes with colours</strong> for anyone without a portrait.</td>
-          <td>“red and teal striped sari”, not “sari”</td></tr>
-      <tr><td><strong>One style, and no “realistic” in a cartoon.</strong> It makes Gemini treat your characters as real people and refuse.</td>
+      <tr><td><strong>Name one style</strong>, and no “realistic” in a cartoon.</td>
           <td>“Pixar-style 3D cartoon animation”</td></tr>
-      <tr><td><strong>Write lines in the script of the language you want spoken.</strong> For Pakistani Punjabi use Shahmukhi; Gurmukhi gives an Indian pronunciation.</td>
+      <tr><td><strong>Use portraits in the video's style and clothes.</strong> A picked character looks exactly as in their portrait, clothes included, so don't describe their look in the prompt. Name them as they're named in your library.</td>
+          <td>A Pixar-style portrait in the kurta they wear in the story</td></tr>
+      <tr><td><strong>Keep lines short:</strong> about 14 spoken words per 8-second Flow clip with two people talking (20 at most), 25 per 10-second Gemini clip.</td>
+          <td>Split a long speech across two clips.</td></tr>
+      <tr><td><strong>One or two moments per clip.</strong> Say who does what, and which hand holds what.</td>
+          <td>“holds the stick in her right hand and taps it to the beat”</td></tr>
+      <tr><td><strong>Adults must look adult</strong>, and no photos of real people.</td>
+          <td>“a man in his 30s with a thick mustache”</td></tr>
+      <tr><td><strong>Write lines in the script of the language you want spoken.</strong> Pakistani Punjabi in Shahmukhi.</td>
           <td>“نی نوہے!” not “ਨੀ ਨੂੰਹੇ!”</td></tr>
-      <tr><td><strong>Say which hand does what</strong> when someone holds something and also points or waves.</td>
-          <td>“holds the roti in her left hand and points with her right”</td></tr>
-      <tr><td><strong>No photos of real people.</strong> Gemini refuses to animate them.</td>
-          <td>Use portraits drawn on the Characters page.</td></tr>
     </tbody>
   </table>
 
   <h2>Before you generate</h2>
   <ul>
-    <li>Read the notes under the prompt: <span class="note-error">red</span> means Gemini will likely refuse or fail, <span class="warn">yellow</span> means the video may suffer, <span class="note-ok">green</span> means nothing is known to cause problems.</li>
-    <li>For an important video, tick <strong>Let me review the script</strong>; for a final version, also <strong>Lock characters</strong> and <strong>Check each clip</strong>.</li>
+    <li>Read the notes under the prompt: <span class="note-error">red</span> will likely fail, <span class="warn">yellow</span> may hurt the video, <span class="note-ok">green</span> is fine.</li>
+    <li>Tick <strong>Check each clip</strong>: it catches extra people, changed clothes and wrong speakers, and remakes the clip once.</li>
   </ul>
 </section>
 
 <section class="panel rules">
   <h2>Let any AI write your prompt</h2>
-  <p class="muted">Copy this, paste it into ChatGPT, Gemini, Claude or any other AI chat, replace the last line with your idea (in any language), and paste the prompt it writes into the Studio.</p>
+  <p class="muted">Copy this into ChatGPT, Gemini, Claude or any other AI chat, replace the last line with your idea (in any language), and paste the prompt it writes here.</p>
   <div class="copy-head"><span class="cp-label">Ask an AI to write the prompt</span><button type="button" class="secondary" data-copy="#prompt-maker">Copy</button></div>
-<pre class="copy-block" id="prompt-maker">You write prompts for an AI video tool that makes videos in 10-second clips and joins them into one video. Turn my idea (at the end) into one prompt in exactly the format below, following these rules:
+<pre class="copy-block" id="prompt-maker">Turn my idea (at the end) into one video prompt in exactly the format below. The video is made in 8-second clips.
 
-- Length: 10, 20, 30… seconds (up to 2 minutes). At most 2 moments per 10 seconds; a moment is one action and its reaction or line. Give any fast movement (running, chasing, jumping, fighting, falling) its own 10 seconds, never with a long line.
-- Dialogue: about 20–25 spoken words per 10 seconds at most, all characters together. Put each line in double quotes after who says it. For Pakistani Punjabi write the lines in Shahmukhi (Perso-Arabic) script, never Gurmukhi; for Urdu, in Urdu script.
-- Characters: give each one an age, hair, face, build and clothes with colours, and how they sound. Adults must clearly look adult: an age like "in his 30s" and a grown-up feature (mustache, stubble, a mature face). No children in scenes with romance, shouting, chasing or hitting. No real or famous people.
-- Style: name one style, e.g. "Pixar-style 3D cartoon animation". Never use the word "realistic" for a cartoon.
-- Actions: one clear action at a time. If someone holds something in both hands they can't also point or wave: say which hand does what. Objects, clothes and places keep their state until the story changes them.
-- Sound: sound effects only, no background music, no subtitles, no on-screen text.
-- Keep it plain and short: no lists of "strict rules", no repeated instructions.
+- One or two moments per 8 seconds; at most about 14 spoken words per 8 seconds. Put each line in double quotes after who says it. Pakistani Punjabi in Shahmukhi script.
+- Give each character an age, look, clothes with colours and a voice. Adults look clearly adult.
+- Name one style. Say who does what and which hand holds what.
+- Keep it plain: no lists of rules.
 
 Format:
 
-A [length]-second [vertical 9:16 or widescreen 16:9] [kind of video, e.g. Pakistani Punjabi family comedy], [style].
+A [length]-second [vertical 9:16 or widescreen 16:9] [kind of video], [style].
 Setting: [place, time of day, 2 or 3 key objects].
 
 [Name]: [age], [hair, face, build], [clothes with colours].
-Voice: [e.g. deep, warm, Pakistani Punjabi accent].
-(one block like this for each character)
+Voice: [how they sound].
+(one block for each character)
 
-0–5 seconds: [one action]. [Name] says: "[line]"
-5–10 seconds: [one action or reaction]. [Name] says: "[line]"
-(continue in 5-second steps to the end)
+0–8 seconds: [one or two actions]. [Name] says: "[line]"
+8–16 seconds: [one or two actions]. [Name] says: "[line]"
+(continue in 8-second steps to the end)
 
-Sound: [sound effects]. No background music, no subtitles.
+Sound: [sound effects].
 
 My idea: [write your idea here]</pre>
 
   <div class="copy-head"><span class="cp-label">Or fill in the format yourself</span><button type="button" class="secondary" data-copy="#prompt-format">Copy</button></div>
-<pre class="copy-block" id="prompt-format">A 20-second vertical 9:16 [kind of video], [style, e.g. Pixar-style 3D cartoon animation].
+<pre class="copy-block" id="prompt-format">A 16-second vertical 9:16 [kind of video], [style, e.g. Pixar-style 3D cartoon animation].
 Setting: [place, time of day, 2 or 3 key objects].
 
 [Name]: [age, e.g. a man in his 30s], [hair, face, build], [clothes with colours].
-Voice: [how they sound, e.g. deep, warm, Pakistani Punjabi accent].
+Voice: [how they sound].
 [Name]: [age], [hair, face, build], [clothes with colours].
 Voice: [how they sound].
 
-0–5 seconds: [one action]. [Name] says: "[line]"
-5–10 seconds: [one action or reaction]. [Name] says: "[line]"
-10–15 seconds: [one action]. [Name] says: "[line]"
-15–20 seconds: [the ending]. [Name] says: "[line]"
+0–8 seconds: [one or two actions]. [Name] says: "[line]"
+8–16 seconds: [the ending]. [Name] says: "[line]"
 
-Sound: [sound effects, e.g. a cartoon boing at the end]. No background music, no subtitles.</pre>
+Sound: [sound effects].</pre>
 
   <h2>Example</h2>
-<pre class="copy-block">A 20-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
+<pre class="copy-block">A 16-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
 Setting: a colourful village kitchen in the afternoon, steel pots on a shelf, a wooden stool.
 
 Saas: a woman in her 50s, grey hair in a bun, round face, orange shalwar kameez and green dupatta.
@@ -109,374 +96,9 @@ Voice: older woman, loud and expressive, Pakistani Punjabi accent.
 Bahu: a woman in her late 20s, long black braid, pink shalwar kameez.
 Voice: young woman, cheeky and sweet, Pakistani Punjabi accent.
 
-0–5 seconds: Saas walks in, sees Bahu on her phone and puts her hands on her hips. Saas says: "نی نوہے! سارا دن موبائل تے لگی رہندی ایں!"
-5–10 seconds: Bahu hides the phone behind her back and smiles. Bahu says: "امی جی، تہاڈے لئی رشتہ لبھ رہی آں!"
-10–15 seconds: Saas freezes, eyes wide. Saas says: "میرے لئی رشتہ؟ میں تاں ویاہی ہوئی آں!"
-15–20 seconds: Bahu laughs and walks out of the kitchen; Saas shakes her head.
+0–8 seconds: Saas walks in, sees Bahu on her phone and puts her hands on her hips. Saas says: "نی نوہے! سارا دن موبائل تے لگی رہندی ایں!"
+8–16 seconds: Bahu hides the phone behind her back and smiles. Bahu says: "امی جی، تہاڈے لئی رشتہ لبھ رہی آں!" Saas freezes, eyes wide.
 
-Sound: a cartoon boing at the end. No background music, no subtitles.</pre>
-</section>
-
-<section class="panel rules">
-  <h2>Master rules for any AI video</h2>
-  <p class="muted">The app already adds these to every clip prompt in a few words. Copy the full list to paste under a prompt you send to another AI video tool, or under a prompt you make by hand in Flow.</p>
-  <div class="copy-head"><span class="cp-label">AI video generation – master rules</span><button type="button" class="secondary" data-copy="#master-rules">Copy</button></div>
-<pre class="copy-block" id="master-rules">AI VIDEO GENERATION – MASTER RULES
-
-1. Character Consistency
-Always maintain the exact identity of every character.
-Preserve facial features, hairstyle, skin tone, clothing, body shape, and proportions.
-Never randomly change a character's appearance.
-Keep all characters visually consistent from beginning to end.
-
-2. Scene Consistency
-Maintain the original environment, background, and scene layout.
-Do not introduce unexpected objects, people, or environmental changes.
-Preserve the position and appearance of important objects.
-Maintain visual continuity between frames.
-
-3. Natural Movement
-All movements must look natural, smooth, and realistic.
-Follow realistic human and animal body mechanics.
-Ensure proper walking, running, sitting, standing, and hand movements.
-Avoid robotic, stiff, exaggerated, or unnatural animation.
-Maintain realistic object interactions and physical movements.
-
-4. Realistic Physics
-Follow real-world gravity, momentum, weight, and motion.
-Objects must interact naturally with their surroundings.
-Maintain realistic collisions, contact, and movement.
-Avoid floating objects, unnatural movements, and impossible physical interactions.
-
-5. Camera Control
-Use intentional, professional cinematic camera movements.
-Keep camera movements smooth and controlled.
-Avoid unnecessary camera shaking, random zooming, and sudden angle changes.
-Use only camera movements appropriate to the scene.
-Maintain consistent framing and composition unless a camera movement is required.
-
-6. Facial Expressions
-Maintain realistic facial anatomy and expressions.
-Ensure natural eye movements and blinking.
-Keep facial features consistent throughout the video.
-Avoid distorted faces, unnatural smiles, and facial morphing.
-
-7. Hands and Body Anatomy
-Maintain anatomically correct hands, fingers, and limbs.
-Avoid extra fingers, missing fingers, duplicated limbs, and distorted body parts.
-Ensure natural hand gestures and body posture.
-Maintain correct body proportions during movement.
-
-8. Lighting and Shadows
-Maintain consistent lighting direction and intensity.
-Use realistic shadows, reflections, and highlights.
-Preserve natural exposure and color balance.
-Avoid sudden lighting changes and flickering.
-
-9. Visual Quality
-Maintain high visual fidelity and realistic textures.
-Preserve details in skin, hair, clothing, and environmental surfaces.
-Use natural depth, focus, and cinematic color grading.
-Avoid pixelation, blur, visual artifacts, ghosting, and flickering.
-
-10. Motion Continuity
-Ensure smooth transitions between movements.
-Maintain continuous motion without unnecessary interruptions.
-Avoid sudden position changes, teleportation, and unwanted jumps.
-Keep movement speed and direction consistent with the described action.
-
-11. Start Frame Rules
-Begin the video from the supplied Start Frame.
-Preserve the original composition, subject identity, and environment.
-Do not unnecessarily modify the initial appearance.
-Begin the requested action naturally from the starting position.
-
-12. End Frame Rules
-If an End Frame is supplied, guide the video toward that exact visual composition.
-Reach the final position through natural and continuous movement.
-Preserve character identity and environmental consistency.
-If no End Frame is supplied, generate a natural ending based on the described action.
-Never invent an unnecessary ending or force an unnatural final pose.
-
-13. Prompt and Action Accuracy
-Follow the user's requested scene and actions precisely.
-Do not add unrelated actions or unexpected events.
-Do not introduce unnecessary characters or objects.
-Prioritize the main action over decorative details.
-Keep the generated video faithful to the original prompt.
-
-14. Professional Cinematic Standards
-Use professional cinematic composition.
-Maintain realistic depth and perspective.
-Use appropriate focal length and natural depth of field.
-Keep camera movement, lighting, and subject motion visually coordinated.
-Maintain a polished, professional film-quality appearance.
-
-15. Negative Generation Rules
-Avoid: character identity changes, face and body distortion, unnatural movements, extra fingers and limbs, object duplication, background morphing, flickering and ghosting, sudden camera movements, unwanted scene transitions, random objects or characters, inconsistent lighting, unrealistic physics, unnecessary slow motion, unexpected cuts or changes in composition.
-
-16. Most Important Generation Principle
-Every generated video must prioritize: character consistency, scene consistency, natural and realistic movement, accurate physical interactions, smooth motion continuity, controlled cinematic camera movement, high visual quality, and accurate execution of the requested action.
-
-FINAL INSTRUCTION:
-Generate a visually consistent, realistic, smooth, and professionally cinematic video. Follow the user's description precisely. Preserve the original character and scene identity. Animate only what is necessary to accomplish the requested action. Never sacrifice visual consistency or natural movement for unnecessary cinematic effects.</pre>
-
-  <div class="copy-head"><span class="cp-label">Additional rules for 3D cartoon animation</span><button type="button" class="secondary" data-copy="#cartoon-rules">Copy</button></div>
-<pre class="copy-block" id="cartoon-rules">ADDITIONAL RULES FOR 3D CARTOON ANIMATION
-
-Maintain consistent 3D character models, including facial design, colors, textures, proportions, and clothing.
-Preserve the original cartoon art style throughout the entire video.
-Use smooth, professional 3D character animation with expressive and believable movements.
-Maintain consistent character proportions, even during exaggerated cartoon actions.
-Use natural cartoon facial expressions, eye movements, blinking, and lip synchronization when speaking.
-Maintain consistent 3D geometry, textures, materials, and object shapes.
-Use believable cartoon physics while preserving the intended animation style.
-Ensure natural contact between characters and objects.
-Maintain consistent lighting, shadows, reflections, and environmental details.
-Avoid character model deformation, unwanted morphing, texture flickering, and inconsistent proportions.
-Use expressive body language and appealing character poses.
-Maintain smooth transitions between animation poses and actions.
-Preserve the original 3D cartoon visual style. Do not unexpectedly switch to photorealism, 2D animation, anime, or another art style.
-Maintain consistent camera perspective, depth, and cinematic composition.
-Keep the animation visually polished, clean, colorful, and professionally rendered.
-
-FINAL 3D CARTOON INSTRUCTION:
-Prioritize consistent character design, appealing animation, expressive emotions, smooth movement, believable cartoon physics, and consistent 3D rendering quality. Preserve the original visual style throughout the entire video.</pre>
-</section>
-
-<section class="panel rules">
-  <h2>Master prompt: 8-second Punjabi cartoon comedy</h2>
-  <p class="muted">A complete template for one 8-second Google Flow clip with two locked characters. Copy it, then change the title, characters, story and dialogue for your episode and keep the rules.</p>
-  <div class="copy-head"><span class="cp-label">Master AI video generation prompt</span><button type="button" class="secondary" data-copy="#master-prompt">Copy</button></div>
-<pre class="copy-block" id="master-prompt">COMPLETE MASTER AI VIDEO GENERATION PROMPT
-
-1. VIDEO SPECIFICATIONS
-
-TITLE: Abu Da Wi-Fi Password
-DURATION: EXACTLY 8 SECONDS.
-VIDEO FORMAT: Vertical 9:16.
-RESOLUTION: 1080p minimum, preferably 4K.
-FRAME RATE: 24 FPS.
-VISUAL STYLE: Premium cinematic 3D animated cartoon comedy.
-LANGUAGE: Authentic Pakistani Punjabi.
-LOCATION: Rural Punjab, Pakistan.
-GENRE: Family-friendly desi comedy.
-
-2. PERMANENT CHARACTER IDENTITY LOCK
-
-CHARACTER A — ABU
-Pakistani Punjabi cartoon father.
-Age: 55 years.
-Round face with big cheeks.
-Thick black moustache.
-Thick expressive eyebrows.
-Large expressive dark eyes.
-White traditional turban.
-White shalwar kameez.
-Brown waistcoat.
-Slightly heavy body.
-Deep, slightly rough mature Punjabi male voice.
-Personality: Strict, confident, traditional and unintentionally funny.
-
-CHARACTER B — SON
-Pakistani Punjabi cartoon young man.
-Age: 22 years.
-Round youthful face.
-Large expressive eyes.
-Short black hair.
-Blue shalwar kameez.
-Slim body.
-Young, energetic Punjabi male voice.
-Personality: Clever, playful and mischievous.
-
-CHARACTER CONSISTENCY RULES
-- Both characters must look exactly the same in every frame.
-- Preserve identical facial structure, skin tone, eye color, clothing, hairstyle, moustache and body proportions.
-- Maintain consistent character height differences.
-- Never change character age or appearance.
-- Never swap faces or voices.
-- Never generate duplicate characters.
-- No random accessories or clothing changes.
-- Use the same character reference images for every future episode.
-- Character identity has higher priority than visual effects.
-
-3. PERMANENT VOICE IDENTITY LOCK
-
-ABU VOICE: Deep, mature, slightly rough Pakistani Punjabi male voice. Confident, serious and naturally funny delivery.
-SON VOICE: Young, energetic Pakistani Punjabi male voice. Playful, expressive and conversational delivery.
-
-VOICE RULES
-- Maintain identical voices in all episodes.
-- Preserve pitch, accent, pronunciation and speaking rhythm.
-- Use natural Pakistani Punjabi vocabulary.
-- No robotic voices.
-- No sudden voice changes.
-- No voice swapping.
-- No artificial speed changes.
-- No additional speakers.
-
-4. DIALOGUE WORD COUNT AND TIMING LOCK
-
-THIS IS A STRICT RULE.
-- Exactly 8 seconds per video.
-- Maximum 16 spoken words with one speaker, 14 with two or more.
-- Ideal dialogue length: 12–14 words.
-- Count words spoken by ALL characters combined.
-- Keep dialogue short and natural.
-- Allow breathing and comedic pauses.
-- Never rush dialogue to fit the video.
-- Never cut off the final word.
-- Never add filler words.
-- Never invent additional dialogue.
-- Never add voice-over or background conversations.
-Prioritize clear pronunciation, natural delivery and accurate lip-sync.
-
-5. ENVIRONMENT AND LOCATION LOCK
-
-Location: Traditional Pakistani Punjabi village courtyard.
-Environment details:
-- Beautiful traditional village house.
-- Charpai with woven rope.
-- Clay water pot.
-- Small wooden table.
-- Traditional village architecture.
-- Warm morning sunlight.
-- Natural shadows.
-- Authentic rural Punjabi atmosphere.
-
-ENVIRONMENT RULES
-- Maintain identical background throughout the scene.
-- Keep objects in their original positions.
-- No disappearing or floating objects.
-- No random background changes.
-- No distracting background activity.
-- Maintain consistent lighting and colors.
-
-6. EXACT STORY AND DIALOGUE
-
-STORY: Abu is sitting on a charpai drinking tea. His son approaches with a smartphone and asks for the Wi-Fi password.
-
-SCENE 1 — 0.0 TO 2.0 SECONDS
-CAMERA: Medium shot showing both characters.
-ACTION: Son approaches Abu holding a smartphone. He looks curious and asks:
-SON: "Abu ji, Wi-Fi password ki ae?"
-Abu listens silently.
-
-SCENE 2 — 2.0 TO 5.2 SECONDS
-CAMERA: Medium close-up of Abu.
-ACTION: Abu strokes his thick moustache, raises his eyebrows and replies confidently:
-ABU: "Pehlan bill bhar!"
-Deliver the line with a serious, funny expression.
-
-SCENE 3 — 5.2 TO 8.0 SECONDS
-CAMERA: Close-up of Son.
-ACTION: Son looks disappointed, then looks toward the camera and says:
-SON: "Main data te khush aan!"
-Abu gives him a hilarious angry stare in the background.
-END: Finish with Abu's exaggerated angry facial expression.
-
-7. STRICT PUNJABI LIP-SYNC RULES
-- Exact dialogue must be spoken word for word.
-- Every spoken syllable must match mouth movement.
-- Use natural Pakistani Punjabi pronunciation.
-- Only the speaking character moves their mouth.
-- The listening character keeps their mouth closed.
-- No overlapping dialogue.
-- No delayed mouth movements.
-- No incorrect speaker attribution.
-- No random mouth movements.
-- No invented or translated words.
-- No dialogue outside the written script.
-
-8. PROFESSIONAL 3D ANIMATION QUALITY
-Use premium animated feature-film quality.
-- Beautiful stylized 3D character design.
-- Detailed skin and fabric textures.
-- Natural facial muscle movement.
-- Realistic body mechanics.
-- Smooth walking and hand gestures.
-- Correct hands and fingers.
-- Natural eye movement and blinking.
-- Expressive eyebrows.
-- Accurate emotional reactions.
-- Smooth body movement.
-- Consistent character proportions.
-- Natural weight and gravity.
-- Clean animation without jitter or flickering.
-Characters should look like professionally animated cartoon characters, not live-action humans or flat 2D drawings.
-
-9. FACIAL EXPRESSION AND COMEDY RULES
-- Abu must have a confident, serious comic personality.
-- Son must have expressive and playful reactions.
-- Use exaggerated cartoon expressions.
-- Match facial expressions with dialogue meaning.
-- Use natural eye contact.
-- Use proper comic pauses.
-- The punchline must have a clear visual reaction.
-- Avoid overacting that distorts character faces.
-- Make the humor understandable without subtitles.
-
-10. PROFESSIONAL DIRECTOR AND CAMERA RULES
-DIRECTOR STYLE: Professional Pakistani 3D animated comedy film.
-- Use cinematic medium shots and close-ups.
-- Keep characters correctly positioned.
-- Maintain spatial continuity.
-- Use smooth camera transitions.
-- Avoid unnecessary camera movement.
-- No random zooming.
-- No shaky camera.
-- Keep important facial expressions visible.
-- Use close-ups for punchlines.
-- Ensure characters remain inside the vertical frame.
-- Never cut away during important dialogue.
-
-11. SOUND DESIGN RULES
-- Clear Pakistani Punjabi dialogue.
-- Consistent voice volume.
-- Natural village ambience.
-- Subtle comedic sound effects.
-- Background music must remain very low.
-- No music overpowering dialogue.
-- No distorted audio.
-- No sudden audio changes.
-- No unnecessary sound effects during speech.
-
-12. TECHNICAL QUALITY LOCK
-- Vertical 9:16 composition.
-- 1080p or higher.
-- Smooth 24 FPS animation.
-- High-quality rendering.
-- Consistent lighting.
-- Detailed textures.
-- Natural shadows.
-- Clean edges.
-- No visual flickering.
-- No frame glitches.
-- No compression artifacts where avoidable.
-
-13. STRICT NEGATIVE PROMPT
-NEVER GENERATE:
-Different faces between frames. Character identity changes. Clothing changes. Hairstyle changes. Moustache changes.
-Voice changes. Incorrect lip-sync. Wrong dialogue. Extra dialogue. Extra characters. Duplicate characters.
-Extra fingers. Extra limbs. Distorted hands. Deformed mouths. Frozen expressions. Robotic movements.
-Floating objects. Flickering. Random camera cuts. Changing backgrounds. Unwanted subtitles. Random text.
-Watermarks. Unrequested scenes.
-
-14. FINAL DIRECTOR COMMAND
-Generate exactly 8 seconds of premium-quality Pakistani Punjabi 3D cartoon comedy.
-The highest priorities are:
-- Character identity consistency.
-- Voice identity consistency.
-- Accurate Punjabi dialogue.
-- Perfect lip-sync.
-- Maximum 14 spoken words with two speakers (16 with one).
-- Natural dialogue timing.
-- Smooth professional 3D animation.
-- Strong comedic expressions.
-- Visual and environmental continuity.
-- A memorable punchline.
-Follow every instruction strictly.
-Do not improvise dialogue, change character designs, alter voices, add scenes or exceed the 8-second duration.
-The final result must look like a professionally produced episode from a consistent Pakistani Punjabi 3D cartoon comedy series.</pre>
+Sound: a cartoon boing at the end.</pre>
 </section>
 {% endblock %}

@@ -29,14 +29,14 @@ from sqlalchemy import func, select
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.factories import Providers
 from app.genres import plan_rules, valid_genre
-from app.timeline import bible_from_prompt, missing_lines, script_from_timeline
+from app.timeline import bible_from_prompt, keep_prompt, missing_lines, script_from_timeline
 from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
 from app.script import (CONTINUE_FROM, ENTER_SHOT, FRAME_START, LEAVE_SHOT, MAX_SCENE_IMAGES, STARTS_FROM,
                         cast_sheet, is_structured, merged_sheet,
                         still_prompt, compile_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
                         scene_images, scene_warnings, clean_text, style_from_prompt, prompt_limit,
-                        FLOW_MOST_WORDS, spoken_words)
+                        FLOW_MOST_WORDS, keep_places, spoken_words)
 from app.video_join import JoinError, clip_seconds, frame_at, join_clips, last_frame, late_cut, trim_clip
 
 log = logging.getLogger("app.generation")
@@ -196,8 +196,7 @@ class GenerationService:
                     # scenes start from the previous clip's real last frame: a redraw of it would change things.
                     paths = scene_images(scene.script(), library, gen.ref_images)
                     images = [Path(p) for p in paths[:len(names)]] + ([frame] if frame else [])
-                    job_id = gen_client.still(still_prompt(scene.script(), library, gen.style, gen.bible,
-                                                           gen.provider == Provider.FLOW), gen.aspect,
+                    job_id = gen_client.still(still_prompt(scene.script(), library, gen.style, gen.bible), gen.aspect,
                                               ref, images, names, previous=bool(frame), provider=gen.provider)
                     gen.worker_job_id, gen.job_kind, gen.submitted_at, gen.poll_errors = \
                         job_id, f"still:{scene.position}", utcnow(), 0
@@ -382,8 +381,7 @@ class GenerationService:
                   for i, at in enumerate(CHECK_STILLS, 1)] if length else []
         # clothes the prompt asks for instead of a pictured character's own (app/script.py merged_sheet)
         by_name = {c["name"]: c for c in library}
-        outfits = {n: merged_sheet(by_name[n], gen.bible, gen.provider == Provider.FLOW)
-                   .get("from_prompt", {}).get("outfit", "")
+        outfits = {n: merged_sheet(by_name[n], gen.bible).get("from_prompt", {}).get("outfit", "")
                    for n in names if n in by_name}
         try:
             job_id = client.review_clip(names, scene.action or "", lines, f"gen-{gen.id}-c{scene.position}",
@@ -649,10 +647,14 @@ class GenerationService:
                 gen.status, gen.error = GenStatus.FAILED, "Gemini didn't write all the scenes. Retry it."
                 return
             gen.bible = normalize_bible(st.bible)
+            scenes = [normalize_scene(item, cast) for item in items[:len(gen.scenes)]]
+            if gen.provider == Provider.FLOW:  # what the prompt already says stays as written; Gemini fills the rest
+                scenes, gen.bible = keep_prompt(gen.prompt, scenes, gen.bible, cast, scene_seconds(gen))
             # Every picked character is in the video with their picture, as it is: one the story found no role for
             # is still put in a scene, as themselves.
-            script = include_cast([ensure_cast(normalize_scene(item, cast), cast, gen.bible)
-                                   for item in items[:len(gen.scenes)]], cast)
+            script = include_cast([ensure_cast(sc, cast, gen.bible) for sc in scenes], cast)
+            if gen.provider == Provider.FLOW:  # nobody swaps places from one clip to the next
+                script = keep_places(script)
             # A Flow script that dropped or reworded a line, or crams a clip with more words than 8 seconds can say:
             # the user sees it first. Its length stays as asked; the script page warns of a tight clip.
             if gen.provider == Provider.FLOW and (missing_lines(gen.prompt, script)

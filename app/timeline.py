@@ -8,7 +8,7 @@ dialogue rather than words in the action, and its closing "Sound:" note in every
 """
 import re
 
-from app.script import TEXT_LIMITS, clean_text
+from app.script import BIBLE_CAST_LIMITS, MAX_LINES, SHOT_KEYS, TEXT_LIMITS, clean_text
 
 # "Scene 1 (0–5 sec):", "0-5 seconds:", "Scene 2:", "(10–15s):"
 MARKER = re.compile(
@@ -25,6 +25,10 @@ NOT_A_PERSON = re.compile(r"^(?:setting|sound|sounds|style|visual style|music|ba
                           r"rules|strict rules|format|language|camera|scene|location|place|time|mood|tone|genre|"
                           r"animation|ending|hook|story|plot|characters?|dialogue|lines?|voice|voices)$", re.I)
 VOICE = re.compile(r"\bvoice\s*:\s*", re.I)
+# "Bahu — Voice: …", "Shinda: a man in his 30s… Voice: …" or a "Voice: …" line under "Shinda: …": whose voice it is
+NAMED_LINE = re.compile(r"\s*(?P<name>[^\W\d_][\w'’]*(?:[ -][^\W\d_][\w'’]*){0,2})\s*(?:[—–]|-+|:)\s*(?P<text>.*)")
+# "Camera: medium shot, eye level, slow push-in." written into a moment
+CAMERA = re.compile(r"(?<![\w-])camera\s*:", re.I)
 # "Shinda says: "…"", "Billa laughs and asks: “…”": a spoken line (its speaker is the first known name before the verb)
 SPEECH_VERBS = (r"says|said|asks|asked|replies|replied|answers|answered|shouts|shouted|yells|yelled|whispers|"
                 r"whispered|exclaims|exclaimed|adds|added|cries|cried|calls|called|screams|screamed|mutters|"
@@ -60,6 +64,77 @@ def _buckets(segments: list, scene_count: int, clip_seconds: int, timed: bool) -
         at = start if timed else i * scene_count * clip_seconds / len(segments)
         buckets[min(int(at // clip_seconds), scene_count - 1)].append(text)
     return buckets
+
+
+def _scene_texts(prompt: str, scene_count: int, clip_seconds: int) -> list[list[str]] | None:
+    """The prompt's timeline entries for each of the `scene_count` scenes, or None when it has none or they don't
+    cover every scene."""
+    segments = _segments(prompt or "")
+    if not segments:
+        return None
+    timed = all(s[0] is not None for s in segments)
+    buckets = _buckets(segments, scene_count, clip_seconds, timed)
+    if timed and any(not b for b in buckets):
+        # The times leave a scene empty: the prompt's timeline is shorter than the scenes (a 20-second prompt made of
+        # 8-second Flow scenes is 24 s long), so its moments are spread over the scenes in order instead.
+        buckets = _buckets(segments, scene_count, clip_seconds, timed=False)
+    return None if any(not b for b in buckets) else buckets
+
+
+def _joined(texts: list[str]) -> str:
+    return " Then ".join(t.rstrip(" .") + "." for t in texts)
+
+
+def prompt_voices(prompt: str) -> dict[str, str]:
+    """Each voice the prompt gives, by lower-case name: "Bahu — Voice: …", "Shinda: a man… Voice: …", or a
+    "Voice: …" line right under "Shinda: …"."""
+    voices, last = {}, None
+    for line in (prompt or "").splitlines():
+        m = NAMED_LINE.match(line)
+        if m and not NOT_A_PERSON.match(m.group("name")) and not MARKER.match(line.strip()):
+            last, text = m.group("name").strip(), m.group("text")
+        elif last and VOICE.match(line.strip()):
+            text = line
+        else:
+            last = None
+            continue
+        voice = (VOICE.split(text, maxsplit=1) + [""])[1].strip(" .;,")
+        if voice:
+            voices[last.lower()] = voice
+    return voices
+
+
+def keep_prompt(prompt: str, scenes: list[dict], bible: dict, cast: list[dict],
+                clip_seconds: int) -> tuple[list[dict], dict]:
+    """Gemini's scenes and bible with what the prompt itself already says kept as written: each moment's action
+    (with its "Camera: …", which then replaces Gemini's shot), its spoken lines and who says them, and each voice the
+    prompt gives. Gemini's script only fills in the rest (places in the frame, objects, setting, sound). A scene whose
+    written lines can't all be matched to a speaker stays as Gemini wrote it."""
+    buckets = _scene_texts(prompt, len(scenes), clip_seconds)
+    ids = {c["name"].lower(): c["id"] for c in cast}
+    names = list(dict.fromkeys([c["name"] for c in cast] + [c["name"] for c in bible.get("characters") or []]))
+    out = []
+    for sc, texts in zip(scenes, buckets or [None] * len(scenes)):
+        action, lines = _speech(_joined(texts), names) if texts else ("", [])
+        if not texts or re.search(QUOTE, action):
+            out.append(sc)
+            continue
+        sc = {**sc, "action": clean_text(action, TEXT_LIMITS["action"], multiline=True),
+              "dialogue": [{"id": ids.get(d["name"].lower()), **d} for d in lines][:MAX_LINES]}
+        if CAMERA.search(action):
+            sc["shot"] = dict.fromkeys(SHOT_KEYS, "")
+        out.append(sc)
+    voices = prompt_voices(prompt)
+    bible = {**bible, "characters": [{**c, "voice": voices.get(c["name"].lower()) or c["voice"]}
+                                     for c in bible.get("characters") or []]}
+    entries = {c["name"].lower(): c for c in bible.get("cast") or []}
+    for c in cast:
+        voice = voices.get(c["name"].lower())
+        if voice:
+            entry = entries.setdefault(c["name"].lower(), {**dict.fromkeys(BIBLE_CAST_LIMITS, ""), "name": c["name"]})
+            entries[c["name"].lower()] = {**entry, "voice": voice}
+    bible["cast"] = list(entries.values())
+    return out, bible
 
 
 def bible_from_prompt(prompt: str, cast: list[dict]) -> dict:
@@ -101,7 +176,8 @@ def _speech(action: str, names: list[str]) -> tuple[str, list[dict]]:
     """The spoken lines written into a moment (`Shinda says: "…"`) as dialogue, and the action without their words,
     so they're spoken in each person's voice and in sync, and never taken for on-screen text."""
     who = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) or r"[^\W\d_][\w'’-]*"
-    pattern = re.compile(rf"(?P<lead>(?<!\w)(?P<name>{who})(?!\w)[^.!?:\"“”]{{0,60}}?\b(?:{SPEECH_VERBS}))\s*:?\s*"
+    pattern = re.compile(rf"(?P<lead>(?<!\w)(?P<name>{who})(?!\w)[^.!?:\"“”]{{0,60}}?\b(?:{SPEECH_VERBS})"
+                         rf"(?:\s+[^\W\d_]+ly)?)\s*:?\s*"
                          rf"{QUOTE}(?P<line>[^\"“”„«»]+){QUOTE}\s*[.!?]?", re.I)
     lines = []
 
@@ -119,16 +195,8 @@ def script_from_timeline(prompt: str, scene_count: int, cast: list[dict], clip_s
     has none or it doesn't cover every scene. A picked character, or a person the prompt describes
     (`bible_from_prompt`), is in a scene when it's named there; their written lines become the scene's dialogue, and
     the prompt's closing "Sound:" note goes with every scene."""
-    segments = _segments(prompt or "")
-    if not segments:
-        return None
-    timed = all(s[0] is not None for s in segments)
-    buckets = _buckets(segments, scene_count, clip_seconds, timed)
-    if timed and any(not b for b in buckets):
-        # The times leave a scene empty: the prompt's timeline is shorter than the scenes (a 20-second prompt made of
-        # 8-second Flow scenes is 24 s long), so its moments are spread over the scenes in order instead.
-        buckets = _buckets(segments, scene_count, clip_seconds, timed=False)
-    if any(not b for b in buckets):
+    buckets = _scene_texts(prompt, scene_count, clip_seconds)
+    if buckets is None:
         return None
     m = SETTING.search(prompt)
     setting = clean_text(m.group(1), TEXT_LIMITS["setting"]) if m else ""
@@ -138,8 +206,7 @@ def script_from_timeline(prompt: str, scene_count: int, cast: list[dict], clip_s
     names = [c["name"] for c in cast] + [c["name"] for c in bible["characters"]]
     scenes = []
     for texts in buckets:
-        action = " Then ".join(t.rstrip(" .") + "." for t in texts)
-        action, lines = _speech(action, names)
+        action, lines = _speech(_joined(texts), names)
         action = clean_text(action, TEXT_LIMITS["action"], multiline=True)
         said = " ".join([action, *(d["name"] for d in lines)])
         who = [{"name": n} for n in names if re.search(rf"(?<!\w){re.escape(n)}(?!\w)", said, re.I)]

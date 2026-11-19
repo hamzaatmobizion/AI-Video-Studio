@@ -128,7 +128,12 @@ def valid_genre(genre: str, prompt: str) -> str:
 # What a Flow script must never ask of Veo (a stick "held in her right hand" while she claps stood up on its own)
 FLOW_RULES = ["Someone holding an object can't clap: in the same scene they either put it down first (where it then "
               "stays) or keep holding it and tap it to the beat instead. Never write both 'holds X' and 'claps' for "
-              "one person in one scene."]
+              "one person in one scene.",
+              "Each person keeps the same place in the frame (left, centre or right) in every scene: never swap who "
+              "stands where, since each clip carries on from the last frame of the one before and people are told "
+              "apart by where they stand.",
+              "Each scene's props give where each object is when that scene starts (where the scene before left "
+              "it), never where its own action leaves it."]
 
 
 def plan_rules(genre: str, scene_count: int, flow: bool = False) -> str:

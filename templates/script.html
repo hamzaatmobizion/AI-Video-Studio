@@ -57,7 +57,7 @@
     <div id="bible-props"></div>
     <datalist id="prop-options"></datalist>
     <p class="muted small">Each object's look goes into every clip it's in, with where it is in that scene and who holds it (set under each scene).</p>
-    <p class="muted small">The palette goes into every clip prompt. Each invented character's look and “never” list are added to every scene they're in. {% if g.provider == 'flow' %}A picked character keeps the face and hair in their picture, but wears the outfit here when it has one: their age and look here are used only for one without a picture.{% else %}A picked character always looks exactly as in their picture: their age, look and outfit here are used only for one without a picture.{% endif %} A voice here replaces their saved voice; an empty field keeps the saved one.</p>
+    <p class="muted small">The palette goes into every clip prompt. Each invented character's look and “never” list are added to every scene they're in. A picked character always looks exactly as in their picture: their age, look and outfit here are used only for one without a picture. A voice here replaces their saved voice; an empty field keeps the saved one.</p>
   </fieldset>
   {% if unused and g.scenes | selectattr('action') | list %}
     <p class="notice small">Not in any scene: {{ unused | join(", ") }}. The story had no part that fits {{ 'them' if unused | length > 1 else 'this character' }}, so {{ 'they were' if unused | length > 1 else 'it was' }} left out rather than shown as someone else. Add them to a shot below if you want them in.</p>

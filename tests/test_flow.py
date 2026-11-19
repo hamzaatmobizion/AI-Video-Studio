@@ -174,23 +174,6 @@ def test_prompt_check_counts_flow_clips(authed):
     assert any("2 clips of 8 seconds" in n["text"] for n in notes)
 
 
-def test_flow_pictured_character_wears_the_outfit_the_prompt_gives_them(app, authed, drive_connected, net, tmp_path):
-    """On Flow the prompt's clothes win over the picture's (a suit in the portrait, a kurta in the story); Gemini
-    keeps the picture's."""
-    from app import script
-    ali = add_character(authed, image=True, outfit="navy suit").json()["id"]
-    sheet = {"id": ali, "name": "Ali", "outfit": "navy suit", "image_path": "ali.png"}
-    bible = {"cast": [{"name": "Ali", "outfit": "blue kurta", "voice": "deep"}]}
-    assert script.merged_sheet(sheet, bible)["from_prompt"] == {"voice": "deep"}
-    assert script.merged_sheet(sheet, bible, outfits=True)["from_prompt"]["outfit"] == "blue kurta"
-    gid = flow_idea(authed, prompt="Ali in a blue kurta waves", duration=8, cast=str(ali)).json()["id"]
-    net.worker.jobs["job1"].update(status="done", bible={"cast": [{"name": "Ali", "outfit": "blue kurta"}]},
-                                   scenes=[{"characters": [{"id": ali, "name": "Ali"}], "action": "Ali waves."}])
-    tick(app)
-    prompt = gen(app, gid).scenes[0].prompt
-    assert "wearing blue kurta (not the clothes in the picture)" in prompt and "same face, hair and style" in prompt
-
-
 def test_flow_keeps_its_length_and_stops_only_for_a_crammed_clip(app, authed, drive_connected, net):
     """A tight clip (up to 20 words) is made as written, never split into more scenes; only more than 20 words in
     8 seconds waits for the user to shorten a line."""
@@ -233,15 +216,16 @@ def test_check_each_clip_is_ticked_on_the_flow_screen_only(authed, drive_connect
 def test_flow_clip_where_someone_holds_something_and_claps(authed):
     """Video 133: Ammi "holding her wooden stick in her right hand" and "clapping": Veo clapped with both hands and the
     stick stood up on its own. On Flow the planner is told not to write it, the script page warns, and the clip
-    prompt says to keep hold of it; Gemini's Studio prompts are unchanged."""
+    prompt's "Objects" rule says what is held stays in hand; Gemini's Studio prompts are unchanged."""
     from app import genres, script
     scene = {"characters": [{"name": "Ammi"}],
              "action": "Ammi stands holding her wooden stick in her right hand, smiling and clapping to the beat."}
     assert script.holds_and_claps(scene) and not script.holds_and_claps({"action": "Ammi claps to the beat."})
     assert script.holds_and_claps({"action": "Ammi claps her left hand against her resting stick.",  # its scene 2
                                    "props": [{"name": "stick", "state": "held in ammi's right hand"}]})
-    assert script.HOLD_NOTE in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT, flow=True)
-    assert script.HOLD_NOTE not in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT)
+    held = "what is held stays in that hand or is put down; nothing floats or stands up on its own"
+    assert held in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT, flow=True)
+    assert held not in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT)
     assert any("also claps" in w for w in script.scene_warnings(scene, "", seconds=script.FLOW_SECONDS))
     assert not any("also claps" in w for w in script.scene_warnings(scene, "", seconds=10))
     assert genres.FLOW_RULES[0] in genres.plan_rules("music", 2, flow=True)
@@ -284,3 +268,100 @@ def test_flow_clip_uploaded_by_hand_loses_a_late_cut(app, authed, drive_connecte
     clip = _cut_clip(tmp_path / "scene.mp4").read_bytes()
     authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", clip, "video/mp4")})
     assert abs(clip_seconds(Path(gen(app, gid).scenes[0].clip_path)) - 7.7) < 0.1
+
+
+def test_flow_clip_prompt_ends_in_a_few_short_rules():
+    """A Flow clip prompt closes with one short line each for the shot, people, objects, motion, speech and look,
+    not the Studio's paragraphs, so the action keeps its room."""
+    from app import script
+    scene = {"setting": "a courtyard", "characters": [{"name": "Ali"}, {"name": "Sara"}], "action": "Ali waves.",
+             "dialogue": [{"name": "Ali", "line": "Salaam"}, {"name": "Sara", "line": "Salaam ji"}]}
+    flow = script.compile_prompt(scene, [], style="Pixar-style 3D cartoon", flow=True, music=False,
+                                 room=script.FLOW_MAX_PROMPT)
+    lines = flow.split("\n")
+    rules = lines[next(i for i, x in enumerate(lines) if x.startswith("Shot:")):]
+    assert [r.split(":")[0] for r in rules] == ["Shot", "People", "Objects", "Motion", "Speech", "Look"]
+    assert len("\n".join(rules)) < 900 and script.CONTINUITY not in flow and script.ACTING not in flow
+    assert "one Pixar-style 3D cartoon look for everyone" in flow and "no background music" in flow
+    studio = script.compile_prompt(scene, [], style="Pixar-style 3D cartoon", room=script.FLOW_MAX_PROMPT)
+    assert script.CONTINUITY in studio and "Shot: one continuous shot" not in studio
+
+
+
+def test_flow_pictured_character_stays_exactly_as_their_picture():
+    """A picked character with a portrait is shown exactly as in it, clothes included, whatever the prompt says."""
+    from app import script
+    cast = [{"id": 5, "name": "Bilal", "outfit": "navy suit", "image_path": "bilal.png"}]
+    bible = {"cast": [{"name": "Bilal", "outfit": "blue kurta and white shalwar", "voice": "sharp"}]}
+    scene = {"characters": [{"id": 5, "name": "Bilal"}], "action": "Bilal folds his arms."}
+    prompt = script.compile_prompt(scene, cast, bible=bible, flow=True, room=script.FLOW_MAX_PROMPT)
+    assert "exactly as in reference image 1 (same face, hair, outfit and style)" in prompt
+    assert "blue kurta" not in prompt
+
+
+def test_flow_people_keep_their_place_from_scene_to_scene(app, authed, drive_connected, net):
+    """Video 136: scene 3 put Shani on the left where scene 2 ended with Bilal, so Veo (going by where people stand
+    in the last frame) gave each the other's actions and lines. On Flow, everyone keeps their place."""
+    from app import genres, script
+    swapped = [{"characters": [{"name": "Bilal", "position": "frame left"}, {"name": "Shani", "position": "frame right"}],
+                "action": "Bilal holds the plate."},
+               {"characters": [{"name": "Shani", "position": "frame left"}, {"name": "Bilal", "position": "frame right"},
+                               {"name": "Ammi", "position": "background"}],
+                "action": "Shani on frame left squeezes a lemon. Bilal, on frame right, slaps his forehead."}]
+    kept = script.keep_places(swapped)[1]
+    assert [(p["name"], p["position"]) for p in kept["characters"]] == [
+        ("Shani", "frame right"), ("Bilal", "frame left"), ("Ammi", "background")]
+    assert kept["action"] == "Shani on frame right squeezes a lemon. Bilal, on frame left, slaps his forehead."
+    assert "never swap who stands where" in genres.plan_rules("comedy", 3, flow=True)
+    gid = flow_idea(authed, duration=16).json()["id"]
+    net.worker.jobs["job1"].update(status="done", scenes=swapped)
+    tick(app)
+    assert [p["position"] for p in gen(app, gid).scenes[1].characters] == ["frame right", "frame left", "background"]
+
+
+MASK_PROMPT = """A 16-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
+Setting: a cosy village courtyard at night, a woven charpai, a small steel bowl of green face-mask paste.
+
+Bahu — Voice: young woman, calm and cheeky, Pakistani Punjabi accent.
+Ammi: an old woman in a sari.
+Voice: older woman, loud and dramatic.
+
+0–8 seconds: Camera: medium shot, eye level, static. Bahu sits on the left, cucumber slices on her eyes. Ammi walks \
+in on the right and jumps back. Ammi screams: "ہائے ربا! بھوت!" Bahu, not moving, says calmly: "امی جی، میں آں!"
+
+8–16 seconds: Bahu lifts the cucumber slices off her eyes. Bahu says: "فیس ماسک اے!" Ammi rubs paste on her cheeks.
+
+Sound: crickets at night."""
+
+
+def test_flow_keeps_what_the_prompt_already_says(app, authed, drive_connected, net):
+    """Video 139: Gemini's script gave Bahu her saved "Urdu accent, middle-aged" voice instead of the prompt's, and
+    added a stick to Ammi's action. On Flow, the prompt's own actions, camera, lines and voices are kept as written;
+    Gemini's script only adds places, objects and the rest."""
+    bahu = add_character(authed, name="Bahu", voice="female, Urdu accent, middle-aged").json()["id"]
+    ammi = add_character(authed, name="Ammi", voice="elderly, deep").json()["id"]
+    gemini = [{"characters": [{"name": "Bahu", "position": "frame left"}, {"name": "Ammi", "position": "frame right"}],
+               "action": "Bahu sits still. Ammi walks in holding her stick in her left hand.",
+               "shot": {"framing": "Medium", "lens": "35mm"},
+               "dialogue": [{"name": "Ammi", "line": "ہائے ربا!"}, {"name": "Bahu", "line": "امی جی، میں آں!"}],
+               "props": [{"name": "steel bowl", "state": "on the charpai"}]},
+              {"characters": [{"name": "Bahu", "position": "frame left"}, {"name": "Ammi", "position": "frame right"}],
+               "action": "Bahu lifts the slices off. Ammi drops her stick and rubs paste on her cheeks.",
+               "dialogue": [{"name": "Bahu", "line": "فیس ماسک اے!"}]}]
+    gid = flow_idea(authed, prompt=MASK_PROMPT, duration=16, cast=[str(bahu), str(ammi)]).json()["id"]
+    net.worker.jobs["job1"].update(status="done", scenes=gemini, bible={"cast": [
+        {"name": "Bahu", "voice": "female, Urdu accent, middle-aged"}, {"name": "Ammi", "voice": "elderly, deep"}]})
+    tick(app)
+    g = gen(app, gid)
+    first, second = g.scenes
+    assert first.action == ("Camera: medium shot, eye level, static. Bahu sits on the left, cucumber slices on her "
+                            "eyes. Ammi walks in on the right and jumps back. Ammi screams. Bahu, not moving, says "
+                            "calmly.")
+    assert [(d["name"], d["line"]) for d in first.dialogue] == [("Ammi", "ہائے ربا! بھوت!"), ("Bahu", "امی جی، میں آں!")]
+    assert not any(first.shot.values()) and second.shot.get("lens", "") == ""
+    assert "stick" not in second.action and first.props == [{"name": "steel bowl", "state": "on the charpai"}]
+    assert [p["position"] for p in first.characters] == ["frame left", "frame right"]
+    assert {c["name"]: c["voice"] for c in g.bible["cast"]} == {
+        "Bahu": "young woman, calm and cheeky, Pakistani Punjabi accent", "Ammi": "older woman, loud and dramatic"}
+    assert "Bahu (voice: young woman, calm and cheeky, Pakistani Punjabi accent) says" in first.prompt
+    assert "Urdu accent" not in first.prompt and "Medium shot" not in first.prompt

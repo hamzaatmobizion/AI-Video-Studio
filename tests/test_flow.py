@@ -1,5 +1,6 @@
 """The Flow screen: the same Studio, with every clip made in Google Flow (Veo 3.1 - Lite, Flow credits, 8 s scenes)."""
 import json
+from pathlib import Path
 
 from app.enums import GenStatus
 from app.routes.api import duration_from_prompt
@@ -227,3 +228,59 @@ def test_check_each_clip_is_ticked_on_the_flow_screen_only(authed, drive_connect
     assert 'name="check_clips" value="1" checked' in flow
     assert 'name="check_clips" value="1" checked' not in authed.get("/").text
 
+
+
+def test_flow_clip_where_someone_holds_something_and_claps(authed):
+    """Video 133: Ammi "holding her wooden stick in her right hand" and "clapping": Veo clapped with both hands and the
+    stick stood up on its own. On Flow the planner is told not to write it, the script page warns, and the clip
+    prompt says to keep hold of it; Gemini's Studio prompts are unchanged."""
+    from app import genres, script
+    scene = {"characters": [{"name": "Ammi"}],
+             "action": "Ammi stands holding her wooden stick in her right hand, smiling and clapping to the beat."}
+    assert script.holds_and_claps(scene) and not script.holds_and_claps({"action": "Ammi claps to the beat."})
+    assert script.holds_and_claps({"action": "Ammi claps her left hand against her resting stick.",  # its scene 2
+                                   "props": [{"name": "stick", "state": "held in ammi's right hand"}]})
+    assert script.HOLD_NOTE in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT, flow=True)
+    assert script.HOLD_NOTE not in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT)
+    assert any("also claps" in w for w in script.scene_warnings(scene, "", seconds=script.FLOW_SECONDS))
+    assert not any("also claps" in w for w in script.scene_warnings(scene, "", seconds=10))
+    assert genres.FLOW_RULES[0] in genres.plan_rules("music", 2, flow=True)
+    assert genres.FLOW_RULES[0] not in genres.plan_rules("music", 2)
+
+
+def test_flow_music_video_lines_are_sung(authed):
+    from app import script
+    scene = {"characters": [{"name": "Bahu"}], "action": "Bahu dances.",
+             "dialogue": [{"name": "Bahu", "line": "ساڈے دل وچ چاہواں نیں"}]}
+    assert "Bahu sings: 'ساڈے دل وچ چاہواں نیں'" in script.compile_prompt(scene, [], genre="music", flow=True)
+    assert "Bahu says:" in script.compile_prompt(scene, [], genre="music")  # Gemini Studio: as before
+    assert "Bahu says:" in script.compile_prompt(scene, [], genre="comedy", flow=True)
+
+
+def _cut_clip(path, cut_at=7.7, length=8.0):
+    """A clip of one shot (a slowly moving gradient) that cuts to another (solid blue) at `cut_at`."""
+    import subprocess
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=s=320x568:r=24:d={cut_at}",
+                    "-f", "lavfi", "-i", f"color=c=blue:s=320x568:r=24:d={length - cut_at:.2f}",
+                    "-filter_complex", "[0][1]concat=n=2:v=1:a=0", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    str(path)], check=True)
+    return path
+
+
+def test_late_cut_to_another_shot_is_found_and_trimmed(tmp_path):
+    from app.video_join import clip_seconds, late_cut, trim_clip
+    clip = _cut_clip(tmp_path / "cut.mp4")
+    assert abs(late_cut(clip) - 7.7) < 0.1
+    assert trim_clip(clip, late_cut(clip)) and abs(clip_seconds(clip) - 7.7) < 0.1 and late_cut(clip) is None
+    early = _cut_clip(tmp_path / "early.mp4", cut_at=3.0)  # a cut mid-clip is left for the clip check
+    assert late_cut(early) is None
+
+
+def test_flow_clip_uploaded_by_hand_loses_a_late_cut(app, authed, drive_connected, net, tmp_path):
+    """Video 134: its last scene cut to other people in its final quarter second."""
+    from app.video_join import clip_seconds
+    from tests.test_app import by_hand
+    gid = by_hand(authed, ["they dance", "they bow"]).json()["id"]
+    clip = _cut_clip(tmp_path / "scene.mp4").read_bytes()
+    authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", clip, "video/mp4")})
+    assert abs(clip_seconds(Path(gen(app, gid).scenes[0].clip_path)) - 7.7) < 0.1

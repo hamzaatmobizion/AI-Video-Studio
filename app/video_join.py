@@ -1,6 +1,7 @@
 """Join scene clips into one MP4 with ffmpeg (hard cuts)."""
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -130,3 +131,41 @@ def last_frame(clip: Path, dest: Path) -> Path | None:
     except (OSError, subprocess.TimeoutExpired):
         return None
     return dest if r.returncode == 0 and dest.exists() and dest.stat().st_size else None
+
+
+# A hard cut to another shot near a clip's end (Veo, out of action, fills its last moments with a new shot): its
+# scene-change score. Within one shot even a fast dance scores under 0.1; a cut to the same place scores about 0.24.
+CUT_SCORE = 0.15
+CUT_WITHIN = 1.5  # seconds before the end where a cut is trimmed off; one earlier is left for the clip check
+
+
+def late_cut(clip: Path) -> float | None:
+    """Where the clip cuts to another shot in its last CUT_WITHIN seconds (its first such cut), or None."""
+    length = clip_seconds(clip)
+    if not length or not shutil.which("ffmpeg"):
+        return None
+    try:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(clip), "-an", "-vf",
+                            f"select='gt(scene,{CUT_SCORE})',metadata=print:file=-", "-f", "null", "-"],
+                           capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    cuts = [float(t) for t in re.findall(r"pts_time:([\d.]+)", r.stdout or "")]
+    return next((t for t in cuts if length - CUT_WITHIN <= t < length), None)
+
+
+def trim_clip(clip: Path, end: float) -> bool:
+    """Cut the clip to its first `end` seconds, in place; False (left as it was) if ffmpeg can't."""
+    part = clip.with_name(f"{clip.stem}-trim.mp4")
+    try:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-i", str(clip), "-t", f"{end:.3f}",
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-b:a", "160k",
+                            "-movflags", "+faststart", str(part)], capture_output=True, timeout=JOIN_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        part.unlink(missing_ok=True)
+        return False
+    if r.returncode != 0 or not clip_seconds(part):
+        part.unlink(missing_ok=True)
+        return False
+    os.replace(part, clip)
+    return True

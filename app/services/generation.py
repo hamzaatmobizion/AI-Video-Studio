@@ -37,7 +37,7 @@ from app.script import (CONTINUE_FROM, ENTER_SHOT, FRAME_START, LEAVE_SHOT, MAX_
                         still_prompt, compile_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
                         scene_images, scene_warnings, clean_text, style_from_prompt, prompt_limit,
                         FLOW_MOST_WORDS, spoken_words)
-from app.video_join import JoinError, clip_seconds, frame_at, join_clips, last_frame
+from app.video_join import JoinError, clip_seconds, frame_at, join_clips, last_frame, late_cut, trim_clip
 
 log = logging.getLogger("app.generation")
 
@@ -354,6 +354,7 @@ class GenerationService:
             dest.write_bytes(data)
             scene.clip_path = str(dest)
             _first_version(dest).unlink(missing_ok=True)
+            _trim_late_cut(gen, dest)
             gen.status, gen.error, gen.bot_note = GenStatus.GENERATING, None, None  # the bot keeps the next scenes
             log.info("generation %s scene %d clip uploaded by hand (%d bytes)", gen_id, position, len(data))
             if gen.check_clips and not scene.redos and self._submit_check(gen, scene, self._library(s, user_id)):
@@ -406,7 +407,8 @@ class GenerationService:
                 cast = [cast_sheet(c) for c in self._library(s, gen.user_id) if c["id"] in (gen.cast_ids or [])]
                 job_id = client.plan(gen.prompt, gen.aspect, f"gen-{gen.id}-plan-{uuid.uuid4().hex[:6]}",
                                      len(gen.scenes), cast=cast, style=gen.style or "", language=gen.language or "",
-                                     rules=plan_rules(gen.genre or "general", len(gen.scenes)),
+                                     rules=plan_rules(gen.genre or "general", len(gen.scenes),
+                                                      gen.provider == Provider.FLOW),
                                      clip_seconds=scene_seconds(gen), provider=gen.provider or "")
             except GeneratorError as e:
                 pause = _worker_pause(client, "chat")
@@ -765,6 +767,7 @@ class GenerationService:
                 return
             scene.clip_path = str(dest)
             _first_version(dest).unlink(missing_ok=True)  # a remake is in: the first version isn't needed
+            _trim_late_cut(gen, dest)
             gen.worker_job_id, gen.submitted_at, gen.poll_errors = None, None, 0
             log.info("generation %s scene %d downloaded (%d bytes)", gen_id, scene.position, size)
             # "Check each clip": once per scene (a remade clip isn't checked again)
@@ -997,11 +1000,22 @@ class GenerationService:
 def _prompt_options(gen: Generation, scene_count: int | None = None) -> dict:
     """The video-wide inputs of every clip prompt: its bible and type, whether a clip may carry music (only a
     one-clip video: each clip would make up its own tune, which jumps at every cut), and how long it may be where
-    its clips are made. A Flow video's pictured characters wear the clothes its prompt gives them."""
+    its clips are made, and whether it's a Flow video (compile_prompt `flow`)."""
     count = len(gen.scenes) if scene_count is None else scene_count
     return {"bible": gen.bible or {}, "genre": gen.genre or "",
             "music": (count == 1 or gen.genre == "music") and not gen.music_path,  # our track replaces the clips
-            "room": prompt_limit(gen.provider), "outfits": gen.provider == Provider.FLOW}
+            "room": prompt_limit(gen.provider), "flow": gen.provider == Provider.FLOW}
+
+
+def _trim_late_cut(gen: Generation, clip: Path) -> None:
+    """A Flow clip that cuts to another shot in its last moments loses them, before its last frame starts the next
+    scene (which would otherwise carry on from that other shot) and before it's joined."""
+    if gen.provider != Provider.FLOW:
+        return
+    cut = late_cut(clip)
+    if cut is not None and trim_clip(clip, cut):
+        clip.with_name(f"{clip.stem}-last.jpg").unlink(missing_ok=True)  # made again from the trimmed clip
+        log.info("generation %s: %s cut to another shot at %.2f s; trimmed there", gen.id, clip.name, cut)
 
 
 def _cast_changes(gen: Generation, scene: Scene) -> list[str]:

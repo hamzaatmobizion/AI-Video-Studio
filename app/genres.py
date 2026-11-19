@@ -125,11 +125,18 @@ def valid_genre(genre: str, prompt: str) -> str:
     return genre if genre in GENRES else genre_from_prompt(prompt)
 
 
-def plan_rules(genre: str, scene_count: int) -> str:
-    """The type's rules for Gemini's planner: its story shape spread over the scenes, then its own rules."""
+# What a Flow script must never ask of Veo (a stick "held in her right hand" while she claps stood up on its own)
+FLOW_RULES = ["Someone holding an object can't clap: in the same scene they either put it down first (where it then "
+              "stays) or keep holding it and tap it to the beat instead. Never write both 'holds X' and 'claps' for "
+              "one person in one scene."]
+
+
+def plan_rules(genre: str, scene_count: int, flow: bool = False) -> str:
+    """The type's rules for Gemini's planner: its story shape spread over the scenes, then its own rules (and with
+    `flow`, a Flow video's)."""
     g = GENRES.get(genre) or GENRES["general"]
     lines = [f"This is a {g['label'].lower()} video. Shape it as: {_arc(g['arc'], scene_count)}."]
-    lines += g["rules"]
+    lines += g["rules"] + (FLOW_RULES if flow else [])
     return "\n".join(f"- {x}" for x in lines)
 
 

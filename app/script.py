@@ -98,6 +98,12 @@ CONTINUITY_SHORT = ("Everyone keeps the same face, hair, body, clothes and colou
 BOTH_HANDS = re.compile(r"\b(?:in|with) both hands\b|\bboth hands (?:on|around|holding|full)\b|\btwo-handed\b", re.I)
 GESTURE = re.compile(r"\b(gestur\w*|point\w*|wav\w*|clap\w*|thumbs?[- ]up|beckon\w*|shak\w* (?:a|her|his) finger|"
                      r"wag\w* (?:a|her|his) finger|throws? (?:her|his) hands?|raises? (?:a|her|his) hand)\b", re.I)
+# Holding something and clapping: Veo claps with both hands and leaves the thing standing or floating on its own
+HOLDING = re.compile(r"\b(?:holds?|holding|held|grips?|gripping|clutch\w*|carr(?:y|ies|ying))\b|"
+                     r"\bin (?:her|his|their|one) (?:right|left) hand\b", re.I)
+CLAPPING = re.compile(r"\b(?:clap\w*|applau\w*)\b", re.I)
+HOLD_NOTE = ("Whoever holds something keeps it in that hand the whole time, or puts it down where it then stays; "
+             "nothing is ever left standing up or floating on its own.")
 REALISM = ("Realistic physics and natural anatomy: correct hands and fingers, feet planted on the ground, natural "
            "motion speed, stable background.")
 ANIMATED_REALISM = "Consistent proportions and smooth, natural motion."
@@ -490,7 +496,7 @@ def _fit(text: str, room: int) -> str:
 
 def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str = "", aspect: str = "",
                    fit: bool = False, bible: dict | None = None, genre: str = "", music: bool = True,
-                   room: int = MAX_PROMPT, outfits: bool = False) -> str:
+                   room: int = MAX_PROMPT, flow: bool = False) -> str:
     """The clip prompt for one scene: format, style and palette, setting, camera, who is where (their reference
     picture and locked traits, else their library or bible words), action, lines in each character's voice, sound,
     what to avoid, then the quality rules. A scene that is only an action (and no style) keeps its words as written.
@@ -498,7 +504,8 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
     (the turning note, the "Avoid" line, the speaker and quality rules), and only then is the action shortened.
     `bible`: the video's story bible; `genre`: its type (app/genres.py); `music`: allow a soundtrack in the clip.
     `room`: the length `fit` keeps it within (prompt_limit, less when lines are added when it's sent).
-    `outfits` (a Flow video): a pictured character wears the clothes the prompt gives them (merged_sheet)."""
+    `flow` (a Flow video): a pictured character wears the clothes the prompt gives them (merged_sheet), anyone who
+    holds something and claps is told to keep hold of it (HOLD_NOTE), and a music video's lines are sung."""
     by_id = {c["id"]: c for c in cast}
     bible = bible or {}
     invented = {c["name"].lower(): c for c in bible.get("characters") or []}
@@ -524,7 +531,7 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
     turns = turning(scene)
     people, pictured = [], 0
     for p in scene.get("characters") or []:
-        sheet = merged_sheet(by_id[p["id"]], bible, outfits) if p.get("id") in by_id \
+        sheet = merged_sheet(by_id[p["id"]], bible, flow) if p.get("id") in by_id \
             else invented.get(p["name"].lower()) or {}
         where = f", {p['position']}" if p.get("position") else ""
         told = sheet.get("from_prompt") or {}
@@ -569,9 +576,11 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         voice = merged_sheet(by_id[d["id"]], bible).get("voice") if d.get("id") in by_id \
             else (invented.get(d["name"].lower()) or {}).get("voice") or ""
         who = d["name"] + (f" (voice: {voice})" if voice else "")
-        tail.append(f"{who} says{lang}: '{d['line']}'")
+        tail.append(f"{who} {'sings' if flow and genre == 'music' else 'says'}{lang}: '{d['line']}'")
     if scene.get("sound"):
         tail.append(f"Sound: {_sentence(scene['sound'])}")
+    if flow and holds_and_claps(scene):
+        tail.append(HOLD_NOTE)
     rules = quality_rules(scene, style, music)
     if scene.get("dialogue"):
         speakers = {d["name"] for d in scene["dialogue"]}
@@ -669,6 +678,13 @@ def speaker_count(scene: dict) -> int:
     return len({d["name"].lower() for d in scene.get("dialogue") or [] if d["line"].strip()})
 
 
+def holds_and_claps(scene: dict) -> bool:
+    """True when someone is told to hold something (in the action, or a prop's state when the scene starts) and also
+    to clap, which takes both hands."""
+    held = " ".join([scene.get("action") or "", *((p.get("state") or "") for p in scene.get("props") or [])])
+    return bool(HOLDING.search(held) and CLAPPING.search(scene.get("action") or ""))
+
+
 def busy_hands(scene: dict) -> bool:
     """True when someone holds something in both hands and is also told to point, wave or gesture."""
     action = scene.get("action") or ""
@@ -691,6 +707,9 @@ def scene_warnings(scene: dict, prompt: str, cast: list[dict] = (), seconds: int
         out.append("Someone holds something in both hands and also points, waves or gestures: the video may grow "
                    "a third hand. Say which hand does what (e.g. 'holds the roti in her left hand, points with her "
                    "right').")
+    if seconds == FLOW_SECONDS and holds_and_claps(scene):
+        out.append("Someone holds something and also claps, which takes both hands: the video may leave it standing "
+                   "or floating on its own. Have them put it down first, or tap it to the beat instead of clapping.")
     words, speakers = spoken_words(scene), speaker_count(scene)
     fit = words_per_clip(seconds, speakers)
     if words > fit:

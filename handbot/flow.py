@@ -97,6 +97,7 @@ CAPTCHA = re.compile(r"not a robot|unusual traffic|verify (that )?you('| a)re (a
 FAILED = re.compile(r"^\s*failed\b", re.I)
 REFUNDED = re.compile(r"be refunded", re.I)  # one line a failed clip ("You will be refunded…"), not its "refund to appear"
 UNUSUAL = re.compile(r"unusual activity", re.I)
+LOAD_FAILED = re.compile(r"failed to load", re.I)  # "The video failed to load.": made again with its tile's ↻
 
 
 def _plain(s: str) -> str:
@@ -113,6 +114,10 @@ class Stop(Exception):
 
 class Refunded(Exception):
     """Flow failed the clip with a passing error and refunded its credits: worth generating it again."""
+
+
+class LoadFailed(Refunded):
+    """Flow made the clip but it "failed to load": always made again with the failed tile's ↻."""
 
 
 class FlowHand:
@@ -169,24 +174,27 @@ class FlowHand:
             return True
         return False
 
-    def _failures(self, texts: list[Text] | None = None) -> tuple[int, int]:
-        """How many failed clips the project shows, and how many of those say their credits are refunded: from the
-        pictures of the "Failed" mark when taken, and from the words on the screen. Counted before each Generate, so
-        failed tiles left from earlier tries don't count again."""
+    def _failures(self, texts: list[Text] | None = None) -> tuple[int, int, int]:
+        """How many failed clips the project shows, how many of those say their credits are refunded, and how many
+        say the video failed to load: from the pictures of the "Failed" mark when taken, and from the words on the
+        screen. Counted before each Generate, so failed tiles left from earlier tries don't count again."""
         texts = self.sc.texts() if texts is None else texts
         shot = self.sc.grab()
         said = [x.text for x in texts]
         failed = max(self.sc.count("failed", shot), sum(1 for s in said if FAILED.search(s)))
         refunded = max(self.sc.count("failed_refund", shot), sum(1 for s in said if REFUNDED.search(s)))
-        return failed, refunded
+        return failed, refunded, sum(1 for s in said if LOAD_FAILED.search(s))
 
-    def _check_failed(self, before: tuple[int, int], texts: list[Text] | None = None) -> None:
+    def _check_failed(self, before: tuple[int, int, int], texts: list[Text] | None = None) -> None:
         texts = self.sc.texts() if texts is None else texts
-        failed, refunded = self._failures(texts)
-        if failed > before[0] or refunded > before[1]:  # read the screen once more: a misread isn't a failed clip
+        now = self._failures(texts)
+        if any(a > b for a, b in zip(now, before)):  # read the screen once more: a misread isn't a failed clip
             time.sleep(3)
             texts = self.sc.texts()
-            failed, refunded = (min(a, b) for a, b in zip((failed, refunded), self._failures(texts)))
+            now = tuple(min(a, b) for a, b in zip(now, self._failures(texts)))
+        failed, refunded, load = now
+        if load > before[2]:
+            raise LoadFailed()
         if refunded > before[1]:
             raise Refunded()
         if failed > before[0]:
@@ -463,7 +471,7 @@ class FlowHand:
         self._click("generate")
         self.sc.save(self.s.logs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-sent.jpg")
 
-    def wait_and_download(self, dest: Path, failed_before: tuple[int, int]) -> Path:
+    def wait_and_download(self, dest: Path, failed_before: tuple[int, int, int]) -> Path:
         """Wait for the new clip to be made, then download it. While it's being made its tile is the only thing showing
         a % (its ▶ shows then too, so that can't tell); the clip is done once that % has gone."""
         before = {p.name for p in self.s.DOWNLOAD_DIR.glob("*.mp4")}
@@ -574,14 +582,24 @@ class FlowHand:
 
     def _retry_failed(self) -> bool:
         """Click the ↻ on the failed clip's tile (below and left of where its % was), which makes it again with the
-        same prompt and pictures. False if it isn't there (then the prompt bar is filled in again)."""
-        if self.last_pct is None or not self.sc.has("failed_retry"):
+        same prompt and pictures. If its % was never seen, the ↻ is clicked only when it's the one on the screen. False
+        if it isn't there (then the prompt bar is filled in again)."""
+        if not self.sc.has("failed_retry"):
             return False
-        x, y = self.last_pct
-        m = self.sc.find("failed_retry", 3, box=(x - 160, y + 60, x + 20, y + 330))
-        if m is None:
-            return False
-        self.sc.hover(x - random.randint(20, 100), y + random.randint(40, 140))  # onto the failed tile first
+        if self.last_pct is None:
+            if self.sc.count("failed_retry") != 1:
+                return False
+            m = self.sc.find("failed_retry", 3)
+            if m is None:
+                return False
+            x, y = m.x - random.randint(40, 120), m.y - random.randint(80, 200)
+        else:
+            x, y = self.last_pct
+            m = self.sc.find("failed_retry", 3, box=(x - 160, y + 60, x + 20, y + 330))
+            if m is None:
+                return False
+            x, y = x - random.randint(20, 100), y + random.randint(40, 140)
+        self.sc.hover(x, y)  # onto the failed tile first
         time.sleep(random.uniform(0.4, 1.0))
         self.sc.click_at(*m.point())
         log.info("clicked the failed clip's ↻ to make it again")
@@ -627,12 +645,15 @@ class FlowHand:
             else:
                 log.info("next scene, in the same Flow project")
                 self._maybe("prompt_clear", 2)  # anything Flow left in the prompt bar from the scene before
+            load = False  # the last try's video failed to load
             for attempt in range(self.s.REFUND_RETRIES + 1):
                 if attempt:
-                    log.info("Flow refunded the clip; generating it again (try %d)", attempt + 1)
-                    time.sleep(random.uniform(20, 40))
-                # a refunded clip is made again either with its tile's ↻ (about half the time), or from the prompt bar
-                if attempt and random.random() < 0.5 and self._retry_failed():
+                    log.info("%s; generating it again (try %d)", "The video failed to load" if load
+                             else "Flow refunded the clip", attempt + 1)
+                    time.sleep(random.uniform(5, 12) if load else random.uniform(20, 40))
+                # a refunded clip is made again either with its tile's ↻ (about half the time), or from the prompt bar;
+                # one that failed to load always with its ↻
+                if attempt and (load or random.random() < 0.5) and self._retry_failed():
                     time.sleep(random.uniform(3, 5))  # the tile turns back into a clip being made
                     failed_before = self._failures()
                 else:
@@ -643,10 +664,11 @@ class FlowHand:
                     self.generate()
                 try:
                     return self.wait_and_download(dest, failed_before)
-                except Refunded:
+                except Refunded as e:
+                    load = isinstance(e, LoadFailed)
                     continue
-            raise self._stop(f"Flow failed the clip {self.s.REFUND_RETRIES + 1} times, refunding the credits each "
-                             "time. Try it in Chrome yourself.", "refunded")
+            raise self._stop(f"Flow failed the clip {self.s.REFUND_RETRIES + 1} times (refunded, or the video failed "
+                             "to load). Try it in Chrome yourself.", "refunded")
         except Stop:
             self.project_gen = None  # the project may be half filled in: the retry starts a fresh one
             raise

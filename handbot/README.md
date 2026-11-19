@@ -65,7 +65,7 @@ Push the mouse into any corner of the screen to stop the bot at once (this is Py
 | `download_720p` | yes | "720p / Original size" in the list of sizes that Download opens. The bot always downloads this size |
 | `failed` | yes | the red "Failed" mark on a refused clip |
 | `failed_refund` | no | on a failed clip, the words saying its credits will be refunded. With this picture, such a clip is generated again: the bot clears the prompt bar, adds the pictures again, pastes the prompt and clicks Generate, up to `REFUND_RETRIES` (2) times |
-| `failed_retry` | no | the ↻ at the bottom of a failed clip. With it, about half the time a refunded clip is made again with its own ↻ instead of filling in the prompt bar again |
+| `failed_retry` | no | the ↻ at the bottom of a failed clip. With it, about half the time a refunded clip is made again with its own ↻ instead of filling in the prompt bar again. A clip whose tile says "The video failed to load." is always made again with its ↻ (counted in the same `REFUND_RETRIES`) |
 | `upload_media` | yes | "⤒ Upload media" at the bottom left of the picker that **+** opens |
 | `picker_all` | yes | "All" with its grid icon, top left in that picker (the newest upload is found from it) |
 | `add_to_prompt` | yes | the white "Add to prompt" button in that picker |

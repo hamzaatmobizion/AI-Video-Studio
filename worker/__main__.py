@@ -44,13 +44,15 @@ def _flow_generator(s):
 
 
 def _flow_session(s, store, lock, open_project: bool = False):
-    """Google Flow's sign-in window and check: the same profile and lock as Gemini, its own status and pause."""
+    """Google Flow's sign-in window and check: the same profile and lock as Gemini, its own status and pause. It's
+    checked only when Check session is clicked: an automated browser on Flow on its own (at every worker start)
+    got the account flagged for "unusual activity" minutes later, by hand or by the hand bot."""
     from worker import flow_browser
     from worker.gemini_session import GeminiSession
 
     return GeminiSession(s, store, lock, inspector=lambda st: flow_browser.inspect(st, in_project=open_project),
                          opener=flow_browser.open_plain_window, status_key="flow_status",
-                         pause_key="account_pause:flow", name="Google Flow")
+                         pause_key="account_pause:flow", name="Google Flow", auto_check=False)
 
 
 def _fail_on_problems(s) -> None:

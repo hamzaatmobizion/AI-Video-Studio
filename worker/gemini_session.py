@@ -73,8 +73,12 @@ class GeminiSession:
     def __init__(self, settings: WorkerSettings, store: JobStore, lock: ProfileLock,
                  inspector: Callable[[WorkerSettings], dict] | None = None,
                  opener: Callable[[WorkerSettings], subprocess.Popen] | None = None,
-                 status_key: str = "gemini_status", pause_key: str = "account_pause", name: str = "Gemini"):
+                 status_key: str = "gemini_status", pause_key: str = "account_pause", name: str = "Gemini",
+                 auto_check: bool = True):
+        """`auto_check`: check the session on its own (at worker start and after the sign-in window quits); off,
+        only Check session does."""
         self.settings = settings
+        self.auto_check = auto_check
         self.store = store
         self.lock = lock
         self.status_key, self.pause_key, self.name = status_key, pause_key, name
@@ -101,7 +105,8 @@ class GeminiSession:
             self._proc = None
             self.lock.release("sign-in")
         log.info("sign-in window closed by the user")
-        self.check_in_background()
+        if self.auto_check:
+            self.check_in_background()
 
     def _watch(self, proc: subprocess.Popen) -> None:
         """Notice the user quitting the sign-in window even if nobody is looking at Settings."""
@@ -185,6 +190,8 @@ class GeminiSession:
                 proc.kill()
                 proc.wait(timeout=5)
             self.lock.release("sign-in")
+            if not self.auto_check:
+                return self.status()
             if background:
                 self.check_in_background()
                 return self.status()

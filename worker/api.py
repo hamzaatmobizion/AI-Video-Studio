@@ -119,7 +119,7 @@ def _check_flow_after(gemini: GeminiSession, flow: GeminiSession, stop: threadin
     deadline = time.monotonic() + wait
     while gemini.checking and time.monotonic() < deadline and not stop.is_set():
         stop.wait(1.0)
-    if not stop.is_set():
+    if not stop.is_set() and flow.auto_check:
         flow.check_in_background()
 
 

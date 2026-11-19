@@ -5,7 +5,7 @@ Makes **by-hand** Google Flow videos of any length on a Mac of its own, one 8-se
 For each scene that's waiting, the bot does this:
 1. It takes the prompt and pictures from the app.
 2. For a video's first scene, it searches Google for Flow in its tab (a different search each time) and opens it, then starts a new project. It opens a new tab only the first time.
-3. It picks Video, the aspect ratio, 8s, x1 and the model. Steps 3 and 4 (the settings, the pictures, pasting the prompt) are done in a random order for each clip; Generate always comes last.
+3. It picks Video, the aspect ratio, 8s, x1 and the model (Video and Ingredients/Frames first, then the aspect, model and x1 in a random order). Steps 3 and 4 (the settings, the pictures, pasting the prompt) are done in a random order for each clip, so sometimes the pictures are uploaded first, but only when the prompt bar already shows the **+** (Ingredients was picked in this project before). A new project opens in Frames, with Start and End but no +, so there the settings come first. In Frames mode the settings always come before the Start frame. Generate always comes last.
 4. It adds each picture: **+** opens Flow's picker, **Upload media** opens the Mac file dialog (the path is pasted after ⌘⇧G), then the upload, first in the picker's list, is picked and **Add to prompt** clicked. If the picker is still open afterwards (Flow ignores the click while it's still processing the upload), it clicks again, up to 4 times. It checks the pictures arrived (the prompt bar's ✕ shows), then pastes the prompt.
 5. It clicks Generate, waits for the clip and downloads it.
 6. It uploads the clip to the app. The app joins the clips and saves the video to Google Drive.

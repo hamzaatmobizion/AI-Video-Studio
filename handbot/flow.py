@@ -294,18 +294,21 @@ class FlowHand:
 
     def choose_settings(self, aspect: str, pictures: bool, frames: bool = False) -> None:
         """Open the settings chip and look: Video, Ingredients (with pictures) or Frames (`frames`), the aspect, the
-        model and x1. An option that isn't picked is clicked; one that already is, is mostly left alone (now and then
-        clicked anyway, as a person checking would). Then the panel is closed (Esc or the chip again)."""
+        model and x1. Video and the mode come first; the aspect, model and x1 in a random order. An option that isn't
+        picked is clicked; one that already is, is mostly left alone (now and then clicked anyway, as a person checking
+        would). Then the panel is closed (Esc or the chip again)."""
         self._click("settings")
         time.sleep(random.uniform(0.5, 1.2))  # looking the panel over
-        names = ["opt_video", *(["opt_frames"] if frames else ["opt_ingredients"] if pictures else []),
-                 "aspect_9_16" if aspect == "9:16" else "aspect_16_9"]
-        for name in names:
+        for name in ["opt_video", *(["opt_frames"] if frames else ["opt_ingredients"] if pictures else [])]:
             self._pick(name)
-        if self.sc.find("model_option", 2) is None:  # the menu shows another model: pick ours from its list
-            self._click("model_menu", 5)
-            self._click("model_option", 5, " (the model is never swapped for another)")
-        self._pick("opt_x1")
+        rest = ["aspect_9_16" if aspect == "9:16" else "aspect_16_9", "model", "opt_x1"]
+        random.shuffle(rest)
+        for name in rest:
+            if name != "model":
+                self._pick(name)
+            elif self.sc.find("model_option", 2) is None:  # the menu shows another model: pick ours from its list
+                self._click("model_menu", 5)
+                self._click("model_option", 5, " (the model is never swapped for another)")
         self._maybe("opt_8s", 1)
         self._maybe("opt_720p", 1)
         if random.random() < 0.5:  # close the settings
@@ -607,12 +610,14 @@ class FlowHand:
 
     def _fill(self, prompt: str, aspect: str, images: list[Path], settings: bool, frames: bool = False) -> None:
         """Set the settings (Video, aspect…), add the pictures (or the Start frame, `frames`) and paste the prompt, in
-        a random order each time, as a person does it differently from one clip to the next. The settings always come
-        before the pictures: switching between Ingredients and Frames changes what the prompt bar takes. Generate is
-        clicked after."""
+        a random order each time, as a person does it differently from one clip to the next. The pictures may come
+        before the settings only when the prompt bar already shows the + (Ingredients picked in this project before):
+        a new project opens in Frames, with Start and End but no +. The Start frame always comes after the settings,
+        which pick Frames. Generate is clicked after."""
         steps = ["prompt", *(["images"] if images else []), *(["settings"] if settings else [])]
         random.shuffle(steps)
-        if "settings" in steps and "images" in steps and steps.index("settings") > steps.index("images"):
+        if "settings" in steps and "images" in steps and steps.index("settings") > steps.index("images") and (
+                frames or self.sc.locate("add_image", **BUTTONS["add_image"][2]) is None):
             steps.remove("settings")
             steps.insert(steps.index("images"), "settings")
         log.info("this clip's order: %s%s", ", ".join(steps), " (from the start frame)" if frames else "")

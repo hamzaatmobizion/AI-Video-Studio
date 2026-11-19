@@ -334,6 +334,34 @@ def test_quitting_sign_in_window_checks_automatically(ws, store, lock):
     assert lock.try_acquire("next")  # the profile was released for generation
 
 
+def test_flow_session_is_checked_only_when_asked(ws, store, lock):
+    """An automated browser opening Flow on its own (at worker start, after the sign-in window) got the account
+    flagged for "unusual activity"; Flow's session is checked only by Check session."""
+    import threading
+
+    from worker.__main__ import _flow_session
+    from worker.api import _check_flow_after
+
+    seen = []
+    flow = GeminiSession(ws, store, lock, inspector=lambda s: seen.append(1) or {"state": "connected"},
+                         opener=lambda s: FakeProc(), auto_check=False)
+    assert _flow_session(ws, store, lock).auto_check is False
+    _check_flow_after(make_session(ws, store, lock), flow, threading.Event(), wait=0)
+    flow.open_window()
+    flow._proc.alive = False  # the user quit the sign-in window
+    flow.status()
+    flow.open_window()
+    flow.done(background=True)
+    time.sleep(1.5)
+    assert not seen and not flow.checking
+    flow.start_check()
+    for _ in range(50):
+        if not flow.checking:
+            break
+        time.sleep(0.1)
+    assert seen == [1] and flow.status()["state"] == "connected"
+
+
 def test_check_button_runs_in_background(api):
     st = api.post("/gemini/check?background=true", headers=AUTH).json()
     assert st["checking"] is True  # answers at once; the page shows progress

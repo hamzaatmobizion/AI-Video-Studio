@@ -225,7 +225,7 @@ def test_flow_clip_where_someone_holds_something_and_claps(authed):
     assert script.holds_and_claps(scene) and not script.holds_and_claps({"action": "Ammi claps to the beat."})
     assert script.holds_and_claps({"action": "Ammi claps her left hand against her resting stick.",  # its scene 2
                                    "props": [{"name": "stick", "state": "held in ammi's right hand"}]})
-    held = "what is held stays in that hand or is put down; nothing floats or stands up on its own"
+    held = "held things stay in hand; nothing floats"
     assert held in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT, flow=True)
     assert held not in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT)
     assert any("also claps" in w for w in script.scene_warnings(scene, "", seconds=script.FLOW_SECONDS))
@@ -283,11 +283,12 @@ def test_flow_clip_prompt_ends_in_a_few_short_rules():
     lines = flow.split("\n")
     rules = lines[next(i for i, x in enumerate(lines) if x.startswith("Shot:")):]
     assert [r.split(":")[0] for r in rules] == ["Shot", "People", "Objects", "Motion", "Speech", "Look"]
-    # still about a third of the old rules; the People line now says what Veo adds when someone turns (video 156)
-    assert len("\n".join(rules)) <= 1000 and script.CONTINUITY not in flow and script.ACTING not in flow
-    assert "nothing added (no flowers in the hair, nose pin, extra braid or jewellery)" in flow
-    assert "no stray hands at the edges" in flow
-    assert "one Pixar-style 3D cartoon look for everyone" in flow and "no background music" in flow
+    # short lines Veo follows: what it adds when someone turns (video 156), each object once and no writing
+    # anywhere (video 158: two steering wheels, a garbled bus sign)
+    assert len("\n".join(rules)) <= 700 and script.CONTINUITY not in flow and script.ACTING not in flow
+    assert "add nothing (no flowers, nose pin, extra braid)" in flow and "no new people or stray hands" in flow
+    assert "each only once (one steering wheel)" in flow and "no text, subtitles, logos or writing anywhere" in flow
+    assert "one Pixar-style 3D cartoon look, never photorealistic" in flow and "no music." in flow
     studio = script.compile_prompt(scene, [], style="Pixar-style 3D cartoon", room=script.FLOW_MAX_PROMPT)
     assert script.CONTINUITY in studio and "Shot: one continuous shot" not in studio
 
@@ -317,7 +318,7 @@ def test_flow_people_keep_their_place_from_scene_to_scene(app, authed, drive_con
     assert [(p["name"], p["position"]) for p in kept["characters"]] == [
         ("Shani", "frame right"), ("Bilal", "frame left"), ("Ammi", "background")]
     assert kept["action"] == "Shani on frame right squeezes a lemon. Bilal, on frame left, slaps his forehead."
-    assert "never swap who stands where" in genres.plan_rules("comedy", 3, flow=True)
+    assert "Everyone keeps their side of the frame" in genres.plan_rules("comedy", 3, flow=True)
     gid = flow_idea(authed, duration=16).json()["id"]
     net.worker.jobs["job1"].update(status="done", scenes=swapped)
     tick(app)
@@ -330,9 +331,10 @@ def test_flow_planner_follows_the_prompt_rules_page():
     rules are unchanged, and every type's rules still fit what the worker takes."""
     from app import genres
     flow = genres.plan_rules("comedy", 3, flow=True)
-    for rule in ("one calm move", "which hand holds what", "carries on from where the one before ended",
+    for rule in ("one calm move", "which hand holds what", "continues the last",
                  "everyday Pakistani Punjabi in Shahmukhi", "never more than 20", "effects only",
-                 "don't turn it into a comedy"):
+                 "no comedy or Pixar style unless asked", "steering wheel in front of the driver",
+                 "Nobody speaks while eating or laughing", "clearly different voices"):
         assert rule in flow
     assert "one calm move" not in genres.plan_rules("comedy", 3)
     assert all(len(genres.plan_rules(g, 12, flow=True)) <= 3000 for g in genres.GENRES)
@@ -414,8 +416,8 @@ def test_flow_keeps_what_the_prompt_already_says(app, authed, drive_connected, n
     assert "Voices: Ammi (frame right): older woman, loud and dramatic; Bahu (frame left): young woman, calm and " \
            "cheeky, Pakistani Punjabi accent." in first.prompt
     assert "Urdu accent" not in first.prompt and "Medium shot," not in first.prompt
-    assert "completely static camera throughout" in first.prompt  # "Camera: … static"
-    assert "doing only the move above" in second.prompt  # no camera written: Gemini's, as it moves
+    assert "camera completely still" in first.prompt  # "Camera: … static"
+    assert "only the move above" in second.prompt  # no camera written: Gemini's, as it moves
 
 
 def test_flow_line_after_she_is_said_by_whom_the_sentence_before_is_about():

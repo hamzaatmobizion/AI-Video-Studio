@@ -126,30 +126,22 @@ def valid_genre(genre: str, prompt: str) -> str:
 
 
 # What a Flow script must never ask of Veo (a stick "held in her right hand" while she claps stood up on its own)
-FLOW_RULES = ["Someone holding an object can't clap: in the same scene they either put it down first (where it then "
-              "stays) or keep holding it and tap it to the beat instead. Never write both 'holds X' and 'claps' for "
-              "one person in one scene.",
-              "Each person keeps the same place in the frame (left, centre or right) in every scene: never swap who "
-              "stands where, since each clip carries on from the last frame of the one before and people are told "
-              "apart by where they stand.",
-              "Each scene's props give where each object is when that scene starts (where the scene before left "
-              "it), never where its own action leaves it.",
-              # the Prompt rules page's Flow rules, so a one-line idea comes back written as they ask
-              "Give every scene its shot: framing, angle and one calm move (static or slow push-in; tracking only "
-              "for running), never a sudden jump, with the main people and action clearly in frame.",
-              "In each scene, say where each person stands or sits, what they do (one or two actions) and which hand "
-              "holds what, with a clear facial reaction or gesture that fits their line.",
-              "Each scene carries on from where the one before ended: the same place, light, objects and people, "
-              "never a reset or people walking back in.",
-              "Lines: short and natural, in the language asked for; Punjabi is everyday Pakistani Punjabi in "
-              "Shahmukhi, as people really talk, not Urdu translated. About 14 spoken words per scene with two "
-              "speakers, 16 with one, never more than 20; no long speeches or lines added just to fill time.",
-              "Fit the style, light, mood and camera to the story; don't turn it into a comedy or a Pixar-style "
-              "cartoon unless the prompt asks.",
-              "Each scene's sound: effects only (the place, footsteps, objects, reactions), never music.",
-              "Never add hitting or slapping, text or signs on screen, or people and actions the story doesn't need.",
-              "At most one full turn or spin per scene, with each person's face toward the camera most of the time: "
-              "from behind, Veo changes hair and faces."]
+FLOW_RULES = ["Each scene: one shot, angle and one calm move (static or slow push-in; tracking only for running).",
+              "Say where each person is (in a vehicle or room: driving, on the door steps, in the back seat), their "
+              "one or two actions, which hand holds what, and their reaction.",
+              "Everyone keeps their side of the frame in every scene.",
+              "Props: the objects people use, with where each is when the scene starts (steering wheel in front of "
+              "the driver).",
+              "Each scene continues the last: same place, light, objects and people.",
+              "Lines: short and natural; Punjabi is everyday Pakistani Punjabi in Shahmukhi, not translated Urdu. At "
+              "most 14 words per scene with two speakers, 16 with one, never more than 20.",
+              "Nobody speaks while eating or laughing; laughter after the last line.",
+              "Speakers get clearly different voices.",
+              "Nobody holding something claps; they put it down first.",
+              "At most one turn per scene; faces mostly toward the camera.",
+              "Style and mood fit the story; no comedy or Pixar style unless asked.",
+              "Sound: effects only, no music.",
+              "Never add hitting, on-screen text, or extra people or actions."]
 
 
 def plan_rules(genre: str, scene_count: int, flow: bool = False) -> str:

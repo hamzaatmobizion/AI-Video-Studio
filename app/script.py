@@ -435,33 +435,28 @@ def flow_rules(scene: dict, style: str = "", music: bool = True) -> list[str]:
     camera = " ".join([(scene.get("shot") or {}).get("movement") or "",
                        *re.findall(r"camera\s*:\s*([^.\n]*)", action, re.I)])
     if STATIC.search(camera) and not CAMERA_MOVES.search(camera):  # faces stay the same size: lips are easier to sync
-        lines = ["Shot: one continuous shot, no cuts; completely static camera throughout, no movement at all."]
+        lines = ["Shot: one continuous shot, no cuts; camera completely still."]
     else:
-        lines = ["Shot: one continuous shot, no cuts; smooth, steady camera doing only the move above, with no shake, "
-                 "zoom or sudden angle change."]
+        lines = ["Shot: one continuous shot, no cuts; steady camera, only the move above."]
     if scene.get("characters") or scene.get("dialogue"):
         # what Veo adds when someone turns or the place is busy (video 156: a gajra, a nose pin, a second braid,
         # a stranger's hand at the edge)
-        lines.append("People: same face, hairstyle, jewellery, body and clothes throughout, even when turning; "
-                     "nothing added (no flowers in the hair, nose pin, extra braid or jewellery); nobody new appears, "
-                     "vanishes or morphs, no stray hands at the edges; two hands, five fingers each; natural, "
-                     "expressive acting.")
-    lines.append("Objects: keep their look, place and state unless the action changes them; what is held stays in "
-                 "that hand or is put down; nothing floats or stands up on its own.")
-    lines.append("Motion: believable cartoon physics, steady proportions, smooth with no jumps or slow motion."
-                 if cartoon else "Motion: real gravity and weight, feet on the ground, natural speed, no jumps or "
-                                 "slow motion.")
+        lines.append("People: same face, hair, jewellery and clothes, even when turning; add nothing (no flowers, "
+                     "nose pin, extra braid); no new people or stray hands; five fingers; expressive acting.")
+    # video 158: two steering wheels
+    lines.append("Objects: each only once (one steering wheel); they stay put unless moved; held things stay in hand; "
+                 "nothing floats.")
+    lines.append("Motion: smooth cartoon physics, steady proportions, no slow motion." if cartoon
+                 else "Motion: real weight and speed, feet on the ground, no slow motion.")
     if scene.get("dialogue"):
-        lines.append("Speech: only the named person says each line, in order, lips in sync with every syllable and "
-                     "natural pauses; listeners keep their mouths closed.")
-    look = [f"one {_style_name(style)} look for everyone, never photorealistic" if cartoon else "",
-            "constant light, sharp detail, no flicker"]
+        lines.append("Speech: only the named person speaks, lips in sync; listeners' mouths closed.")
+    look = [f"one {_style_name(style)} look, never photorealistic" if cartoon else "", "steady light, no flicker"]
     if not ON_SCREEN_TEXT.search(SPOKEN_LINE.sub(" ", action)):
-        look.append("no on-screen text, subtitles or logos")
+        look.append("no text, subtitles, logos or writing anywhere")
     elif scene.get("dialogue"):
         look.append("no subtitles")
     if not music and not MUSIC.search(" ".join([action, scene.get("sound") or ""])):
-        look.append("no background music")
+        look.append("no music")
     lines.append("Look: " + "; ".join(x for x in look if x) + ".")
     return lines
 

@@ -276,21 +276,38 @@ class FlowHand:
         self.sc.press("enter")
 
     def _reach_flow(self) -> bool:
-        """Get to Flow's home page from wherever the search went: click Flow's result on Google's page (scrolling down
-        once if it isn't in view), or nothing if a suggestion opened Flow itself. False if Flow isn't reached."""
+        """Get to Flow's home page from wherever the search went: click Flow's result on Google's page (its grey
+        flow.google.com line, or a "Google Flow" link such as the one under Google's own result when the search was
+        just "google"), scrolling down once if it isn't in view, or nothing if a suggestion opened Flow itself. False
+        if Flow isn't reached."""
         end = time.monotonic() + 15
         while time.monotonic() < end:
             if self.sc.locate("new_project"):
                 return True
-            if self.sc.locate("search_result_flow"):
-                self._click("search_result_flow")
+            if self._click_flow_result():
                 return self.sc.find("new_project", 40) is not None
             time.sleep(1)
         self.sc.scroll(-random.randint(4, 7))
-        if self.sc.find("search_result_flow", 3):
-            self._click("search_result_flow")
+        time.sleep(random.uniform(1, 2))
+        if self._click_flow_result():
             return self.sc.find("new_project", 40) is not None
         return False
+
+    def _click_flow_result(self) -> bool:
+        """Click Flow's result on Google's page: its grey flow.google.com line (`search_result_flow`), else a link
+        that reads just "Google Flow", read off the screen below the search box (not the tab bar, the address bar
+        or the search typed in the box)."""
+        if self.sc.locate("search_result_flow"):
+            self._click("search_result_flow")
+            return True
+        top = self.sc.size()[1] * 0.2
+        links = [t for t in self.sc.texts() if t.y > top and _plain(t.text) == "google flow"]
+        if not links:
+            return False
+        self.sc.click_at(*links[0].point())
+        log.info("clicked the \"Google Flow\" link in Google's results")
+        time.sleep(random.uniform(0.6, 1.3))
+        return True
 
     def choose_settings(self, aspect: str, pictures: bool, frames: bool = False) -> None:
         """Open the settings chip and look: Video, Ingredients (with pictures) or Frames (`frames`), the aspect, the

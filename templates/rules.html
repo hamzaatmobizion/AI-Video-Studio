@@ -2,103 +2,153 @@
 {% block title %}Prompt rules · VideoGeneration{% endblock %}
 {% block content %}
 <section class="panel rules">
-  <h1>How to write a prompt for the best video</h1>
-  <p class="muted">Videos are made in short clips that are joined together: 10-second clips in the Studio (Gemini), 8-second clips on the Flow screen (Google Flow). The app keeps them consistent; a few things only you can do.</p>
-
-  <h2>The rules every clip gets</h2>
-  <p class="muted small">The app adds these to the end of every Flow clip prompt, so you don't need to write them. Copy them if you make a clip in Flow yourself or use another AI video tool.</p>
-  <div class="copy-head"><span class="cp-label">Clip rules</span><button type="button" class="secondary" data-copy="#clip-rules">Copy</button></div>
-<pre class="copy-block" id="clip-rules">{{ clip_rules | join("\n") }}</pre>
-  <p class="muted small">In a cartoon, the Motion and Look lines become:<br>{{ cartoon_rules | join("<br>" | safe) }}</p>
-
-  <h2>The app also does this for you</h2>
-  <ul>
-    <li>Splits your story into clips, keeping every line you wrote. On Flow, a prompt written in time steps (0–8 seconds, 8–16 seconds…) keeps its actions, camera, lines and voices exactly as you wrote them; only what's missing, like where each object starts, is added. If a line goes missing or a clip has more than 20 words, the script waits for you to check it.</li>
-    <li>Keeps people, clothes, places and objects the same from clip to clip: portraits, a story bible, and each clip starting from the previous one's last frame.</li>
-    <li>Trims a cut to another shot from the end of a Flow clip.</li>
-    <li>Reads the length, style and 9:16 or 16:9 shape from your prompt, and leaves music out of the clips (add a <strong>Background music</strong> track instead).</li>
-  </ul>
-
-  <h2>What only you can do</h2>
-  <table class="rules-table">
-    <thead><tr><th>Rule</th><th>Example</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Name one style</strong>, and no “realistic” in a cartoon.</td>
-          <td>“Pixar-style 3D cartoon animation”</td></tr>
-      <tr><td><strong>Use portraits in the video's style and clothes.</strong> A picked character looks exactly as in their portrait, clothes included, so don't describe their look in the prompt. Name them as they're named in your library.</td>
-          <td>A Pixar-style portrait in the kurta they wear in the story</td></tr>
-      <tr><td><strong>Keep lines short:</strong> about 14 spoken words per 8-second Flow clip with two people talking (20 at most), 25 per 10-second Gemini clip.</td>
-          <td>Split a long speech across two clips.</td></tr>
-      <tr><td><strong>One or two moments per clip.</strong> Say who does what, and which hand holds what.</td>
-          <td>“holds the stick in her right hand and taps it to the beat”</td></tr>
-      <tr><td><strong>Adults must look adult</strong>, and no photos of real people.</td>
-          <td>“a man in his 30s with a thick mustache”</td></tr>
-      <tr><td><strong>Write lines in the script of the language you want spoken.</strong> Pakistani Punjabi in Shahmukhi.</td>
-          <td>“نی نوہے!” not “ਨੀ ਨੂੰਹੇ!”</td></tr>
-    </tbody>
-  </table>
-
-  <h2>Before you generate</h2>
-  <ul>
-    <li>Read the notes under the prompt: <span class="note-error">red</span> will likely fail, <span class="warn">yellow</span> may hurt the video, <span class="note-ok">green</span> is fine.</li>
-    <li>Tick <strong>Check each clip</strong>: it catches extra people, changed clothes and wrong speakers, and remakes the clip once.</li>
-  </ul>
+  <h1>Prompt rules</h1>
+  <p class="muted">Follow the rules for the screen you use, word for word. The easiest way: copy its example, then change only the story, the people and the lines.</p>
+  <p class="rules-nav"><a href="#flow">Google Flow screen (8-second clips)</a> · <a href="#studio">Gemini Studio screen (10-second clips)</a></p>
 </section>
 
-<section class="panel rules">
-  <h2>Let any AI write your prompt</h2>
-  <p class="muted">Copy this into ChatGPT, Gemini, Claude or any other AI chat, replace the last line with your idea (in any language), and paste the prompt it writes here.</p>
-  <div class="copy-head"><span class="cp-label">Ask an AI to write the prompt</span><button type="button" class="secondary" data-copy="#prompt-maker">Copy</button></div>
-<pre class="copy-block" id="prompt-maker">Turn my idea (at the end) into one video prompt in exactly the format below. The video is made in 8-second clips.
+<section class="panel rules" id="flow">
+  <h2>Google Flow screen</h2>
+  <p class="muted">Every clip is 8 seconds. A prompt written in time steps is kept exactly as you wrote it, so write it this way.</p>
 
-- One or two moments per 8 seconds; at most about 14 spoken words per 8 seconds. Put each line in double quotes after who says it. Pakistani Punjabi in Shahmukhi script.
-- Give each character an age, look, clothes with colours and a voice. Adults look clearly adult.
-- Name one style. Say who does what and which hand holds what.
-- Keep it plain: no lists of rules.
+  <h3>1. Write the prompt in this order</h3>
+  <ol class="rules-list">
+    <li><strong>First line:</strong> length, shape, kind of video and style. The length is 8, 16, 24… seconds.<br><span class="muted">“A 16-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.”</span></li>
+    <li><strong>Setting:</strong> one place, the time of day and at most 3 objects, saying where each one is.</li>
+    <li><strong>People and voices</strong> (see 3).</li>
+    <li><strong>Time steps of 8 seconds:</strong> “0–8 seconds:”, “8–16 seconds:”… in order, one for each clip, each starting with the camera.</li>
+    <li><strong>Last line:</strong> starts with “Sound:” (see 7).</li>
+  </ol>
 
-Format:
+  <h3>2. Lines</h3>
+  <ul class="rules-list">
+    <li>Everyday Pakistani Punjabi written in Shahmukhi, the way people really talk, not Urdu translated word for word.</li>
+    <li>The speaker's name before every line: <span class="muted">Name says: "line"</span></li>
+    <li>At most about 14 spoken words per step with two people talking, 16 with one, never more than 20.</li>
+    <li>Short, natural and full of feeling. No long speeches, and never add lines just to fill the time.</li>
+  </ul>
 
-A [length]-second [vertical 9:16 or widescreen 16:9] [kind of video], [style].
-Setting: [place, time of day, 2 or 3 key objects].
+  <h3>3. People</h3>
+  <ul class="rules-list">
+    <li>At most 2 people in a clip (3 at most). Tick each of them in Cast.</li>
+    <li>Picked in Cast (with a portrait): write only their voice: <span class="muted">“Bahu — Voice: a woman in her late 20s, cheeky, Pakistani Punjabi accent.”</span> Never describe their face or clothes: the portrait is used as it is.</li>
+    <li>Not in your library: age, hair, face, clothes with colours, then a Voice line.</li>
+    <li>Always give an adult age (“in her late 20s”, “in his 50s”), never just “young”.</li>
+    <li>Same face, age, hair, clothes, body and voice in every step. Never change them partway.</li>
+    <li>Say who is on the left and who is on the right in the first step, and never swap them.</li>
+  </ul>
 
-[Name]: [age], [hair, face, build], [clothes with colours].
-Voice: [how they sound].
-(one block for each character)
+  <h3>4. Camera, place and flow from clip to clip</h3>
+  <ul class="rules-list">
+    <li>Start each step with the camera: shot, angle and move. <span class="muted">“Camera: medium shot, eye level, static.”</span> Use static or slow push-in; a tracking shot only for running. No sudden jumps.</li>
+    <li>Keep the main people and the main action clearly in the frame.</li>
+    <li>The place, light, background and objects stay the same. An object stays where the last step left it, and nothing disappears.</li>
+    <li>Each step carries on from where the last one ended. Don't reset the scene, change the place or walk people back in.</li>
+  </ul>
 
-0–8 seconds: [one or two actions]. [Name] says: "[line]"
-8–16 seconds: [one or two actions]. [Name] says: "[line]"
-(continue in 8-second steps to the end)
+  <h3>5. Action and acting</h3>
+  <ul class="rules-list">
+    <li>Say exactly what each person does, where they stand or sit, and which hand holds what. One or two actions per step; don't crowd it.</li>
+    <li>Give each step a clear face, gesture or reaction that matches the line (“eyes wide”, “hand on her chest”, “grins”).</li>
+    <li>The action fits the lines and the time step it's in. People handle objects and each other naturally.</li>
+    <li>Nobody claps, points or waves while holding something: they put it down first.</li>
+  </ul>
 
-Sound: [sound effects].
+  <h3>6. Style and genre</h3>
+  <ul class="rules-list">
+    <li>Pick the style, camera, light, mood and sound that fit your story: family comedy, emotional drama, romance, village life, horror and suspense, thriller and mystery, action and adventure, a moral or educational story, children's animation, or a social message.</li>
+    <li>Comedy and Pixar style are only the example. Use them only when you want them.</li>
+  </ul>
 
-My idea: [write your idea here]</pre>
+  <h3>7. Sound</h3>
+  <ul class="rules-list">
+    <li>The last line starts with “Sound:” and has sound effects only: the place, footsteps, objects, reactions, cartoon effects.</li>
+    <li>No music in the prompt. For music, add a Background music file.</li>
+  </ul>
 
-  <div class="copy-head"><span class="cp-label">Or fill in the format yourself</span><button type="button" class="secondary" data-copy="#prompt-format">Copy</button></div>
-<pre class="copy-block" id="prompt-format">A 16-second vertical 9:16 [kind of video], [style, e.g. Pixar-style 3D cartoon animation].
-Setting: [place, time of day, 2 or 3 key objects].
+  <h3>8. Don't write</h3>
+  <ul class="rules-list">
+    <li>A colour palette when you use portraits.</li>
+    <li>“Realistic” for a cartoon.</li>
+    <li>Hitting or slapping.</li>
+    <li>On-screen text, subtitles, captions, logos or signs.</li>
+    <li>Lists of rules inside the prompt.</li>
+    <li>Extra people or actions the story doesn't need.</li>
+  </ul>
 
-[Name]: [age, e.g. a man in his 30s], [hair, face, build], [clothes with colours].
-Voice: [how they sound].
-[Name]: [age], [hair, face, build], [clothes with colours].
-Voice: [how they sound].
+  <h3>9. Before you press Generate</h3>
+  <ul class="rules-list">
+    <li>Every character in the story is ticked in Cast.</li>
+    <li>“Make the clips myself” is ticked.</li>
+    <li>Read the whole prompt: the actions and lines match their time steps, and the last line starts with “Sound:”.</li>
+    <li>Fix every red or yellow note under the prompt.</li>
+    <li>Add a Background music file if you want music.</li>
+  </ul>
 
-0–8 seconds: [one or two actions]. [Name] says: "[line]"
-8–16 seconds: [the ending]. [Name] says: "[line]"
+  <h3>Examples (Bahu and Ammi ticked in Cast)</h3>
+  <p class="muted">An 8-second video is one time step. A longer video is the same thing with more steps: 16 seconds has two, 24 seconds three, and so on, each carrying on from the one before.</p>
+  <div class="copy-head"><span class="cp-label">8 seconds (one clip)</span><button type="button" class="secondary" data-copy="#flow-example-8">Copy</button></div>
+<pre class="copy-block" id="flow-example-8">An 8-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
+Setting: a cosy village kitchen in the morning, a small wooden table in the middle, a steel cup of tea on the table.
 
-Sound: [sound effects].</pre>
+Bahu — Voice: a woman in her late 20s, cheeky and sweet, Pakistani Punjabi accent.
+Ammi — Voice: a woman in her 60s, loud and dramatic, Pakistani Punjabi accent.
 
-  <h2>Example</h2>
-<pre class="copy-block">A 16-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
-Setting: a colourful village kitchen in the afternoon, steel pots on a shelf, a wooden stool.
+0–8 seconds: Camera: medium two-shot, eye level, slow push-in, ending close on both faces. Ammi sits on a stool on the right of the table, picks up the steel cup with her right hand and takes a sip. Bahu stands on the left with her hands folded, smiling hopefully. Ammi's eyes go wide and her face puckers, and she puts the cup down on the table. Ammi says: "نی! چاہ وچ کھنڈ پائی اے کہ لون؟" Bahu gasps and bites her lip. Bahu says: "ہائے ربا، لون!"
 
-Saas: a woman in her 50s, grey hair in a bun, round face, orange shalwar kameez and green dupatta.
-Voice: older woman, loud and expressive, Pakistani Punjabi accent.
-Bahu: a woman in her late 20s, long black braid, pink shalwar kameez.
-Voice: young woman, cheeky and sweet, Pakistani Punjabi accent.
+Sound: a long slurp, a cartoon gulp, the cup clinking on the table, a short gasp.</pre>
 
-0–8 seconds: Saas walks in, sees Bahu on her phone and puts her hands on her hips. Saas says: "نی نوہے! سارا دن موبائل تے لگی رہندی ایں!"
-8–16 seconds: Bahu hides the phone behind her back and smiles. Bahu says: "امی جی، تہاڈے لئی رشتہ لبھ رہی آں!" Saas freezes, eyes wide.
+  <div class="copy-head"><span class="cp-label">24 seconds (three clips)</span><button type="button" class="secondary" data-copy="#flow-example">Copy</button></div>
+<pre class="copy-block" id="flow-example">A 24-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
+Setting: a cosy village courtyard in the afternoon, a woven charpai in the middle, a broom leaning on the wall behind.
 
-Sound: a cartoon boing at the end.</pre>
+Bahu — Voice: a woman in her late 20s, cheeky and sweet, Pakistani Punjabi accent.
+Ammi — Voice: a woman in her 60s, loud and emotional, Pakistani Punjabi accent.
+
+0–8 seconds: Camera: medium shot, eye level, static. Ammi sits on the right side of the charpai, holding a mobile phone in both hands, staring at it with teary eyes and a trembling lip. Bahu walks in on the left, empty-handed, stops and puts her hands on her hips. Bahu says: "امی جی! میرا فون؟" Ammi, not looking up, sniffs and says: "چپ کر، ہیرو مرن لگا اے!"
+
+8–16 seconds: Camera: medium two-shot, slow push-in, ending close on both faces. Bahu sits beside Ammi on the left side of the charpai and leans in to look at the screen. Bahu says: "امی جی، ایہہ ڈرامہ نئیں، اشتہار اے!" Ammi freezes, holds the phone in her left hand and wipes her tears with her right hand. Ammi says: "ہائے! فیر وی بڑا دکھی سی!" Bahu rolls her eyes and shakes her head with a big grin.
+
+16–24 seconds: Camera: close two-shot, eye level, static. Ammi hands the phone to Bahu with her left hand, folds her arms and turns her face away in a sulk. Bahu takes it in her right hand, taps the screen with her left finger and holds it up between them. Bahu says: "لو امی جی، اصلی ڈرامہ لا دتا!" Ammi slowly turns back, her eyes shining, and leans in close. Ammi says: "چل ہن چپ کر کے ویکھ!" They sit shoulder to shoulder, watching the phone.
+
+Sound: dramatic sobbing from the phone, a loud sniff, a soft tap on the screen, a cartoon boing at the end.</pre>
+</section>
+
+<section class="panel rules" id="studio">
+  <h2>Gemini Studio screen</h2>
+  <p class="muted">Every clip is 10 seconds. Gemini turns your prompt into a script of 10-second scenes.</p>
+  <ol class="rules-list">
+    <li><strong>First line:</strong> length, shape, kind of video and one style. The length is 10, 20, 30… seconds.<br><span class="muted">“A 20-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.”</span></li>
+    <li><strong>Setting:</strong> one place, the time of day and at most 3 objects, saying where each one is.</li>
+    <li><strong>People:</strong> at most 3 in a clip.
+      <ul>
+        <li>Picked from your library (with a portrait): write only their voice; never describe their face or clothes.</li>
+        <li>Not in your library: age, hair, face, clothes with colours, then a Voice line, as in the example.</li>
+        <li>Always give an adult age (“in his 20s”, “in his 50s”), never just “young”.</li>
+      </ul>
+    </li>
+    <li><strong>Time steps of 10 seconds:</strong> “0–10 seconds:”, “10–20 seconds:”… one step for each clip.</li>
+    <li><strong>Each step starts with the camera:</strong> “Camera: medium shot, eye level, static.”</li>
+    <li><strong>Left and right:</strong> say who is where in the first step, and never swap them.</li>
+    <li><strong>One or two actions per step.</strong> Say which hand holds what; put things down before clapping, pointing or waving.</li>
+    <li><strong>Lines:</strong> <span class="muted">Name says: "line"</span>, in Pakistani Punjabi written in Shahmukhi. At most about 25 spoken words per step.</li>
+    <li><strong>Last line, Sound:</strong> sound effects only. No music in the prompt: add a Background music file instead.</li>
+    <li><strong>Don't write:</strong> “realistic” in a cartoon, hitting or slapping, lists of rules, or text and signs on screen.</li>
+    <li><strong>Before you press Generate:</strong> tick your characters in Cast and fix any red or yellow note under the prompt.</li>
+  </ol>
+  <div class="copy-head"><span class="cp-label">Full example for Gemini Studio (20 seconds, no characters picked)</span><button type="button" class="secondary" data-copy="#studio-example">Copy</button></div>
+<pre class="copy-block" id="studio-example">A 20-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
+Setting: a small village shop in the morning, a wooden counter, a glass jar of toffees on the counter.
+
+Chacha: a man in his 50s, round belly, grey mustache, white shalwar kameez and a brown waistcoat.
+Voice: deep and slow, Pakistani Punjabi accent.
+Pappu: a man in his 20s, thin, spiky black hair, light-blue shalwar kameez.
+Voice: quick and cheeky, Pakistani Punjabi accent.
+
+0–10 seconds: Camera: medium shot, eye level, static. Chacha stands behind the counter on the right, dozing with his chin on his left hand. Pappu walks in on the left and taps the counter with his right hand. Pappu says: "چاچا جی، اک ٹافی دینا، ادھار!" Chacha opens one eye. Chacha says: "پچھلا ادھار کدوں دئیں گا؟"
+
+10–20 seconds: Camera: medium two-shot, slow push-in, ending close on both faces. Pappu grins and puts a coin on the counter with his right hand. Pappu says: "اج ای! اے لو پورا اک روپیہ!" Chacha picks up the coin with his left hand, looks at it closely and bursts out laughing. Chacha says: "پتر، اے تے انیس سو نوے دا سکہ اے!"
+
+Sound: a shop bell as Pappu walks in, a coin clink on the counter, a cartoon boing at the end.</pre>
 </section>
 {% endblock %}

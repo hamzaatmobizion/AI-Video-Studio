@@ -133,7 +133,21 @@ FLOW_RULES = ["Someone holding an object can't clap: in the same scene they eith
               "stands where, since each clip carries on from the last frame of the one before and people are told "
               "apart by where they stand.",
               "Each scene's props give where each object is when that scene starts (where the scene before left "
-              "it), never where its own action leaves it."]
+              "it), never where its own action leaves it.",
+              # the Prompt rules page's Flow rules, so a one-line idea comes back written as they ask
+              "Give every scene its shot: framing, angle and one calm move (static or slow push-in; tracking only "
+              "for running), never a sudden jump, with the main people and action clearly in frame.",
+              "In each scene, say where each person stands or sits, what they do (one or two actions) and which hand "
+              "holds what, with a clear facial reaction or gesture that fits their line.",
+              "Each scene carries on from where the one before ended: the same place, light, objects and people, "
+              "never a reset or people walking back in.",
+              "Lines: short and natural, in the language asked for; Punjabi is everyday Pakistani Punjabi in "
+              "Shahmukhi, as people really talk, not Urdu translated. About 14 spoken words per scene with two "
+              "speakers, 16 with one, never more than 20; no long speeches or lines added just to fill time.",
+              "Fit the style, light, mood and camera to the story; don't turn it into a comedy or a Pixar-style "
+              "cartoon unless the prompt asks.",
+              "Each scene's sound: effects only (the place, footsteps, objects, reactions), never music.",
+              "Never add hitting or slapping, text or signs on screen, or people and actions the story doesn't need."]
 
 
 def plan_rules(genre: str, scene_count: int, flow: bool = False) -> str:

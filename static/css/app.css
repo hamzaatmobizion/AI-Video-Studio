@@ -317,8 +317,13 @@ main:has(.cp-head) { max-width:1120px; }
 .scene-clip { display:flex; flex-direction:column; align-items:flex-start; gap:6px; margin:10px 0; }
 .scene-clip video { max-width:100%; max-height:360px; border-radius:6px; background:#000; }
 .rules h2 { margin-top:22px; }
+.rules h3 { margin:20px 0 4px; font-size:1em; }
 .rules ul { padding-left:20px; }
 .rules li { margin:4px 0; }
+.rules-nav { font-weight:600; }
+.rules-list { padding-left:22px; }
+.rules-list > li { margin:10px 0; line-height:1.5; }
+.rules-list ul { margin:4px 0; }
 .rules-table { width:100%; border-collapse:collapse; font-size:.95em; }
 .rules-table th, .rules-table td { text-align:left; vertical-align:top; padding:8px 10px; border-bottom:1px solid var(--line); }
 .rules-table td:last-child { color:var(--muted); width:38%; }

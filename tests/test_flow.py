@@ -321,6 +321,20 @@ def test_flow_people_keep_their_place_from_scene_to_scene(app, authed, drive_con
     assert [p["position"] for p in gen(app, gid).scenes[1].characters] == ["frame right", "frame left", "background"]
 
 
+def test_flow_planner_follows_the_prompt_rules_page():
+    """A one-line idea on Flow is written by Gemini as the Prompt rules page asks: a calm shot, who does what with
+    which hand, carrying on from the scene before, short natural Punjabi lines, effects-only sound. Studio's plan
+    rules are unchanged, and every type's rules still fit what the worker takes."""
+    from app import genres
+    flow = genres.plan_rules("comedy", 3, flow=True)
+    for rule in ("one calm move", "which hand holds what", "carries on from where the one before ended",
+                 "everyday Pakistani Punjabi in Shahmukhi", "never more than 20", "effects only",
+                 "don't turn it into a comedy"):
+        assert rule in flow
+    assert "one calm move" not in genres.plan_rules("comedy", 3)
+    assert all(len(genres.plan_rules(g, 12, flow=True)) <= 3000 for g in genres.GENRES)
+
+
 MASK_PROMPT = """A 16-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
 Setting: a cosy village courtyard at night, a woven charpai, a small steel bowl of green face-mask paste.
 

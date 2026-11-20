@@ -117,12 +117,8 @@ PER_PAGE = 20
 
 @router.get("/rules", response_class=HTMLResponse)
 def rules_page(request: Request, user=Depends(require_page_user)):
-    """How to write a prompt for the best video, the rules every Flow clip gets (as app/script.py flow_rules writes
-    them), and a format any AI chat can fill in."""
-    talk = {"characters": [{"name": ""}], "dialogue": [{"name": "", "line": ""}], "action": ""}
-    cartoon = sc.flow_rules(talk, "Pixar-style 3D cartoon", music=False)
-    return render(request, "rules.html", clip_rules=sc.flow_rules(talk, music=False), cartoon_rules=[
-        cartoon[3], cartoon[-1]])
+    """The prompt rules for each screen, Google Flow and Gemini Studio, each with a full example to copy."""
+    return render(request, "rules.html")
 
 
 @router.get("/history", response_class=HTMLResponse)

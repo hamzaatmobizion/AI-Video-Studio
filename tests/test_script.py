@@ -1058,10 +1058,11 @@ def test_remake_works_while_later_scenes_are_not_made_yet(app, authed, drive_con
 
 def test_prompt_rules_page(authed):
     page = authed.get("/rules")
-    assert page.status_code == 200 and "What only you can do" in page.text and "The app also does this" in page.text
-    assert 'data-copy="#prompt-maker"' in page.text and 'id="prompt-format"' in page.text
-    # one set of rules, as the app sends them; the long rule lists are gone
-    assert "Shot: one continuous shot" in page.text and "Motion: believable cartoon physics" in page.text
+    assert page.status_code == 200
+    # each screen's own rules and a full example to copy
+    assert 'id="flow"' in page.text and 'id="studio"' in page.text
+    assert 'data-copy="#flow-example"' in page.text and 'data-copy="#studio-example"' in page.text
+    assert "0–8 seconds:" in page.text and "0–10 seconds:" in page.text
     assert "MASTER" not in page.text and "STRICT" not in page.text
     assert 'href="/rules"' in authed.get("/").text  # in the menu and above the prompt
 

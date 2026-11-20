@@ -575,6 +575,17 @@ class GenerationService:
             path = Path(scene.clip_path) if scene and scene.clip_path else None
         return path if path and path.exists() else None
 
+    def scene_frame(self, gen_id: int, user_id: int, position: int, which: str) -> Path | None:
+        """One scene's first or last frame (`which`) as a JPG next to its clip (made once), to use as a Start or End
+        frame in Google Flow; None when the clip isn't kept or ffmpeg can't read it."""
+        clip = self.scene_clip(gen_id, user_id, position)
+        if clip is None or which not in ("first", "last"):
+            return None
+        dest = clip.with_name(f"{clip.stem}-{which}.jpg")
+        if which == "last":
+            return last_frame(clip, dest)
+        return dest if dest.exists() else frame_at(clip, dest, 0)
+
     def _sweep(self) -> None:
         """Drop the scene clips of videos finished more than SCENE_KEEP ago (at most once an hour)."""
         now = utcnow()

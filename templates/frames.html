@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Frames #{{ g.id }} · VideoGeneration{% endblock %}
+{% block content %}
+{% set total = g.scenes | length %}
+<section class="panel">
+  <div class="script-top">
+    <div>
+      <h1>Frames · video #{{ g.id }}</h1>
+      <p class="muted small">{{ g.aspect }} · {{ scenes | length }} of {{ total }} scene{{ '' if total == 1 else 's' }} made · {{ seconds }} seconds each</p>
+    </div>
+    <a class="button secondary" href="/{{ 'flow' if g.provider == 'flow' else '' }}">Back</a>
+  </div>
+  <p class="muted">Each scene's first and last frame. In Google Flow, open <strong>Frames to Video</strong> and put a picture in the <strong>Start</strong> slot (the clip begins exactly on it) or the <strong>End</strong> slot (the clip finishes exactly on it). To carry a story on, use one scene's <strong>last frame</strong> as the next clip's Start frame.</p>
+</section>
+
+<section class="panel">
+  {% if not scenes %}
+    <p class="muted">No clips yet: the frames show here as each scene's clip comes in.</p>
+  {% endif %}
+  {% for s in scenes %}
+    <h2>Scene {{ s.position }}{% if total > 1 %} of {{ total }}{% endif %}</h2>
+    <ul class="frame-pair">
+      {% for which, label in (("first", "First frame"), ("last", "Last frame")) %}
+      <li>
+        <img src="/generations/{{ g.id }}/scenes/{{ s.position }}/frame/{{ which }}" alt="Scene {{ s.position }} {{ label | lower }}" loading="lazy">
+        <span>{{ label }}{% if which == "last" and s.position < total %} · Start frame for scene {{ s.position + 1 }}{% endif %}</span>
+        <a class="button secondary" href="/generations/{{ g.id }}/scenes/{{ s.position }}/frame/{{ which }}?download=1">Download</a>
+      </li>
+      {% endfor %}
+    </ul>
+  {% endfor %}
+</section>
+{% endblock %}

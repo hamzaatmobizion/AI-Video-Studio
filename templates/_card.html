@@ -49,6 +49,7 @@
       {% if g.status == "PAUSED" %}<button data-post="/generations/{{ g.id }}/resume">Resume</button>{% endif %}
       {% if g.status in ("FAILED", "CANCELLED") %}<button data-post="/generations/{{ g.id }}/retry">Retry</button>{% endif %}
       {% if g.scenes and g.scenes[0].action and g.status not in ("PLANNING", "REVIEW") %}<a class="button secondary" href="/generations/{{ g.id }}/script">{{ 'Fix script' if g.status == 'FAILED' else 'Script' }}</a>{% endif %}
+      {% if g.provider == "flow" and done %}<a class="button secondary" href="/generations/{{ g.id }}/frames">Frames</a>{% endif %}
       <span class="spacer"></span>
       {% if g.status in ("PLANNING", "REVIEW", "GENERATING", "SAVING", "SAVE_FAILED", "READY", "PAUSED", "HAND") %}
         <button class="link danger" data-post="/generations/{{ g.id }}/cancel"

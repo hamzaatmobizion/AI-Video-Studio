@@ -8,7 +8,10 @@
       <h1>Make it in Flow · video #{{ g.id }}</h1>
       <p class="muted small">{{ g.aspect }} · {{ total }} scene{{ '' if total == 1 else 's' }} of {{ seconds }} seconds · {{ done }} of {{ total }} clips in</p>
     </div>
-    <a class="button secondary" href="/flow">Back to Flow</a>
+    <div class="actions">
+      {% if done %}<a class="button secondary" href="/generations/{{ g.id }}/frames">Frames</a>{% endif %}
+      <a class="button secondary" href="/flow">Back to Flow</a>
+    </div>
   </div>
   <p class="prompt">{{ g.prompt }}</p>
 </section>

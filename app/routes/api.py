@@ -1,5 +1,8 @@
+import base64
 import math
 import re
+import tempfile
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
@@ -18,6 +21,7 @@ from app.models import Character, Generation
 from app.script import MAX_CAST, TEXT_LIMITS, aspect_from_prompt
 from app.routes.views import cards_for
 from app.services.generation import UserError, drive_name
+from app.video_join import frame_at, last_frame
 
 router = APIRouter()
 MAX_SCENE_TEXT = TEXT_LIMITS["action"]  # one scene's words; the clip prompt adds the format and quality rules
@@ -202,6 +206,37 @@ def scene_clip(gen_id: int, position: int, request: Request, user=Depends(requir
     if path is None:
         return JSONResponse({"detail": "This scene's clip isn't kept any more."}, status_code=404)
     return FileResponse(path, media_type="video/mp4", headers={"Cache-Control": "private, no-cache"})
+
+
+@router.get("/generations/{gen_id}/scenes/{position}/frame/{which}")
+def scene_frame(gen_id: int, position: int, which: str, request: Request, download: bool = False,
+                user=Depends(require_api_user)):
+    """A scene's first or last frame, to use as a Start or End frame in Google Flow."""
+    path = request.app.state.service.scene_frame(gen_id, user.id, position, which)
+    if path is None:
+        return JSONResponse({"detail": "This scene's clip isn't kept any more."}, status_code=404)
+    headers = {"Cache-Control": "private, no-cache"}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="video-{gen_id}-scene-{position}-{which}-frame.jpg"'
+    return FileResponse(path, media_type="image/jpeg", headers=headers)
+
+
+@router.post("/api/frames")
+async def video_frames(request: Request, user=Depends(require_post), video: UploadFile = File(...)):
+    """Any video's first and last frame, to use as a Start or End frame in Google Flow. Nothing is kept: the video
+    and its frames are deleted as soon as the frames are read."""
+    data = await video.read(MAX_VIDEO_BYTES + 1)
+    if len(data) > MAX_VIDEO_BYTES:
+        raise UserError(f"{video.filename} is larger than {MAX_VIDEO_BYTES // (1024 * 1024)} MB.")
+    if video_kind(data[:16]) is None:
+        raise UserError(f"{video.filename} isn't an MP4, MOV or WebM video.")
+    with tempfile.TemporaryDirectory() as tmp:
+        clip = Path(tmp) / "video"
+        clip.write_bytes(data)
+        frames = {"first": frame_at(clip, Path(tmp) / "first.jpg", 0), "last": last_frame(clip, Path(tmp) / "last.jpg")}
+        if not all(frames.values()):
+            raise UserError(f"Couldn't read the frames of {video.filename}. Try another video.")
+        return {k: "data:image/jpeg;base64," + base64.b64encode(p.read_bytes()).decode() for k, p in frames.items()}
 
 
 @router.post("/generations/{gen_id}/scenes/{position}/clip")

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Frames · VideoGeneration{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Frames</h1>
+  <p class="muted">Upload any video (MP4, MOV or WebM) to get its first and last frame. Use them in Google Flow's <strong>Frames to Video</strong>: a picture in the <strong>Start</strong> slot is where the clip begins, one in the <strong>End</strong> slot is where it finishes. To carry a clip on, use its <strong>last frame</strong> as the next clip's Start frame. Nothing is kept: the video is deleted as soon as its frames are taken.</p>
+  <form id="frames-form" class="frames-form">
+    <input type="file" name="video" accept="video/mp4,video/quicktime,video/webm" required>
+    <button type="submit">Get frames</button>
+  </form>
+  <p class="error" id="frames-error" hidden></p>
+  <p class="muted small" id="frames-wait" hidden><span class="spinner"></span> Reading the video…</p>
+  <ul class="frame-pair" id="frames-out" hidden>
+    <li><img id="frame-first" alt="First frame"><span>First frame</span><a class="button secondary" id="frame-first-dl" download>Download</a></li>
+    <li><img id="frame-last" alt="Last frame"><span>Last frame · Start frame for the next clip</span><a class="button secondary" id="frame-last-dl" download>Download</a></li>
+  </ul>
+</section>
+{% endblock %}

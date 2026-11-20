@@ -334,6 +334,11 @@ main:has(.cp-head) { max-width:1120px; }
 /* By hand: the steps to make one scene's clip in Google Flow */
 .hand-steps { padding-left:20px; display:flex; flex-direction:column; gap:14px; }
 .hand-steps > li { line-height:1.5; }
+.frames-form { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:12px 0; }
+.frame-pair { list-style:none; padding:0; margin:8px 0 18px; display:flex; flex-wrap:wrap; gap:16px; }
+.frame-pair li { display:flex; flex-direction:column; gap:6px; width:min(240px, 100%); font-size:.9em; }
+.frame-pair img { width:100%; aspect-ratio:auto; max-height:320px; object-fit:contain; background:var(--bg); border-radius:8px; border:1px solid var(--line); display:block; }
+.frame-pair .button { align-self:flex-start; }
 .hand-images { list-style:none; padding:0; margin:8px 0 0; display:flex; flex-wrap:wrap; gap:12px; }
 .hand-images li { display:flex; flex-direction:column; gap:4px; width:130px; font-size:.85em; }
 .hand-images img { width:130px; height:130px; object-fit:cover; border-radius:8px; border:1px solid var(--line); display:block; }

@@ -110,6 +110,20 @@ def by_hand_page(gen_id: int, request: Request, user=Depends(require_page_user))
                   bot_ready=settings.bot_configured,bot_online=svc.bot_online())
 
 
+@router.get("/frames", response_class=HTMLResponse)
+def frames_tool(request: Request, user=Depends(require_page_user)):
+    """Upload any video and get its first and last frame (nothing is kept)."""
+    return render(request, "frames_tool.html")
+
+
+@router.get("/generations/{gen_id}/frames", response_class=HTMLResponse)
+def frames_page(gen_id: int, request: Request, user=Depends(require_page_user)):
+    """Each scene's first and last frame, to download and use as a Start or End frame in Google Flow."""
+    gen, _ = request.app.state.service.script(gen_id, user.id)
+    return render(request, "frames.html", g=gen, scenes=[s for s in gen.scenes if s.clip_path],
+                  seconds=SCENE_SECONDS.get(gen.provider, 8))
+
+
 HISTORY_STATUSES = {"all": "All", "ready": "Ready", "in_progress": "In progress", "failed": "Failed",
                     "cancelled": "Cancelled"}
 PER_PAGE = 20

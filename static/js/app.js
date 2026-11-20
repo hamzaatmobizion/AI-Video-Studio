@@ -33,6 +33,30 @@
     setTimeout(() => { btn.textContent = was; }, 1500);
   }));
 
+  // Frames: any video's first and last frame, to download (nothing is kept on the server)
+  const framesForm = document.getElementById("frames-form");
+  if (framesForm) framesForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("frames-error"), wait = document.getElementById("frames-wait");
+    const out = document.getElementById("frames-out"), btn = framesForm.querySelector("button");
+    const file = framesForm.video.files[0];
+    if (!file) return;
+    showError(err, ""); out.hidden = true; wait.hidden = false; btn.disabled = true;
+    try {
+      const fd = new FormData();
+      fd.append("video", file);
+      const frames = await post("/api/frames", fd);
+      const base = file.name.replace(/\.[^.]+$/, "");
+      for (const which of ["first", "last"]) {
+        document.getElementById(`frame-${which}`).src = frames[which];
+        Object.assign(document.getElementById(`frame-${which}-dl`),
+                      { href: frames[which], download: `${base}-${which}-frame.jpg` });
+      }
+      out.hidden = false;
+    } catch (ex) { showError(err, ex.message); }
+    finally { wait.hidden = true; btn.disabled = false; }
+  });
+
   // Generic [data-post] buttons
   document.addEventListener("click", async (e) => {
     const btn = e.target.closest("[data-post]");

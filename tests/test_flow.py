@@ -272,6 +272,40 @@ def test_flow_clip_uploaded_by_hand_loses_a_late_cut(app, authed, drive_connecte
     assert abs(clip_seconds(Path(gen(app, gid).scenes[0].clip_path)) - 7.7) < 0.1
 
 
+def test_frames_page_gives_each_scenes_first_and_last_frame(app, authed, drive_connected, net, tmp_path):
+    """Frames: each made scene's first and last frame, to download and use as a Start or End frame in Flow."""
+    from tests.test_app import by_hand
+    gid = by_hand(authed, ["they dance", "they bow"]).json()["id"]
+    assert "No clips yet" in authed.get(f"/generations/{gid}/frames").text
+    authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", clip_bytes(tmp_path, "s1", 2.0),
+                                                                     "video/mp4")})
+    page = authed.get(f"/generations/{gid}/frames").text
+    assert "Scene 1 of 2" in page and "Scene 2 of 2" not in page and "Start frame for scene 2" in page
+    for which in ("first", "last"):
+        r = authed.get(f"/generations/{gid}/scenes/1/frame/{which}?download=1")
+        assert r.status_code == 200 and r.content[:3] == b"\xff\xd8\xff"  # a JPG
+        assert f"scene-1-{which}-frame.jpg" in r.headers["content-disposition"]
+    assert authed.get(f"/generations/{gid}/scenes/2/frame/first").status_code == 404  # not made yet
+    assert authed.get(f"/generations/{gid}/scenes/1/frame/middle").status_code == 404
+    assert f'href="/generations/{gid}/frames"' in authed.get(f"/generations/{gid}/by-hand").text
+    assert f'href="/generations/{gid}/frames"' in authed.get("/flow").text
+
+
+def test_frames_tool_gives_any_videos_first_and_last_frame(app, authed, tmp_path):
+    """Frames (in the menu): upload any video, get its first and last frame; nothing is kept."""
+    import base64
+    page = authed.get("/frames").text
+    assert 'id="frames-form"' in page and 'href="/frames"' in page
+    before = sorted(p.name for p in tmp_path.iterdir())
+    r = authed.post("/api/frames", files={"video": ("dance.mp4", clip_bytes(tmp_path, "any", 2.0), "video/mp4")})
+    assert r.status_code == 200
+    for which in ("first", "last"):
+        assert base64.b64decode(r.json()[which].split(",", 1)[1])[:3] == b"\xff\xd8\xff"  # a JPG
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(before + ["any.mp4"])  # nothing left behind here
+    r = authed.post("/api/frames", files={"video": ("notes.txt", b"just some text", "text/plain")})
+    assert r.status_code == 400 and "isn't an MP4, MOV or WebM" in r.json()["detail"]
+
+
 def test_flow_clip_prompt_ends_in_a_few_short_rules():
     """A Flow clip prompt closes with one short line each for the shot, people, objects, motion, speech and look,
     not the Studio's paragraphs, so the action keeps its room."""

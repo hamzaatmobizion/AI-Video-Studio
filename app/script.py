@@ -160,6 +160,13 @@ SPEECH_VERBS = (r"says|said|asks|asked|replies|replied|answers|answered|shouts|s
                 r"whispered|exclaims|exclaimed|adds|added|cries|cried|calls|called|screams|screamed|mutters|"
                 r"muttered|sings|sang|tells \w+|speaks|says to \w+|asks \w+")
 PRONOUNS = ("she", "he")
+# Birdsong in a sound list ("birds singing", "songbirds"): a sound effect, not a request for music
+BIRDSONG = re.compile(r"\b(?:song)?birds?\b[^.,;]{0,20}?\b(?:sing\w*|song\w*|chirp\w*)|\bsinging\s+birds?\b|"
+                      r"\bbird\s*songs?\b|\bsongbirds?\b", re.I)
+# A pictured character who is an animal: described by their fur and look, not hair and outfit
+ANIMAL = re.compile(r"\b(?:rabbit|bunny|cat|kitten|dog|puppy|goat|cow|buffalo|horse|donkey|sheep|lamb|parrot|bird|"
+                    r"hen|chicken|rooster|duck|monkey|lion|tiger|elephant|bear|fox|owl|mouse|rat|camel|deer|"
+                    r"squirrel|frog|turtle|panda|penguin)s?\b", re.I)
 # A clip's camera that doesn't move: "static", "still" or "locked-off", with no push-in, pan or tracking too
 STATIC = re.compile(r"\b(?:static|still|locked[- ]off|fixed)\b", re.I)
 CAMERA_MOVES = re.compile(r"\b(?:push|pull|pan|tilt|track|dolly|zoom|crane|orbit|follow|handheld|ending close|"
@@ -438,24 +445,31 @@ def flow_rules(scene: dict, style: str = "", music: bool = True) -> list[str]:
         lines = ["Shot: one continuous shot, no cuts; camera completely still."]
     else:
         lines = ["Shot: one continuous shot, no cuts; steady camera, only the move above."]
-    if scene.get("characters") or scene.get("dialogue"):
+    people = [p["name"] for p in scene.get("characters") or []]
+    if people or scene.get("dialogue"):
         # what Veo adds when someone turns or the place is busy (video 156: a gajra, a nose pin, a second braid,
-        # a stranger's hand at the edge)
-        lines.append("People: same face, hair, jewellery and clothes, even when turning; add nothing (no flowers, "
-                     "nose pin, extra braid); no new people or stray hands; five fingers; expressive acting.")
+        # a stranger's hand at the edge); the count keeps out extra main characters, not a bazaar's passers-by
+        count = (f"exactly {len(people)} main character{'s' if len(people) > 1 else ''}: {', '.join(people)}, "
+                 "with background people only if the place has them; ") if people else ""
+        lines.append(f"People: {count}same face, hair, jewellery and clothes, even when turning; add nothing (no "
+                     "flowers in the hair, nose pin, extra braid); no stray hands; five fingers; expressive acting.")
     # video 158: two steering wheels
-    lines.append("Objects: each only once (one steering wheel); they stay put unless moved; held things stay in hand; "
+    lines.append("Objects: each only once (one door, one cup); they stay put unless moved; held things stay in hand; "
                  "nothing floats.")
-    lines.append("Motion: smooth cartoon physics, steady proportions, no slow motion." if cartoon
+    lines.append("Motion: smooth cartoon physics with squash and stretch and follow-through; natural walks and runs; "
+                 "clothes and hair move naturally; no slow motion." if cartoon
                  else "Motion: real weight and speed, feet on the ground, no slow motion.")
     if scene.get("dialogue"):
         lines.append("Speech: only the named person speaks, lips in sync; listeners' mouths closed.")
+    elif people:  # with no lines Veo may make someone mumble or chat
+        lines.append("Speech: nobody speaks; laughs and giggles are fine.")
     look = [f"one {_style_name(style)} look, never photorealistic" if cartoon else "", "steady light, no flicker"]
     if not ON_SCREEN_TEXT.search(SPOKEN_LINE.sub(" ", action)):
         look.append("no text, subtitles, logos or writing anywhere")
     elif scene.get("dialogue"):
         look.append("no subtitles")
-    if not music and not MUSIC.search(" ".join([action, scene.get("sound") or ""])):
+    heard = BIRDSONG.sub(" ", " ".join([action, scene.get("sound") or ""]))  # video 159: "birds singing" isn't music
+    if not music and not MUSIC.search(heard):
         look.append("no music")
     lines.append("Look: " + "; ".join(x for x in look if x) + ".")
     return lines
@@ -620,7 +634,11 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
             kept = ["face", *(["hair"] if not (told.get("age") or told.get("look")) else []),
                     *(["outfit"] if not told.get("outfit") else []), "style"]
             same = ", ".join(kept[:-1]) + " and " + kept[-1]
-            if turns and flow:  # turning keeps the picture's face and hair: Veo invented a new one from behind
+            if flow and ANIMAL.search(" ".join([p["name"], sheet.get("appearance") or "", told.get("look") or ""])):
+                # an animal (video 159's bunny): "same person, hair, outfit" made it stand and dress like a child
+                people.append(_sentence(f"{p['name']}{where}: the same animal as reference image {pictured}, same "
+                                        f"face, fur, colours and size{said}, from every side{locked}"))
+            elif turns and flow:  # turning keeps the picture's face and hair: Veo invented a new one from behind
                 people.append(_sentence(f"{p['name']}{where}: same person, {same} as reference image {pictured}"
                                         f"{said}; the picture shows them from the front, so from the side or back "
                                         f"keep that same face, hair and outfit{locked}"))

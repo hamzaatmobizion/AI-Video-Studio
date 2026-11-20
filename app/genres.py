@@ -141,7 +141,8 @@ FLOW_RULES = ["Each scene: one shot, angle and one calm move (static or slow pus
               "At most one turn per scene; faces mostly toward the camera.",
               "Style and mood fit the story; no comedy or Pixar style unless asked.",
               "Sound: effects only, no music.",
-              "Never add hitting, on-screen text, or extra people or actions."]
+              "Never add hitting, on-screen text, or extra people or actions.",
+              "Each scene ends on a clear pose; the last ends with everyone clearly visible together."]
 
 
 def plan_rules(genre: str, scene_count: int, flow: bool = False) -> str:

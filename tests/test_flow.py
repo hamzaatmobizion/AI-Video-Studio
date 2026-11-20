@@ -319,10 +319,30 @@ def test_flow_clip_prompt_ends_in_a_few_short_rules():
     assert [r.split(":")[0] for r in rules] == ["Shot", "People", "Objects", "Motion", "Speech", "Look"]
     # short lines Veo follows: what it adds when someone turns (video 156), each object once and no writing
     # anywhere (video 158: two steering wheels, a garbled bus sign)
-    assert len("\n".join(rules)) <= 700 and script.CONTINUITY not in flow and script.ACTING not in flow
-    assert "add nothing (no flowers, nose pin, extra braid)" in flow and "no new people or stray hands" in flow
-    assert "each only once (one steering wheel)" in flow and "no text, subtitles, logos or writing anywhere" in flow
+    assert len("\n".join(rules)) <= 850 and script.CONTINUITY not in flow and script.ACTING not in flow
+    assert "exactly 2 main characters: Ali, Sara, with background people only if the place has them" in flow
+    assert "add nothing (no flowers in the hair, nose pin, extra braid); no stray hands" in flow
+    assert "each only once (one door, one cup)" in flow and "no text, subtitles, logos or writing anywhere" in flow
     assert "one Pixar-style 3D cartoon look, never photorealistic" in flow and "no music." in flow
+    assert "squash and stretch and follow-through" in flow
+
+
+def test_flow_clip_with_no_lines_birdsong_and_an_animal():
+    """Video 159: a clip with no lines said nothing about speech, "birds singing" dropped "no music", and the
+    bunny was told "same person, hair, outfit"."""
+    from app import script
+    cast = [{"id": 9, "name": "Bunny", "appearance": "small fluffy white rabbit", "image_path": "bunny.png"},
+            {"id": 1, "name": "Phuppo", "image_path": "phuppo.png"}]
+    scene = {"characters": [{"id": 1, "name": "Phuppo", "position": "frame left"},
+                            {"id": 9, "name": "Bunny", "position": "frame right"}],
+             "action": "Bunny hops between the flowers. Phuppo laughs.", "sound": "Birds singing, soft breeze."}
+    flow = script.compile_prompt(scene, cast, style="Pixar-style 3D cartoon", flow=True, music=False,
+                                 room=script.FLOW_MAX_PROMPT)
+    assert "Speech: nobody speaks; laughs and giggles are fine." in flow and "no music." in flow
+    assert "Bunny, frame right: the same animal as reference image 2, same face, fur, colours and size" in flow
+    assert "Phuppo, frame left, exactly as in reference image 1 (same face, hair, outfit and style)" in flow
+    sung = dict(scene, sound="A woman singing a lullaby.")
+    assert "no music" not in script.compile_prompt(sung, cast, flow=True, music=False, room=script.FLOW_MAX_PROMPT)
     studio = script.compile_prompt(scene, [], style="Pixar-style 3D cartoon", room=script.FLOW_MAX_PROMPT)
     assert script.CONTINUITY in studio and "Shot: one continuous shot" not in studio
 

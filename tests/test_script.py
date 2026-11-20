@@ -230,8 +230,12 @@ def test_style_keeps_only_the_look():
     p = script.compile_prompt({"action": "a fox naps", "characters": [{"name": "Fox"}, {"name": "Owl"}]}, [],
                               style="Pixar-style 3D, 4K, 30-second video")
     assert "Pixar-style 3D." in p and "30-second" not in p and "4K" not in p
-    name = script._style_name("Funny Pixar-style 3D cartoon animation, colorful Pakistani village environment")
-    assert name == "Funny Pixar-style 3D cartoon animation colorful Pakistani" and len(name) <= 60  # whole words
+    # a long style sentence is named by its style words, so "one … look for everyone" reads as one (video 156)
+    assert script._style_name("Funny Pixar-style 3D cartoon animation, colorful Pakistani village environment") \
+        == "Pixar-style cartoon"
+    assert script._style_name("Beautiful high-quality Pixar-style 3D cartoon animation with vibrant Punjabi cultural "
+                              "celebration atmosphere.") == "Pixar-style cartoon"
+    assert script._style_name("Pixar-style, cartoon") == "Pixar-style cartoon"
 
 
 def test_every_clip_says_how_it_should_look_and_perform():

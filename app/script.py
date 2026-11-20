@@ -156,6 +156,14 @@ ANIMATED = re.compile(r"\b(anim\w*|anime|cartoon\w*|pixar|3d|clay\w*|stop[- ]mot
 ON_SCREEN_TEXT = re.compile(r"\b(text|signs?|signboard|titles?|captions?|banners?|posters?|logos?|written|"
                             r"writing|reads|labels?)\b|(^|\s)['\"][^'\"]{2,}['\"]", re.I)
 # A spoken line in the action ("Billa asks: "…""): words said aloud, not words on screen
+SPEECH_VERBS = (r"says|said|asks|asked|replies|replied|answers|answered|shouts|shouted|yells|yelled|whispers|"
+                r"whispered|exclaims|exclaimed|adds|added|cries|cried|calls|called|screams|screamed|mutters|"
+                r"muttered|sings|sang|tells \w+|speaks|says to \w+|asks \w+")
+PRONOUNS = ("she", "he")
+# A clip's camera that doesn't move: "static", "still" or "locked-off", with no push-in, pan or tracking too
+STATIC = re.compile(r"\b(?:static|still|locked[- ]off|fixed)\b", re.I)
+CAMERA_MOVES = re.compile(r"\b(?:push|pull|pan|tilt|track|dolly|zoom|crane|orbit|follow|handheld|ending close|"
+                          r"moves?|moving)\w*", re.I)
 SPOKEN_LINE = re.compile(r"\b(?:says|said|asks|asked|replies|replied|answers|shouts|yells|whispers|exclaims|adds|cries|"
                          r"calls|screams|mutters|sings|tells \w+)\s*:?\s*['\"“][^'\"”]{2,}['\"”]", re.I)
 
@@ -353,8 +361,12 @@ def look_only(style: str) -> str:
 
 def _style_name(style: str) -> str:
     """The video's style as a short name for SAME_STYLE ("Pixar-style, cartoon" → "Pixar-style cartoon"), cut at a
-    whole word."""
+    whole word. A long sentence ("Beautiful high-quality Pixar-style 3D cartoon animation with vibrant…") becomes
+    its style words alone ("Pixar-style cartoon"), so "one … look for everyone" reads as one."""
     name = re.sub(r"[.;]+.*$", "", (style or "").strip()).replace(", ", " ").strip()
+    words = list(dict.fromkeys(m.group(0) for m in STYLE_WORDS.finditer(name)))
+    if len(name) > 40 and words:
+        return " ".join(words)
     if len(name) > 60:
         name = name[:61].rsplit(" ", 1)[0]
     return name or "cartoon"
@@ -389,17 +401,51 @@ def quality_rules(scene: dict, style: str = "", music: bool = True, short: bool 
     return " ".join(rules)
 
 
+def speak_inline(action: str, dialogue: list[dict], sides: dict[str, str], lang: str = "") -> tuple[str, set[int]]:
+    """The action with each spoken line back where the prompt had it ("Bahu puts her hands on her hips and says."
+    → "Bahu (frame left) puts her hands on her hips and says: "…""), the speaker's place in the frame next to their
+    name, and the indexes of the lines it placed. Veo then knows when each line is said and by whom: listed after
+    the action, lines drifted from the lips and went to the wrong mouth. A line with no such spot is left out."""
+    placed, pos = set(), 0
+    for i, d in enumerate(dialogue):
+        who = "|".join([re.escape(d["name"]), *PRONOUNS])
+        m = re.compile(rf"(?<!\w)(?P<who>{who})(?!\w)(?P<lead>[^.!?:\"“”]{{0,300}}?\b(?:{SPEECH_VERBS})"
+                       rf"(?:\s+[^\W\d_]+ly)?)\.", re.I).search(action, pos)
+        if not m:
+            continue
+        side = sides.get(d["name"].lower())
+        named = m.group("who")
+        if named.lower() in PRONOUNS:
+            named += f" ({d['name']}, {side})" if side else f" ({d['name']})"
+        elif side:
+            named += f" ({side})"
+        said = f'{named}{m.group("lead")}{lang}: "{d["line"]}"'
+        action = action[:m.start()] + said + action[m.end():]
+        pos = m.start() + len(said)
+        placed.add(i)
+    return action, placed
+
+
 def flow_rules(scene: dict, style: str = "", music: bool = True) -> list[str]:
     """The rules that close a Flow clip prompt: one short line each for the shot and camera, the people, the
     objects, how things move, who speaks and how it looks. Veo follows a few plain lines better than paragraphs,
     and they leave the action its room."""
     cartoon = animated(scene, style)
     action = scene.get("action") or ""
-    lines = ["Shot: one continuous shot, no cuts; smooth, steady camera doing only the move above, with no shake, "
-             "zoom or sudden angle change."]
+    camera = " ".join([(scene.get("shot") or {}).get("movement") or "",
+                       *re.findall(r"camera\s*:\s*([^.\n]*)", action, re.I)])
+    if STATIC.search(camera) and not CAMERA_MOVES.search(camera):  # faces stay the same size: lips are easier to sync
+        lines = ["Shot: one continuous shot, no cuts; completely static camera throughout, no movement at all."]
+    else:
+        lines = ["Shot: one continuous shot, no cuts; smooth, steady camera doing only the move above, with no shake, "
+                 "zoom or sudden angle change."]
     if scene.get("characters") or scene.get("dialogue"):
-        lines.append("People: same face, hair, body, clothes and colours throughout; nobody new appears, "
-                     "vanishes or morphs; two hands, five fingers each; natural, expressive acting.")
+        # what Veo adds when someone turns or the place is busy (video 156: a gajra, a nose pin, a second braid,
+        # a stranger's hand at the edge)
+        lines.append("People: same face, hairstyle, jewellery, body and clothes throughout, even when turning; "
+                     "nothing added (no flowers in the hair, nose pin, extra braid or jewellery); nobody new appears, "
+                     "vanishes or morphs, no stray hands at the edges; two hands, five fingers each; natural, "
+                     "expressive acting.")
     lines.append("Objects: keep their look, place and state unless the action changes them; what is held stays in "
                  "that hand or is put down; nothing floats or stands up on its own.")
     lines.append("Motion: believable cartoon physics, steady proportions, smooth with no jumps or slow motion."
@@ -545,7 +591,8 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         head.append(FORMATS[aspect])
     if style:
         head.append(_sentence(style))
-    if bible.get("palette"):
+    portraits = any(by_id.get(p.get("id"), {}).get("image_path") for p in scene.get("characters") or [])
+    if bible.get("palette") and not (flow and portraits):  # on Flow the pictures set the colours (Ammi's sari)
         head.append(_sentence(f"Colour palette: {bible['palette']}"))
     setting = ", ".join(x.rstrip(" .,;") for x in (scene.get("setting"), scene.get("time_of_day")) if x)
     if setting:
@@ -578,7 +625,11 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
             kept = ["face", *(["hair"] if not (told.get("age") or told.get("look")) else []),
                     *(["outfit"] if not told.get("outfit") else []), "style"]
             same = ", ".join(kept[:-1]) + " and " + kept[-1]
-            if turns:  # the picture fixes who they are, not which way they face
+            if turns and flow:  # turning keeps the picture's face and hair: Veo invented a new one from behind
+                people.append(_sentence(f"{p['name']}{where}: same person, {same} as reference image {pictured}"
+                                        f"{said}; the picture shows them from the front, so from the side or back "
+                                        f"keep that same face, hair and outfit{locked}"))
+            elif turns:  # the picture fixes who they are, not which way they face
                 people.append(_sentence(f"{p['name']}{where}: same person, {same.replace('face, ', '')} as reference "
                                         f"image {pictured}{said}; the picture only shows them from the front, so "
                                         f"show them from any side as they move{locked}"))
@@ -602,11 +653,26 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         shorter.append((len(tail), TURN_NOTE_SHORT))
         tail.append(TURN_NOTE)
     lang = f" in {language}" if language else ""
-    for d in scene.get("dialogue") or []:
+    verb = "sings" if flow and genre == "music" else "says"
+    sides = {p["name"].lower(): p.get("position") or "" for p in scene.get("characters") or []}
+    placed = set()
+    if flow:  # each line said where it happens in the action, by the person on their side: in time and in sync
+        action, placed = speak_inline(action, scene.get("dialogue") or [], sides, lang)
+    voices = []
+    for i, d in enumerate(scene.get("dialogue") or []):
         voice = merged_sheet(by_id[d["id"]], bible).get("voice") if d.get("id") in by_id \
             else (invented.get(d["name"].lower()) or {}).get("voice") or ""
-        who = d["name"] + (f" (voice: {voice})" if voice else "")
-        tail.append(f"{who} {'sings' if flow and genre == 'music' else 'says'}{lang}: '{d['line']}'")
+        side = sides.get(d["name"].lower()) if flow else ""
+        if i in placed:
+            entry = d["name"] + (f" ({side})" if side else "") + (f": {voice.rstrip(' .')}" if voice else "")
+            if voice and entry not in voices:
+                voices.append(entry)
+            continue
+        who = d["name"] + (f" ({side}; voice: {voice})" if side and voice else f" ({side or 'voice: ' + voice})"
+                           if side or voice else "")
+        tail.append(f"{who} {verb}{lang}: '{d['line']}'")
+    if voices:
+        tail.insert(0, "Voices: " + "; ".join(voices) + ".")
     if scene.get("sound"):
         tail.append(f"Sound: {_sentence(scene['sound'])}")
     rules = quality_rules(scene, style, music)

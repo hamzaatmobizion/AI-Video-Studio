@@ -147,7 +147,9 @@ FLOW_RULES = ["Someone holding an object can't clap: in the same scene they eith
               "Fit the style, light, mood and camera to the story; don't turn it into a comedy or a Pixar-style "
               "cartoon unless the prompt asks.",
               "Each scene's sound: effects only (the place, footsteps, objects, reactions), never music.",
-              "Never add hitting or slapping, text or signs on screen, or people and actions the story doesn't need."]
+              "Never add hitting or slapping, text or signs on screen, or people and actions the story doesn't need.",
+              "At most one full turn or spin per scene, with each person's face toward the camera most of the time: "
+              "from behind, Veo changes hair and faces."]
 
 
 def plan_rules(genre: str, scene_count: int, flow: bool = False) -> str:

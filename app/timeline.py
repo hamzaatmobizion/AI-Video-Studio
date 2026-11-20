@@ -8,11 +8,11 @@ dialogue rather than words in the action, and its closing "Sound:" note in every
 """
 import re
 
-from app.script import BIBLE_CAST_LIMITS, MAX_LINES, SHOT_KEYS, TEXT_LIMITS, clean_text
+from app.script import BIBLE_CAST_LIMITS, MAX_LINES, PRONOUNS, SHOT_KEYS, SPEECH_VERBS, TEXT_LIMITS, clean_text
 
-# "Scene 1 (0–5 sec):", "0-5 seconds:", "Scene 2:", "(10–15s):"
+# "Scene 1 (0–5 sec):", "0-5 seconds:", "Scene 2:", "(10–15s):", "SCENE 2 — 8–16 SECONDS:"
 MARKER = re.compile(
-    r"(?:\bscene\s*(?P<n>\d+)\s*)?\(?\s*(?:(?P<a>\d+(?:\.\d+)?)\s*[–—-]\s*(?P<b>\d+(?:\.\d+)?)\s*"
+    r"(?:\bscene\s*(?P<n>\d+)\s*(?:[—–-]\s*)?)?\(?\s*(?:(?P<a>\d+(?:\.\d+)?)\s*[–—-]\s*(?P<b>\d+(?:\.\d+)?)\s*"
     r"(?:seconds?|secs?|s)\b)?\s*\)?\s*:", re.I)
 # Video-wide notes that follow the timeline: "Visual style: …", "Strict rules: …", "🎵 Music: …"
 NOTES = re.compile(r"(?:^|\n|(?<=[.!?\"'”]))\s*(?:[^\w\s\"'“”‘’]{1,3}\s*)?(?:[A-Za-z]+ ){0,3}(?:style|audio|music|rules|"
@@ -27,12 +27,12 @@ NOT_A_PERSON = re.compile(r"^(?:setting|sound|sounds|style|visual style|music|ba
 VOICE = re.compile(r"\bvoice\s*:\s*", re.I)
 # "Bahu — Voice: …", "Shinda: a man in his 30s… Voice: …" or a "Voice: …" line under "Shinda: …": whose voice it is
 NAMED_LINE = re.compile(r"\s*(?P<name>[^\W\d_][\w'’]*(?:[ -][^\W\d_][\w'’]*){0,2})\s*(?:[—–]|-+|:)\s*(?P<text>.*)")
+SPEAKER_VOICE = re.compile(r"(?<![\w-])(?P<name>[^\W\d_][\w'’]*(?: [^\W\d_][\w'’]*){0,2})\s*\(\s*voice\s*:\s*"
+                           r"(?P<voice>[^()\n]+)\)", re.I)
 # "Camera: medium shot, eye level, slow push-in." written into a moment
 CAMERA = re.compile(r"(?<![\w-])camera\s*:", re.I)
-# "Shinda says: "…"", "Billa laughs and asks: “…”": a spoken line (its speaker is the first known name before the verb)
-SPEECH_VERBS = (r"says|said|asks|asked|replies|replied|answers|answered|shouts|shouted|yells|yelled|whispers|"
-                r"whispered|exclaims|exclaimed|adds|added|cries|cried|calls|called|screams|screamed|mutters|"
-                r"muttered|sings|sang|tells \w+|speaks|says to \w+|asks \w+")
+# "Shinda says: "…"", "Billa laughs and asks: “…”": a spoken line (its speaker is the first known name before the verb,
+# or "She"/"He": the last person named before it)
 QUOTE = r"[\"“”„«»]"
 
 
@@ -101,6 +101,8 @@ def prompt_voices(prompt: str) -> dict[str, str]:
         voice = (VOICE.split(text, maxsplit=1) + [""])[1].strip(" .;,")
         if voice:
             voices[last.lower()] = voice
+    for m in SPEAKER_VOICE.finditer(prompt or ""):  # "Saas (voice: elderly female, deep) says: "…""
+        voices.setdefault(m.group("name").lower(), m.group("voice").strip(" .;,"))
     return voices
 
 
@@ -175,16 +177,26 @@ def missing_lines(prompt: str, scenes: list[dict]) -> list[str]:
 def _speech(action: str, names: list[str]) -> tuple[str, list[dict]]:
     """The spoken lines written into a moment (`Shinda says: "…"`) as dialogue, and the action without their words,
     so they're spoken in each person's voice and in sync, and never taken for on-screen text."""
-    who = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) or r"[^\W\d_][\w'’-]*"
-    pattern = re.compile(rf"(?P<lead>(?<!\w)(?P<name>{who})(?!\w)[^.!?:\"“”]{{0,60}}?\b(?:{SPEECH_VERBS})"
+    known = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+    who = "|".join([known, *PRONOUNS]) if known else r"[^\W\d_][\w'’-]*"
+    named = re.compile(rf"(?<!\w)(?:{known})(?!\w)", re.I) if known else None
+    pattern = re.compile(rf"(?P<lead>(?<!\w)(?P<name>{who})(?!\w)(?P<paren>\s*\([^()\n]*\))?[^.!?:\"“”]{{0,300}}?"
+                         rf"\b(?:{SPEECH_VERBS})"
                          rf"(?:\s+[^\W\d_]+ly)?)\s*:?\s*"
                          rf"{QUOTE}(?P<line>[^\"“”„«»]+){QUOTE}\s*[.!?]?", re.I)
     lines = []
 
     def take(m: re.Match) -> str:
-        name = next((n for n in names if n.lower() == m.group("name").lower()), m.group("name"))
+        said = m.group("name")
+        if known and said.lower() in PRONOUNS:  # "She turns to Saas and says": whom the sentence before is about
+            sentences = [s for s in re.split(r"(?<=[.!?])\s+", action[:m.start()]) if named.search(s)]
+            if not sentences:
+                return m.group(0)
+            said = named.search(sentences[-1]).group(0)
+        name = next((n for n in names if n.lower() == said.lower()), said)
         lines.append({"name": name, "line": m.group("line").strip()})
-        return m.group("lead") + ". "
+        lead = m.group("lead")  # "Saas (voice: …) says" → "Saas says": the voice is taken by prompt_voices
+        return (lead.replace(m.group("paren"), "", 1) if m.group("paren") else lead) + ". "
 
     rest = pattern.sub(take, action)
     return re.sub(r" {2,}", " ", re.sub(r"\.\s*\.", ".", rest)).strip(), lines

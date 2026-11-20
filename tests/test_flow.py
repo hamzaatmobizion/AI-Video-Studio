@@ -283,7 +283,10 @@ def test_flow_clip_prompt_ends_in_a_few_short_rules():
     lines = flow.split("\n")
     rules = lines[next(i for i, x in enumerate(lines) if x.startswith("Shot:")):]
     assert [r.split(":")[0] for r in rules] == ["Shot", "People", "Objects", "Motion", "Speech", "Look"]
-    assert len("\n".join(rules)) < 900 and script.CONTINUITY not in flow and script.ACTING not in flow
+    # still about a third of the old rules; the People line now says what Veo adds when someone turns (video 156)
+    assert len("\n".join(rules)) <= 1000 and script.CONTINUITY not in flow and script.ACTING not in flow
+    assert "nothing added (no flowers in the hair, nose pin, extra braid or jewellery)" in flow
+    assert "no stray hands at the edges" in flow
     assert "one Pixar-style 3D cartoon look for everyone" in flow and "no background music" in flow
     studio = script.compile_prompt(scene, [], style="Pixar-style 3D cartoon", room=script.FLOW_MAX_PROMPT)
     assert script.CONTINUITY in studio and "Shot: one continuous shot" not in studio
@@ -335,6 +338,32 @@ def test_flow_planner_follows_the_prompt_rules_page():
     assert all(len(genres.plan_rules(g, 12, flow=True)) <= 3000 for g in genres.GENRES)
 
 
+def test_flow_line_written_with_its_voice_in_brackets_stays_in_place():
+    """Video 154: 'Saas (voice: …) says: "…"' wasn't taken for a line (the ":" in the brackets), so the clip went to
+    Gemini's rewrite, whose long "Bahu stands … and replies." left Bahu's line at the end, and Saas said it."""
+    from app import script, timeline
+    prompt = ('0–8 seconds: Saas sits on the charpai on frame left.\n\nSaas (voice: elderly female, deep) says: '
+              '"بہو! صفائی کر لے!"\n\nBahu stands on frame right, holding the broom in her right hand. She places her '
+              'left hand on her hip, looks at Saas with a cheeky smile and replies:\n\nBahu (voice: young female, '
+              'cheeky) says: "امی جی، تسی وی تے گھر وچ او!"')
+    assert timeline.prompt_voices(prompt) == {"saas": "elderly female, deep", "bahu": "young female, cheeky"}
+    action, lines = timeline._speech(timeline._joined(timeline._scene_texts(prompt, 1, 8)[0]), ["Saas", "Bahu"])
+    assert [d["name"] for d in lines] == ["Saas", "Bahu"] and "(voice" not in action
+    long = ("Bahu stands on frame right holding the broom in her right hand, places her left hand on her hip, looks "
+            "at Saas with a cheeky smile, and replies.")
+    placed, done = script.speak_inline(long, [{"name": "Bahu", "line": "او!"}], {"bahu": "frame right"})
+    assert done == {0} and placed.startswith("Bahu (frame right) stands") and placed.endswith('replies: "او!"')
+
+
+def test_scene_headings_with_a_dash_dont_leak_into_the_clips():
+    """Video 156: "SCENE 2 — 8–16 SECONDS:" left "SCENE 2 —." at the end of clip 1's action."""
+    from app import timeline
+    prompt = ("SCENE 1 — 0–8 SECONDS: She starts dancing.\n\nSCENE 2 — 8–16 SECONDS: She turns once.\n\n"
+              "SCENE 3 — 16–24 SECONDS: She holds the final pose.\n\nDANCE STYLE: Gidda.")
+    assert [t for t, in timeline._scene_texts(prompt, 3, 8)] == [
+        "She starts dancing.", "She turns once.", "She holds the final pose."]
+
+
 MASK_PROMPT = """A 16-second vertical 9:16 Pakistani Punjabi family comedy, Pixar-style 3D cartoon animation.
 Setting: a cosy village courtyard at night, a woven charpai, a small steel bowl of green face-mask paste.
 
@@ -379,5 +408,31 @@ def test_flow_keeps_what_the_prompt_already_says(app, authed, drive_connected, n
     assert [p["position"] for p in first.characters] == ["frame left", "frame right"]
     assert {c["name"]: c["voice"] for c in g.bible["cast"]} == {
         "Bahu": "young woman, calm and cheeky, Pakistani Punjabi accent", "Ammi": "older woman, loud and dramatic"}
-    assert "Bahu (voice: young woman, calm and cheeky, Pakistani Punjabi accent) says" in first.prompt
-    assert "Urdu accent" not in first.prompt and "Medium shot" not in first.prompt
+    # each line where it happens, by the person on their side; their voices in one line
+    assert ('Ammi walks in on the right and jumps back. Ammi (frame right) screams: "ہائے ربا! بھوت!" '
+            'Bahu (frame left), not moving, says calmly: "امی جی، میں آں!"') in first.prompt
+    assert "Voices: Ammi (frame right): older woman, loud and dramatic; Bahu (frame left): young woman, calm and " \
+           "cheeky, Pakistani Punjabi accent." in first.prompt
+    assert "Urdu accent" not in first.prompt and "Medium shot," not in first.prompt
+    assert "completely static camera throughout" in first.prompt  # "Camera: … static"
+    assert "doing only the move above" in second.prompt  # no camera written: Gemini's, as it moves
+
+
+def test_flow_line_after_she_is_said_by_whom_the_sentence_before_is_about():
+    """Video 143: "Bahu finds the cat sleeping. She turns to Saas and says: "…"" went to Gemini's rewrite (no name
+    before "says") and lost when the lines are said; "She" is Bahu, not the cat."""
+    from app import script, timeline
+    action, lines = timeline._speech('Bahu finds the cat sleeping. She turns to Saas and says: "بلی اتھے اے!" '
+                                     'Saas freezes, looks at the paratha in her hand, then confidently says: "اچھا!"',
+                                     ["Bahu", "Saas", "Cat"])
+    assert [(d["name"], d["line"]) for d in lines] == [("Bahu", "بلی اتھے اے!"), ("Saas", "اچھا!")]
+    scene = {"action": action, "dialogue": lines,
+             "characters": [{"id": 1, "name": "Bahu", "position": "frame left"},
+                            {"id": 2, "name": "Saas", "position": "frame right"}]}
+    cast = [{"id": 1, "name": "Bahu", "image_path": "b.png"}, {"id": 2, "name": "Saas", "image_path": "s.png"}]
+    prompt = script.compile_prompt(scene, cast, bible={"palette": "warm yellow, olive green"}, flow=True,
+                                   room=script.FLOW_MAX_PROMPT)
+    assert 'She (Bahu, frame left) turns to Saas and says: "بلی اتھے اے!"' in prompt
+    assert 'Saas (frame right) freezes' in prompt and "Colour palette" not in prompt  # the portraits set the colours
+    studio = script.compile_prompt(scene, cast, bible={"palette": "warm yellow"}, room=script.FLOW_MAX_PROMPT)
+    assert "Colour palette" in studio and "Bahu (voice" not in studio and "Bahu says: 'بلی اتھے اے!'" in studio

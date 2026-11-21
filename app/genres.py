@@ -142,6 +142,16 @@ FLOW_RULES = ["Each scene: one shot, angle and one calm move (static or slow pus
               "Style and mood fit the story; no comedy or Pixar style unless asked.",
               "Sound: effects only, no music.",
               "Never add hitting, on-screen text, or extra people or actions.",
+              # video 169: the goat "ate" the fake moustache but it stayed on (never: clean-shaven), and the goat
+              # was a prop, so it changed from one goat into another mid-clip
+              "If the story changes how someone looks (a moustache eaten, a hat knocked off), say so plainly in that "
+              "scene's action (\"his upper lip is bare now\") and never list the result in 'never'.",
+              "An animal with a part in the story is a character (in characters, with its look), not a prop.",
+              # video 170: a waist-high goat "chomped" a tall man's moustache, and never could
+              "Make every action physically possible: before an animal or child reaches someone's face, hat or "
+              "hands, that person bends down, crouches or sits, or the animal stands on something.",
+              "The scene's key moment gets its own short steps, nothing else in the same sentence (\"Tariq bends "
+              "down. The goat bites the moustache and pulls it off. It hangs from the goat's mouth.\").",
               "Each scene ends on a clear pose with everyone in the next scene still in frame (never hopping or "
               "walking out of view); the last ends with everyone clearly visible together."]
 

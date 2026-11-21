@@ -158,7 +158,7 @@ NO_MUSIC = "No background music: only the spoken lines and natural sound effects
 MUSIC = re.compile(r"\b(music\w*|songs?|sings?|singing|melod\w*|soundtrack|beat|band|instrumental)\b", re.I)
 # A style written in the prompt ("Style: 3D animated cartoon, cheerful"), used when the Style field is empty
 STYLE_LINE = re.compile(r"^[\s*•-]*(?:visual\s+)?style\s*:[ \t]*(\S.*)$", re.I | re.M)
-STYLE_WORDS = re.compile(r"\b(?:[23]d animat\w*(?: cartoon)?|animated cartoon|cartoon|anime|pixar[- ]style|claymation|"
+STYLE_WORDS = re.compile(r"\b(?:[23]d (?:animat\w*(?: cartoon)?|cartoon(?: animat\w*)?)|animated cartoon|cartoon|anime|pixar[- ]style|claymation|"
                          r"stop[- ]motion|watercolou?r|hand[- ]drawn|photo-?realistic|realistic|cinematic|"
                          r"documentary|vintage|black[- ]and[- ]white)\b", re.I)
 ANIMATED = re.compile(r"\b(anim\w*|anime|cartoon\w*|pixar|3d|clay\w*|stop[- ]motion|illustrat\w*|comic\w*)\b", re.I)
@@ -490,8 +490,10 @@ def flow_rules(scene: dict, style: str = "", music: bool = True) -> list[str]:
         # a stranger's hand at the edge); the count keeps out extra main characters, not a bazaar's passers-by
         count = (f"exactly {len(people)} main character{'s' if len(people) > 1 else ''}: {', '.join(people)}, "
                  "with background people only if the place has them; ") if people else ""
-        lines.append(f"People: {count}same face, hair, jewellery and clothes, even when turning; add nothing (no "
-                     "flowers in the hair, nose pin, extra braid); no stray hands; five fingers; expressive acting.")
+        # …except what the story changes (video 169: the goat ate the fake moustache, and it stayed on)
+        lines.append(f"People: {count}same face, hair, jewellery and clothes, even when turning, except what the "
+                     "action changes; add nothing (no flowers in the hair, nose pin, extra braid); all fully in "
+                     "frame, none cut off at the edges; no stray hands; five fingers; expressive acting.")
     # video 158: two steering wheels
     lines.append("Objects: each only once (one door, one cup); they stay put unless moved; held things stay in hand; "
                  "nothing floats.")
@@ -545,7 +547,7 @@ def prompt_limit(provider: str = "") -> int:
     return FLOW_MAX_PROMPT if provider == "flow" else MAX_PROMPT
 
 
-def props_line(scene: dict, bible: dict | None = None) -> str:
+def props_line(scene: dict, bible: dict | None = None, start_only: bool = False) -> str:
     """The "Objects" line of a clip prompt: each object the scene lists, with its fixed look from the bible and where
     it is when the clip starts or who holds it, so every clip draws it the same way. A bible object the action only
     names (a peel thrown away during the clip) gets its look alone: it isn't there from the start."""
@@ -557,6 +559,8 @@ def props_line(scene: dict, bible: dict | None = None) -> str:
     items = []
     for p in scene.get("props") or []:
         look, state = looks.get(p["name"].lower(), ""), p.get("state", "").rstrip(" .")
+        if start_only:  # "stuck on his lip, then eaten completely" (video 170): only where it starts
+            state = re.split(r",?\s+(?:and\s+)?then\b", state, maxsplit=1)[0].rstrip(" ,.")
         items.append(p["name"] + (f" ({look})" if look else "") + (f": {state}" if state else ""))
     out = []
     if items:
@@ -592,6 +596,30 @@ def merged_sheet(sheet: dict, bible: dict | None) -> dict:
         if over.get(k):
             out[k] = over[k]
     return out
+
+
+# A look the story changes on screen, and the "Avoid" words that would stop it (video 169: "Avoid: clean-shaven"
+# kept Raju's fake moustache on after the goat ate it)
+TAKEN_OFF = r"(?:eat|eats|ate|eaten|chew\w*|pull\w*|rip\w*|tear\w*|tore|torn|shav\w*|cut\w*|snatch\w*|knock\w*|" \
+            r"blow\w*|blew|fall\w*|fell|remov\w*|tak\w+|took|gone|off|bare|missing)"
+STORY_CHANGES = [
+    (re.compile(rf"\b(?:moustache|mustache|beard)\b[^.]{{0,60}}\b{TAKEN_OFF}\b|\b{TAKEN_OFF}\b[^.]{{0,60}}\b"
+                r"(?:moustache|mustache|beard)\b|\bbare (?:upper )?lip\b", re.I),
+     re.compile(r"clean[- ]?shaven|beardless|shaven|no (?:moustache|mustache|beard)|without a (?:moustache|mustache|beard)",
+                re.I)),
+    (re.compile(rf"\b(?:turban|pagg|hat|cap|topi)\b[^.]{{0,60}}\b{TAKEN_OFF}\b|\b{TAKEN_OFF}\b[^.]{{0,60}}\b"
+                r"(?:turban|pagg|hat|cap|topi)\b", re.I),
+     re.compile(r"bare[- ]?headed|no (?:turban|hat|cap)|without a (?:turban|hat|cap)", re.I)),
+]
+
+
+def _story_changes(items: list[str], action: str) -> list[str]:
+    """The "Avoid" items without those the action itself brings about (a moustache eaten off: not "clean-shaven")."""
+    stops = [avoid for change, avoid in STORY_CHANGES if change.search(action or "")]
+    if not stops:
+        return items
+    return [", ".join(x for x in re.split(r"\s*,\s*", item or "") if not any(s.search(x) for s in stops))
+            for item in items]
 
 
 def _avoid(items: list[str]) -> str:
@@ -695,8 +723,8 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         people.append(_sentence(p["name"] + (f" ({look})" if look else "") + where + locked))
     if people:
         head.append("Characters: " + " ".join(people))
-    if props_line(scene, bible):
-        head.append(props_line(scene, bible))
+    if props_line(scene, bible, start_only=flow):
+        head.append(props_line(scene, bible, start_only=flow))
     action = scene.get("action") or ""
     shorter = []  # (tail index, the same in fewer words), tried in this order before the action is cut
     if turns and flow:
@@ -737,6 +765,9 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
                     + SPEAKERS + in_order + " " + LIP_SYNC)
     if NO_TEXT in rules and SIGNAGE_PLACES.search(" ".join([scene.get("setting") or "", action])):
         avoid.append(NO_TEXT_AVOID)
+    if flow:  # what the story itself changes is never something to avoid
+        avoid = _story_changes(avoid, " ".join([scene.get("action") or "", *(p.get("state") or "" for p in
+                                                                             scene.get("props") or [])]))
     if _avoid(avoid):
         shorter.insert(min(1, len(shorter)), (len(tail), ""))
         tail.append(_avoid(avoid))

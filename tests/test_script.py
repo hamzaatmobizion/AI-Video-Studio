@@ -232,9 +232,9 @@ def test_style_keeps_only_the_look():
     assert "Pixar-style 3D." in p and "30-second" not in p and "4K" not in p
     # a long style sentence is named by its style words, so "one … look for everyone" reads as one (video 156)
     assert script._style_name("Funny Pixar-style 3D cartoon animation, colorful Pakistani village environment") \
-        == "Pixar-style cartoon"
+        == "Pixar-style 3D cartoon animation"  # "3D" kept (video 169)
     assert script._style_name("Beautiful high-quality Pixar-style 3D cartoon animation with vibrant Punjabi cultural "
-                              "celebration atmosphere.") == "Pixar-style cartoon"
+                              "celebration atmosphere.") == "Pixar-style 3D cartoon animation"
     assert script._style_name("Pixar-style, cartoon") == "Pixar-style cartoon"
 
 

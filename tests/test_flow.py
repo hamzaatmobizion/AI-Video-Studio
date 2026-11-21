@@ -222,6 +222,40 @@ def test_roman_punjabi_lines_written_out_in_shahmukhi_dont_stop_for_review(app, 
     assert gen(app, gid).status != GenStatus.REVIEW
 
 
+def test_what_the_story_changes_is_not_avoided(app):
+    """Video 169: the goat ate Raju's fake moustache, but "Avoid: clean-shaven" (to keep him adult) and "same face
+    … throughout" kept it on, so the punchline had nothing to laugh at. And "3D cartoon" came out as "Cartoon"."""
+    from app import genres, script
+    bible = {"characters": [{"name": "Raju", "look": "a man in his late 30s with a fake moustache",
+                             "never": "clean-shaven, child-sized, beard"}]}
+    eaten = {"characters": [{"name": "Raju"}], "action": "The goat eats Raju's fake moustache right off his face."}
+    before = {"characters": [{"name": "Raju"}], "action": "Raju stands proudly with his fake moustache."}
+    after = script.compile_prompt(eaten, [], bible=bible, flow=True, room=script.FLOW_MAX_PROMPT)
+    assert "clean-shaven" not in after and "Avoid: child-sized, beard." in after
+    assert "except what the action changes" in after and "all fully in frame, none cut off at the edges" in after
+    assert "clean-shaven" in script.compile_prompt(before, [], bible=bible, flow=True, room=script.FLOW_MAX_PROMPT)
+    knocked = dict(eaten, action="A gust knocks Raju's turban off.")
+    bible2 = {"characters": [{"name": "Raju", "look": "a man", "never": "bare-headed, child-sized"}]}
+    assert "bare-headed" not in script.compile_prompt(knocked, [], bible=bible2, flow=True, room=script.FLOW_MAX_PROMPT)
+    rules = genres.plan_rules("comedy", 2, flow=True)
+    assert "never list the result in 'never'" in rules and "is a character" in rules
+    assert script.style_from_prompt("A 16-second hilarious Punjabi 3D cartoon comedy") == "3D cartoon"
+
+
+def test_the_key_moment_is_possible_and_objects_say_only_where_they_start():
+    """Video 170: a waist-high goat "chomped" a tall man's moustache in one crowded sentence, and never reached it;
+    and the moustache was "stuck on his lip, then eaten completely" when the clip started."""
+    from app import genres, script
+    rules = genres.plan_rules("comedy", 2, flow=True)
+    assert "Make every action physically possible" in rules and "bends down, crouches or sits" in rules
+    assert "key moment gets its own short steps" in rules and len(rules) <= 3000
+    scene = {"characters": [{"name": "Tariq"}], "action": "Tariq bends down. The goat bites the moustache.",
+             "props": [{"name": "fake moustache", "state": "stuck on Tariq's upper lip, then eaten completely"}]}
+    flow = script.compile_prompt(scene, [], flow=True, room=script.FLOW_MAX_PROMPT)
+    assert "fake moustache: stuck on Tariq's upper lip." in flow and "then eaten" not in flow
+    assert "then eaten completely" in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT)  # Studio as was
+
+
 def test_flow_screen_ticks_only_making_the_clips_by_hand(authed, drive_connected):
     flow = authed.get("/flow").text
     assert 'name="by_hand" value="1" checked' in flow
@@ -335,9 +369,9 @@ def test_flow_clip_prompt_ends_in_a_few_short_rules():
     assert [r.split(":")[0] for r in rules] == ["Shot", "People", "Objects", "Motion", "Speech", "Look"]
     # short lines Veo follows: what it adds when someone turns (video 156), each object once and no writing
     # anywhere (video 158: two steering wheels, a garbled bus sign)
-    assert len("\n".join(rules)) <= 850 and script.CONTINUITY not in flow and script.ACTING not in flow
+    assert len("\n".join(rules)) <= 950 and script.CONTINUITY not in flow and script.ACTING not in flow
     assert "exactly 2 main characters: Ali, Sara, with background people only if the place has them" in flow
-    assert "add nothing (no flowers in the hair, nose pin, extra braid); no stray hands" in flow
+    assert "add nothing (no flowers in the hair, nose pin, extra braid); all fully in frame" in flow
     assert "each only once (one door, one cup)" in flow and "no text, subtitles, logos or writing anywhere" in flow
     assert "one Pixar-style 3D cartoon look, never photorealistic" in flow and "no music." in flow
     assert "squash and stretch and follow-through" in flow

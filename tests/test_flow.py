@@ -206,6 +206,22 @@ def test_flow_script_that_drops_a_line_waits_for_review(app, authed, drive_conne
     assert "Not said in any scene" in page and "“kal milenge yaar”" in page and "“chalo ghar chalein”" not in page
 
 
+def test_roman_punjabi_lines_written_out_in_shahmukhi_dont_stop_for_review(app, authed, drive_connected, net):
+    """Video 168 stopped for review unasked: its lines were in Roman Punjabi and Gemini's script says them in
+    Shahmukhi, as Pakistani Punjabi is spoken; that's the same lines, not dropped ones."""
+    from app.timeline import missing_lines
+    prompt = 'He says: "Oye! Main Punjab da sab ton smart banda aan!" His friend: "Oye! Teri taan izzat vi bakri kha gayi!"'
+    both = [{"dialogue": [{"line": "اوئے! میں پنجاب دا سب توں سمارٹ بندا آں!"}]},
+            {"dialogue": [{"line": "اوئے! تیری تاں عزت وی بکری کھا گئی!"}]}]
+    assert missing_lines(prompt, both) == [] and len(missing_lines(prompt, both[:1])) == 2  # one really dropped
+    gid = flow_idea(authed, prompt=prompt, duration=16).json()["id"]
+    net.worker.jobs["job1"].update(status="done", scenes=[
+        {"action": "He boasts.", "dialogue": [dict(name="Ali", **both[0]["dialogue"][0])]},
+        {"action": "They laugh.", "dialogue": [dict(name="Sara", **both[1]["dialogue"][0])]}])
+    tick(app)
+    assert gen(app, gid).status != GenStatus.REVIEW
+
+
 def test_flow_screen_ticks_only_making_the_clips_by_hand(authed, drive_connected):
     flow = authed.get("/flow").text
     assert 'name="by_hand" value="1" checked' in flow
@@ -351,6 +367,131 @@ def test_flow_clip_ends_with_everyone_in_the_next_clip_in_frame(app, authed, dri
     authed.post(f"/generations/{gid}/scenes/2/clip", files={"clip": ("x.mp4", clip_bytes(tmp_path, "s2"), "video/mp4")})
     assert "End the clip with" not in authed.get(f"/generations/{gid}/by-hand").text  # the last clip
     assert "everyone in the next scene still in frame" in genres.plan_rules("kids", 2, flow=True)
+
+
+def test_one_clip_flow_brief_goes_to_flow_as_written(app, authed, drive_connected, net):
+    """The buffalo sarpanch brief: a full 8-second prompt (layout, timed beats, dialogue lock, sound timeline) is
+    better than Gemini's one-paragraph rewrite of it, so one clip from a long prompt goes to Flow as written."""
+    from app import script
+    from tests.test_app import by_hand
+    beats = "".join(f"Beat {i}: Chacha does thing number {i} while the buffalo watches calmly. " for i in range(1, 9))
+    brief = ("SECTION 4: Layout. The charpai is in the centre, the door on the right, the entrance on the left. "
+             "Key light from the upper left. " * 6 + beats + 'Chacha says: "اوئے! میری پگ کدھر لے کے چلی ایں؟" '
+             + "Sound: a booming moo at 3.6 seconds. " * 10 + "x" * 14500)
+    assert len(brief) > 16000
+    gid = by_hand(authed, ["unused"]).json()["id"]  # a by-hand video, to read the clip prompt off its page
+    with app.state.db.session() as s:
+        from app.models import Generation
+        g = s.get(Generation, gid)
+        g.prompt, g.planned, g.review = brief, True, False
+    prompt = app.state.service.hand_scene(gid, 1)["prompt"]
+    assert prompt.startswith(brief.strip()) and len(prompt) <= script.FLOW_INPUT_LIMIT
+    assert "Shot: one continuous take" in prompt and "nobody speaks" not in prompt  # it has a quoted line
+    with app.state.db.session() as s:
+        s.get(Generation, gid).review = True  # edited on the script page: the script's prompt is sent
+    assert not app.state.service.hand_scene(gid, 1)["prompt"].startswith(brief[:200])
+    # the Flow screen takes a brief this long; the Studio keeps its 10,000
+    ok = flow_idea(authed, prompt=brief, duration=8)
+    assert ok.status_code == 200, ok.text
+    studio = authed.post("/generations", data={"prompt": brief, "duration": "10", "aspect": "9:16"})
+    assert studio.status_code == 400 and "under 10,000 characters" in studio.json()["detail"]
+    assert 'maxlength="30000"' in authed.get("/flow").text and 'id="length-note"' in authed.get("/flow").text and 'maxlength="10000"' in authed.get("/").text
+    # Gemini's script dropping a line doesn't stop it for review: the brief, with every line, is what Flow gets
+    gid = ok.json()["id"]
+    net.worker.jobs[gen(app, gid).worker_job_id].update(status="done", scenes=[{"action": "Chacha shouts."}])
+    tick(app)
+    assert gen(app, gid).status != GenStatus.REVIEW
+
+
+def test_a_briefs_beats_timed_within_its_length_need_no_more_seconds():
+    """The buffalo brief at 8 seconds was told "17 moments … Choose 72 seconds": its beats and timed lines all fall
+    within 0–8 seconds, so they fit; more seconds would only push every beat into the first clip."""
+    from app.checks import prompt_notes
+    beats = "".join(f"Beat {i} — moment: {i - 1}.00 to {i}.00 seconds.\n" for i in range(1, 9))
+    timed = "".join(f"- {i}.10–{i}.50 seconds: a sound.\n" for i in range(8))
+    brief = "Scene 1: Chacha sips. Scene 2: the buffalo walks in. Scene 3: he shouts.\n" + beats + timed
+    brief += "SECTION 4: Layout. The charpai is in the centre, the door on the right. " * 25  # a full brief
+    assert not any("moments" in n["text"] for n in prompt_notes(brief, [], seconds=8, clip=8))
+    # untimed moments, or times past the length, still say the story needs more time
+    many = " ".join(f"Scene {i}: something happens." for i in range(1, 8))
+    assert any("moments" in n["text"] for n in prompt_notes(many, [], seconds=8, clip=8))
+    assert any("moments" in n["text"] for n in prompt_notes(brief + "\nBeat 9 — more: 8.00 to 24.00 seconds.\n",
+                                                             [], seconds=8, clip=8))
+
+
+def test_a_16_second_brief_with_numbered_beat_headings_splits_and_the_note_says_how_it_goes():
+    """The superstar goat brief: "16. OPENING: 0–2 SECONDS" … "23. FINAL PUNCHLINE: 14–16 SECONDS" went to both
+    clips as shared text. They're its beats; and the length note judges each clip, not the whole 23,876."""
+    from app.checks import prompt_notes
+    from app.timeline import brief_clips
+    shared = "4. MAIN CHARACTER: CHACHA BASHIRA\n" + "A round village uncle with a grey moustache. " * 90
+    beats = ("15. ABSOLUTE TIMELINE\n0–2 sec\tChacha prepares to sing\n8–10 sec\tCrowd cheers\n"
+             "16. OPENING: 0–2 SECONDS\nChacha holds the microphone.\n"
+             "20. CROWD REACTION: 8–10 SECONDS\nGuests clap.\n"
+             "23. FINAL PUNCHLINE: 14–16 SECONDS\nChacha says the punchline.\n")
+    brief = shared + "\n" + beats
+    first, second = brief_clips(brief, 2, 8)
+    assert "OPENING: 0–2" in first and "FINAL PUNCHLINE" not in first and "MAIN CHARACTER" in first
+    assert "FINAL PUNCHLINE: 14–16" in second and "OPENING" not in second and "MAIN CHARACTER" in second
+    notes = lambda text, s=16: [n["text"] for n in prompt_notes(text, [], seconds=s, clip=8)]  # noqa: E731
+    assert not any("sent as written" in n or "characters" in n for n in notes(brief))
+    untimed = shared + "\n16. OPENING: 0–2 SECONDS\nChacha holds the microphone.\n"  # nothing for clip 2
+    assert any("Not sent as written" in n for n in notes(untimed))
+    huge = "4. MAIN CHARACTER\n" + "A round village uncle with a grey moustache. " * 520 + "\n" + beats
+    assert any(n.startswith("Clip ") and "may refuse it" in n for n in notes(huge))
+
+
+GARDEN_BRIEF = ("A 16-second vertical 9:16 3D animated family cartoon.\n\n"
+                "MAIN CHARACTERS:\n\nPHUPPO: A Pakistani woman in her early 30s in a blue shalwar kameez. " + "Warm and cheerful. " * 140
+                + "\n\nSETTING: A colourful garden at golden hour, key light from the upper left.\n\n"
+                "SCENE 1 — 0–4 SECONDS:\n\nCamera: tracking forward.\n\nPhuppo walks; the child points at Bunny.\n\n"
+                "SCENE 2 — 4–8 SECONDS:\n\nCamera: low-angle tracking following Bunny.\n\nBunny hops between flowers.\n\n"
+                "SCENE 3 — 8–12 SECONDS:\n\nCamera: side tracking.\n\nBunny zigzags round a flower bed.\n\n"
+                "SCENE 4 — 12–16 SECONDS:\n\nCamera: slow pull-back.\n\nAll three stop together, smiling.\n\n"
+                "ANIMATION: Smooth, fluid cartoon animation with squash and stretch.\n\n"
+                "AUDIO: Birds singing, soft hopping, the child giggling. No dialogue.")
+
+
+def test_a_brief_near_flows_limit_goes_without_our_rules():
+    """The buffalo brief is about 22,500 characters: the box takes it whole, and it goes to Flow without our rules
+    block (it has its own), to stay near the 22,800 Flow was seen to make a video from."""
+    from app import script
+    brief = "SECTION 1: Chacha sips lassi. " * 760
+    assert 22000 < len(brief) < 23000
+    sent = script.as_written_prompt(brief, ["Chacha"], {"characters": [{"name": "Chacha"}]}, "3D cartoon", True)
+    assert sent.startswith(brief.strip()) and "Reference images: 1 = Chacha" in sent and "People:" not in sent
+    # video 164: the essentials go with every brief, even this long (entrance, places, no camera jumps)
+    for line in script.BRIEF_ESSENTIALS:
+        assert line in sent
+    short = script.as_written_prompt(brief[:5000], [], {"characters": [{"name": "Chacha"}]}, "3D cartoon", True)
+    assert "People: exactly 1 main character" in short and short.count("Shot:") == 1
+    assert "Start: the first frame shows only what the first beat describes" in short
+
+
+def test_longer_flow_brief_is_split_by_time_and_sent_as_written(app, authed, drive_connected, net, tmp_path):
+    """A full brief for a 16-second video (#159's garden): every clip gets its shared sections word for word, which
+    part of the story it is, and only its own timed scenes."""
+    from tests.test_app import by_hand
+    assert len(GARDEN_BRIEF) > 3000
+    gid = by_hand(authed, ["one", "two"]).json()["id"]
+    with app.state.db.session() as s:
+        from app.models import Generation
+        g = s.get(Generation, gid)
+        g.prompt, g.planned, g.review = GARDEN_BRIEF, True, False
+    first = app.state.service.hand_scene(gid, 1)["prompt"]
+    for shared in ("PHUPPO: A Pakistani woman", "SETTING: A colourful garden", "ANIMATION: Smooth, fluid",
+                   "AUDIO: Birds singing"):
+        assert shared in first
+    assert "THIS CLIP: part 1 of 2, story seconds 0–8" in first
+    assert "SCENE 2 — 4–8 SECONDS" in first and "SCENE 3 — 8–12" not in first and "Shot: one continuous" in first
+    authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", clip_bytes(tmp_path, "s1"), "video/mp4")})
+    second = app.state.service.hand_scene(gid, 1)["prompt"]
+    assert "THIS CLIP: part 2 of 2, story seconds 8–16" in second and "SETTING: A colourful garden" in second
+    assert "SCENE 4 — 12–16 SECONDS" in second and "SCENE 1 — 0–4" not in second
+    # no time for the second clip: it can't be split, so the clips are made from the script as before
+    with app.state.db.session() as s:
+        s.get(Generation, gid).prompt = GARDEN_BRIEF.split("SCENE 3")[0]
+    assert "THIS CLIP" not in app.state.service.hand_scene(gid, 1)["prompt"]
 
 
 def test_flow_clip_with_no_lines_birdsong_and_an_animal():

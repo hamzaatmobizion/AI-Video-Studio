@@ -27,6 +27,12 @@ SHOT_OPTIONS = {"framing": FRAMINGS, "angle": ANGLES, "movement": MOVEMENTS, "le
 
 MAX_PROMPT = 2000  # one clip prompt, as Gemini's video tool takes it
 FLOW_MAX_PROMPT = 3300  # Google Flow follows a longer one to its last line (a 3,298-character prompt was tested)
+# What Flow's prompt box takes (a 22,800-character prompt was made; 28,800 was refused): only for a user's own full
+# prompt sent as written (as_written_prompt), whose structure carries it; the app's own prompts stay at FLOW_MAX_PROMPT
+FLOW_INPUT_LIMIT = 30000
+FLOW_TESTED = 22000  # past this a brief goes without our rules block (it has its own), to stay near what Flow made
+AS_WRITTEN_MIN = 1500  # a one-clip Flow prompt this long is a full brief: sent as written, not rewritten by Gemini
+BRIEF_MIN = 3000  # a longer Flow video's prompt this long, with timed beats for every clip: split and sent as written
 MAX_SPOKEN_WORDS = 25  # about what fits in one 10-second Gemini clip (words_per_clip for other lengths)
 # Google Flow's 8-second clip has about 6 seconds for speech once the start and the closing reaction have theirs:
 # 20 words ran the lines back to back with no pause. Each change of speaker also needs a short gap.
@@ -435,6 +441,35 @@ def speak_inline(action: str, dialogue: list[dict], sides: dict[str, str], lang:
         pos = m.start() + len(said)
         placed.add(i)
     return action, placed
+
+
+def as_written_prompt(prompt: str, pictured: list[str], scene: dict, style: str = "", music: bool = True) -> str:
+    """A one-clip Flow video's clip prompt from a full brief (the buffalo sarpanch prompt): the user's own text as
+    written, with its layout, beats, dialogue lock and sound timeline, which a Gemini rewrite boiled down to a
+    paragraph. Only what it can't know is added: which reference picture is whom (`pictured`, in scene_images
+    order), and the short Flow rules."""
+    head = []
+    if pictured:
+        head.append("Reference images: " + ", ".join(f"{i} = {n}" for i, n in enumerate(pictured, 1))
+                    + "; each looks exactly as in their picture (face, hair, outfit and style).")
+    # its own lines are in quotes even when the script missed them: the rules mustn't say "nobody speaks"
+    spoken = scene.get("dialogue") or ([{"name": "", "line": "…"}] if re.search(r"[\"“”]", prompt) else [])
+    rules = flow_rules({**scene, "action": prompt, "dialogue": spoken}, style, music)
+    if len(prompt) + len("\n".join(head + rules + BRIEF_ESSENTIALS)) > FLOW_TESTED:  # it has its own rules
+        rules = []
+    return "\n".join([prompt.strip(), "", *head, *BRIEF_ESSENTIALS, *rules[1:]])
+
+
+# Said after every brief, even one near Flow's limit (video 164: the buffalo stood behind Chacha from the first frame
+# instead of walking in, and the camera jumped from close to wide; the brief's own words alone didn't hold)
+BRIEF_ESSENTIALS = [
+    "Start: the first frame shows only what the first beat describes; anyone who arrives later is not in the shot "
+    "until they walk in.",
+    "Places: everyone stands where the beats place them (left, right, centre), side by side, never one behind "
+    "another.",
+    "Shot: one continuous take; the camera moves only as the beats say, smoothly, with no cuts, jumps, sudden "
+    "reframes or zooms.",
+]
 
 
 def flow_rules(scene: dict, style: str = "", music: bool = True) -> list[str]:

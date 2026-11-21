@@ -1076,7 +1076,10 @@ def test_flow_clip_prompts_can_be_longer(flow_api):
     assert flow_api.post("/videos", headers=AUTH, json={"prompt": long, "aspect": "9:16", "provider": "flow"}
                          ).status_code == 200
     assert flow_api.post("/videos", headers=AUTH, json={"prompt": long, "aspect": "9:16"}).status_code == 400
-    assert flow_api.post("/videos", headers=AUTH, json={"prompt": long * 2, "aspect": "9:16", "provider": "flow"}
+    # a full brief sent as written may be up to 30,000 characters (Flow refused 28,800), not more
+    assert flow_api.post("/videos", headers=AUTH, json={"prompt": long * 8, "aspect": "9:16", "provider": "flow"}
+                         ).status_code == 200
+    assert flow_api.post("/videos", headers=AUTH, json={"prompt": long * 11, "aspect": "9:16", "provider": "flow"}
                          ).status_code == 400
 
 

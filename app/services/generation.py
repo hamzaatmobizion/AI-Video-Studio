@@ -29,14 +29,15 @@ from sqlalchemy import func, select
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.factories import Providers
 from app.genres import plan_rules, valid_genre
-from app.timeline import bible_from_prompt, keep_prompt, missing_lines, script_from_timeline
+from app.timeline import bible_from_prompt, brief_clips, keep_prompt, missing_lines, script_from_timeline
 from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
-from app.script import (CONTINUE_FROM, ENTER_SHOT, FRAME_START, KEEP_IN_FRAME, LEAVE_BY_END, LEAVE_SHOT,
+from app.script import (AS_WRITTEN_MIN, BRIEF_MIN, CONTINUE_FROM, ENTER_SHOT, FLOW_INPUT_LIMIT, FRAME_START, KEEP_IN_FRAME,
+                        LEAVE_BY_END, LEAVE_SHOT,
                         MAX_SCENE_IMAGES,
                         STARTS_FROM,
                         cast_sheet, is_structured, merged_sheet,
-                        still_prompt, compile_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
+                        still_prompt, compile_prompt, as_written_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
                         scene_images, scene_warnings, clean_text, style_from_prompt, prompt_limit,
                         FLOW_MOST_WORDS, keep_places, spoken_words)
 from app.video_join import JoinError, clip_seconds, frame_at, join_clips, last_frame, late_cut, trim_clip
@@ -231,6 +232,11 @@ class GenerationService:
             pictured = len(_pictured_names(scene, library))
             paths = scene_images(scene.script(), library, gen.ref_images)
         prompt = scene.prompt
+        brief = _brief(gen)
+        written = brief is not None and scene.position <= len(brief)
+        if written:  # a full brief goes to Flow as the user wrote it: whole for one clip, else split by time
+            prompt = as_written_prompt(brief[scene.position - 1], [] if frames else _pictured_names(scene, library),
+                                       scene.script(), gen.style, _prompt_options(gen)["music"])
         extra = []  # lines added now; the scene's action is shortened to make room, never these
         start = Path(scene.still_path) if scene.still_path and Path(scene.still_path).exists() else None
         lead = start or frame  # the scene's own first frame, else the previous clip's last one
@@ -247,9 +253,9 @@ class GenerationService:
             extra += _keep_in_frame(gen, scene)
         if scene.redos and scene.check_note.startswith("Remade once: "):  # say what went wrong last time
             extra.append(f"Fix from the last try: {_fit_text(scene.check_note[13:].rstrip('.'), 300)}.")
-        limit = prompt_limit(gen.provider)
+        limit = FLOW_INPUT_LIMIT if written else prompt_limit(gen.provider)
         room = limit - len("\n".join(extra)) - 1
-        if extra and len(prompt) > room:
+        if extra and len(prompt) > room and not written:
             prompt = compile_prompt(scene.script(), library, gen.style, gen.language, gen.aspect, fit=True,
                                     **{**_prompt_options(gen), "room": room})
         if frames:  # its people are as in the start frame
@@ -672,8 +678,9 @@ class GenerationService:
                 script = keep_places(script)
             # A Flow script that dropped or reworded a line, or crams a clip with more words than 8 seconds can say:
             # the user sees it first. Its length stays as asked; the script page warns of a tight clip.
-            if gen.provider == Provider.FLOW and (missing_lines(gen.prompt, script)
-                                                  or any(spoken_words(sc) > FLOW_MOST_WORDS for sc in script)):
+            # (A full brief for one clip goes to Flow as written, not as this script: nothing to check.)
+            if gen.provider == Provider.FLOW and not _as_written(gen) and (
+                    missing_lines(gen.prompt, script) or any(spoken_words(sc) > FLOW_MOST_WORDS for sc in script)):
                 gen.review = True
             gen.style = gen.style or gen.bible["style"]  # the look Gemini fixed for every scene, shown in the editor
             for scene, sc in zip(gen.scenes, script):
@@ -1047,6 +1054,23 @@ def _cast_changes(gen: Generation, scene: Scene) -> list[str]:
     new = [n for n in now if n.lower() not in {x.lower() for x in then}]
     return [*([LEAVE_SHOT.format(names=" and ".join(gone))] if gone else []),
             *([ENTER_SHOT.format(names=" and ".join(new))] if new else [])]
+
+
+def _brief(gen: Generation) -> list[str] | None:
+    """Each clip's text when a Flow video comes from a full brief, not edited on the script page: one clip's brief
+    of AS_WRITTEN_MIN characters or more as written, or a longer video's brief (BRIEF_MIN or more) split by time
+    into its shared sections and each clip's own beats (brief_clips). The clip prompts are then the user's own
+    text (as_written_prompt), not Gemini's rewrite of it. None otherwise."""
+    count = len(gen.scenes)
+    if gen.provider != Provider.FLOW or not gen.planned or gen.review or not count:
+        return None
+    if len(gen.prompt or "") < (AS_WRITTEN_MIN if count == 1 else BRIEF_MIN):
+        return None
+    return brief_clips(gen.prompt, count, scene_seconds(gen))
+
+
+def _as_written(gen: Generation) -> bool:
+    return _brief(gen) is not None
 
 
 def _keep_in_frame(gen: Generation, scene: Scene) -> list[str]:

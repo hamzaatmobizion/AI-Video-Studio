@@ -3,8 +3,8 @@ a clip, or to make the video ignore what the prompt asks for. Shown in the Studi
 import math
 import re
 
-from app.script import ANIMATED, style_from_prompt
-from app.timeline import bible_from_prompt, story_moments
+from app.script import ANIMATED, AS_WRITTEN_MIN, BRIEF_MIN, FLOW_SECONDS, style_from_prompt
+from app.timeline import _timed, bible_from_prompt, brief_clips, story_moments
 
 # A character who may read as a child to Gemini, in a moment its child-safety rules refuse: Gemini then declines
 # the clip, often only as "I encountered an error"
@@ -17,6 +17,8 @@ YOUNG_ADULT = re.compile(r"\byoung(?:\s+\w+){0,2}\s+(?:man|men|woman|women|lady|
                          re.I)
 SENSITIVE = re.compile(r"\b(kiss\w*|romanc\w*|romantic|jaan|darling|in love|flirt\w*|slipper|chappal|beat\w*|"
                        r"hit\w*|slap\w*|spank\w*|smack\w*|whack\w*|thrash\w*)\b", re.I)
+FLOW_MADE, FLOW_REFUSED = 23400, 28800  # the longest prompt Flow made a video from (video 165), and one it refused
+ESSENTIALS_ROOM = 500  # what the app adds after a brief (its reference line and BRIEF_ESSENTIALS)
 MOMENTS_PER_CLIP = 2  # more of the story's moments in one 10-second clip and the motion gets rushed and messy
 
 GURMUKHI = re.compile(r"[਀-੿]")
@@ -57,12 +59,31 @@ def prompt_notes(prompt: str, cast: list[dict], style: str = "", language: str =
                      "encountered an error”. Make their age clear, e.g. “a chubby man in his 30s with a thick "
                      "mustache”.")
     moments, clips = story_moments(prompt), max(math.ceil(seconds / clip), 1)
-    if seconds and moments > clips * MOMENTS_PER_CLIP:
+    # A Flow brief's beats timed within the length ("Beat 3 — …: 2.20 to 3.60 seconds" in an 8-second video) are its
+    # plan for those seconds, sent as written: they fit. A short story's timed steps can still be too many.
+    ends = [float(m.group("b")) for line in (prompt or "").splitlines() if (m := _timed(line))]
+    planned = clip == FLOW_SECONDS and len(prompt or "") >= AS_WRITTEN_MIN and ends and max(ends) <= seconds + 0.5
+    if seconds and moments > clips * MOMENTS_PER_CLIP and not planned:
         need = min(math.ceil(moments / MOMENTS_PER_CLIP), 12) * clip
         note("warning", f"Your story sets out {moments} moments, but {seconds} seconds is {clips} clip"
                      f"{'s' if clips > 1 else ''} of {clip} seconds, so each clip has to fit about "
                      f"{math.ceil(moments / clips)} of them. That rushes the action: blurred hands, sudden camera "
                      f"changes and things vanishing are likely. Choose {need} seconds, or fewer moments.")
+    if clip == FLOW_SECONDS and seconds:  # a Flow brief: say how it goes to Flow, per clip, not by its whole length
+        count = max(seconds // clip, 1)
+        if len(prompt or "") >= (AS_WRITTEN_MIN if count == 1 else BRIEF_MIN):
+            texts = brief_clips(prompt, count, clip)
+            if texts is None:
+                note("warning", f"Not sent as written: your brief's beats aren't timed for every {clip}-second clip "
+                                f"(0–{clip}, {clip}–{2 * clip} seconds…), so Gemini writes the {count} clips' script "
+                                "from it instead. Give each beat its seconds to have your own words sent.")
+            else:
+                longest = max(len(t) for t in texts) + ESSENTIALS_ROOM
+                if longest > FLOW_MADE:
+                    which = f"Clip {max(range(count), key=lambda i: len(texts[i])) + 1}'s" if count > 1 else "The"
+                    note("warning", f"{which} prompt will be about {longest:,} characters. Google Flow made a video "
+                                    f"from about {FLOW_MADE:,} and refused {FLOW_REFUSED:,}, so it may refuse it. If it "
+                                    "does, shorten a repeated part, such as the summary at the end.")
     wants = f"{prompt} {language}"
     if PAKISTANI.search(wants):
         if GURMUKHI.search(prompt):

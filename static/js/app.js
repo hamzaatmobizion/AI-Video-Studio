@@ -242,12 +242,30 @@
     const note = document.getElementById("talk-note");
     if (!note || manual()) { if (note) note.hidden = true; return; }
     const text = form.querySelector("textarea[name=prompt]").value;
-    const words = [...text.matchAll(/["“”]([^"“”\n]{2,})["“”]/g)].reduce((n, m) => n + lineWords(m[1]), 0);
+    // each line once (a brief writes its lines in the beats and again in its dialogue lock), and only real lines:
+    // a word in quotes ("Oye" is sharp) is a mention (missing_lines in app/timeline.py does the same)
+    const said =[...text.matchAll(/["“”]([^"“”\n]{2,})["“”]/g)].map((m) => m[1].trim()).filter((l) => lineWords(l) > 1);
+    const seen = new Set(), words = said.reduce((n, l) => {
+      const key = l.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+      if (seen.has(key)) return n;
+      seen.add(key);
+      return n + lineWords(l);
+    }, 0);
     const clips = chosenDuration() / SCENE_SECONDS, need = Math.ceil(words / WORDS_PER_CLIP);
-    note.hidden = need <= clips;
+    // a full Flow brief goes to Flow as written, its lines timed by the user (AS_WRITTEN_MIN in app/script.py)
+    const brief = SCENE_SECONDS === 8 && text.length >= 1500;
+    note.hidden = need <= clips || brief;
     note.textContent = `Your lines have about ${words} spoken words, but ${lengthFor(clips)} fits about ` +
-      `${clips * WORDS_PER_CLIP}, so they'll be rushed or some may be cut. Choose ${lengthFor(Math.min(need, MAX_SCENES))} ` +
-      "or more to keep every line.";
+      `${clips * WORDS_PER_CLIP}, so they'll be rushed or some may be cut. ` +
+      `Choose ${lengthFor(Math.min(need, MAX_SCENES))} or more to keep every line.`;
+  }
+  // A Flow prompt at the box's limit (30,000): said, never cut silently. How each clip goes to Flow is a server note
+  function syncLength() {
+    const note = document.getElementById("length-note"), box = form.querySelector("textarea[name=prompt]");
+    if (!note || SCENE_SECONDS !== 8) return;
+    note.hidden = box.value.length < box.maxLength;
+    note.textContent = `Your prompt is at the ${box.maxLength.toLocaleString()}-character limit: anything after it ` +
+      "was cut. Shorten a repeated part, such as the summary at the end.";
   }
   // A format named in the prompt wins over the picked one (mirrors aspect_from_prompt in app/script.py)
   const ASPECTS = {
@@ -293,8 +311,8 @@
     }, 600);
   }
   // "click" covers adding or removing a scene and switching between one prompt and own scenes
-  if (form) ["input", "change", "click"].forEach((t) => form.addEventListener(t, () => { syncNotes(); syncTalk(); syncAspect(); syncChecks(); }));
-  syncNotes(); if (form) { syncTalk(); syncAspect(); syncChecks(); }
+  if (form) ["input", "change", "click"].forEach((t) => form.addEventListener(t, () => { syncNotes(); syncTalk(); syncLength(); syncAspect(); syncChecks(); }));
+  syncNotes(); if (form) { syncTalk(); syncLength(); syncAspect(); syncChecks(); }
   if (form) form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = document.getElementById("new-error");

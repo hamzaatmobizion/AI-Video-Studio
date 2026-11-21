@@ -34,6 +34,7 @@ CAMERA = re.compile(r"(?<![\w-])camera\s*:", re.I)
 # "Shinda says: "…"", "Billa laughs and asks: “…”": a spoken line (its speaker is the first known name before the verb,
 # or "She"/"He": the last person named before it)
 QUOTE = r"[\"“”„«»]"
+ARABIC_SCRIPT = re.compile(r"[\u0600-\u06FF]")  # Urdu and Shahmukhi letters
 
 
 def _segments(prompt: str) -> list[tuple[float | None, int | None, str]]:
@@ -79,6 +80,76 @@ def _scene_texts(prompt: str, scene_count: int, clip_seconds: int) -> list[list[
         # 8-second Flow scenes is 24 s long), so its moments are spread over the scenes in order instead.
         buckets = _buckets(segments, scene_count, clip_seconds, timed=False)
     return None if any(not b for b in buckets) else buckets
+
+
+# A full brief's timed line: "Beat 1 — Lassi: 0.00 to 1.00 seconds.", "SECTION 6: BEAT 1 — LASSI (0.00–1.00)",
+# "TIME: 1.50–3.50 SECONDS", "- 0.20–0.90 seconds: a light ting", "Line 1 (Beat 3, 2.20–3.60 seconds):"
+RANGE = re.compile(r"(?P<a>\d+(?:\.\d+)?)\s*(?:[–—-]|to)\s*(?P<b>\d+(?:\.\d+)?)(?!\.?\d|\s*[–—-]\s*\d)"
+                   r"\s*(?:seconds?\b|secs?\b|s\b)?", re.I)  # not "1 — 0" in "SCENE 1 — 0–4 SECONDS"
+BRIEF_HEAD = re.compile(r"^\W*(?:section|scene|beat|shot|part|time|line|moo|step|master prompt)\b", re.I)
+
+
+def _timed(line: str) -> re.Match | None:
+    """The time range a brief's line starts, when it's a beat's heading or a timed cue, not a range in a sentence
+    ("a line needs about 1.3 to 1.6 seconds")."""
+    m = RANGE.search(line)
+    if not m or len(line) > 200 or float(m.group("a")) >= float(m.group("b")):
+        return None
+    before = line[:m.start()]
+    numbered = re.match(r"^\W*\d+[.)]\s+[A-Z][A-Z &/'—–-]*:?\s*$", before)  # "16. OPENING: 0–2 SECONDS"
+    return m if not before.strip(" -•*–—\t") or BRIEF_HEAD.match(line) or "(" in before or numbered else None
+
+
+def _heading(line: str) -> bool:
+    """A brief's section heading ("SECTION 16: MUSIC", "6. FACIAL EXPRESSION AND EMOTIONAL ANIMATION", or a
+    section that starts on its label's line: "ANIMATION: Smooth, fluid…"), which ends the timed part above it;
+    "CAMERA:" alone on a line or "Action:" inside a beat doesn't."""
+    letters = [c for c in line if c.isalpha()]
+    caps = len(letters) >= 8 and sum(c.isupper() for c in letters) >= 0.85 * len(letters)
+    return (bool(BRIEF_HEAD.match(line)) or (caps and len(line.split()) >= 2 and len(line) <= 80)
+            or bool(re.match(r"^\W*[A-Z][A-Z &/'-]{3,}:\s*\S", line)))
+
+
+def split_brief(prompt: str, clips: int, clip_seconds: int) -> tuple[str, list[str]] | None:
+    """A full brief for a video of `clips` clips (the buffalo sarpanch prompt at 16 seconds): its shared sections
+    (characters, layout, light, voice, priorities), said in every clip, and each clip's own timed parts (beats,
+    timed lines, sound and music cues), by when they start. None unless every clip gets something timed."""
+    shared, parts = [], [[] for _ in range(clips)]
+    current, head = None, None  # the clip taking lines; a heading right above a timed line ("SCENE 1 — …")
+    for line in (prompt or "").splitlines():
+        m = _timed(line)
+        if m:
+            current = parts[min(int(float(m.group("a")) // clip_seconds), clips - 1)]
+            if head is not None:  # "SCENE 1 — THE GANGSTER" above "TIME: 0.00–1.50 SECONDS"
+                current.append(shared.pop(head))
+            head = None
+            current.append(line)
+        elif _heading(line):
+            current = None
+            shared.append(line)
+            head = len(shared) - 1 if BRIEF_HEAD.match(line) else None  # a scene's title, not "SETTING: …"
+        else:
+            (shared if current is None else current).append(line)
+            if line.strip() and current is None:
+                head = None
+    if any(not "".join(p).strip() for p in parts):
+        return None
+    tidy = lambda lines: re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()  # noqa: E731
+    return tidy(shared), [tidy(p) for p in parts]
+
+
+def brief_clips(prompt: str, clips: int, clip_seconds: int) -> list[str] | None:
+    """Each clip's prompt from a full brief: the whole brief for one clip; else its shared sections, which part of
+    the story this clip is, and the clip's own timed parts (split_brief). None when it doesn't split by time."""
+    if clips == 1:
+        return [prompt.strip()]
+    split = split_brief(prompt, clips, clip_seconds)
+    if split is None:
+        return None
+    shared, parts = split
+    return [f"{shared}\n\nTHIS CLIP: part {i} of {clips}, story seconds {(i - 1) * clip_seconds}–{i * clip_seconds} "
+            f"(this clip's 0–{clip_seconds}). The sections above describe the whole video; show only the moments "
+            f"below, nothing from before or after them.\n\n{part}" for i, part in enumerate(parts, 1)]
 
 
 def _joined(texts: list[str]) -> str:
@@ -164,13 +235,19 @@ def bible_from_prompt(prompt: str, cast: list[dict]) -> dict:
 
 def missing_lines(prompt: str, scenes: list[dict]) -> list[str]:
     """Each line the prompt writes in quotes (of two words or more) that no scene says word for word: the script
-    dropped or reworded it. Punctuation, spacing and capitals don't count."""
-    said = re.sub(r"[\W_]+", "", " ".join(d["line"] for sc in scenes for d in sc.get("dialogue") or [])).casefold()
+    dropped or reworded it. Punctuation, spacing and capitals don't count. Lines written in Roman letters that the
+    script says in Urdu script (Shahmukhi), as Pakistani Punjabi is spoken, count as said when it has as many of
+    them (video 168: "Oye! Main Punjab da sab ton smart banda aan!" → "اوئے! میں پنجاب دا…")."""
+    lines = [d["line"] for sc in scenes for d in sc.get("dialogue") or []]
+    said = re.sub(r"[\W_]+", "", " ".join(lines)).casefold()
     out = []
     for line in re.findall(rf"{QUOTE}([^\"“”„«»\n]+){QUOTE}", prompt or ""):
         words = re.sub(r"[\W_]+", "", line).casefold()
         if len(line.split()) > 1 and words and words not in said and line.strip() not in out:
             out.append(line.strip())
+    roman = [x for x in out if not ARABIC_SCRIPT.search(x)]
+    if roman and sum(bool(ARABIC_SCRIPT.search(x)) for x in lines) >= len(roman):  # written out in Shahmukhi
+        out = [x for x in out if x not in roman]
     return out
 
 

@@ -26,6 +26,7 @@ from app.video_join import frame_at, last_frame
 router = APIRouter()
 MAX_SCENE_TEXT = TEXT_LIMITS["action"]  # one scene's words; the clip prompt adds the format and quality rules
 MAX_IDEA = 10000  # one prompt that Gemini's chat turns into scene prompts
+MAX_IDEA_FLOW = 30000  # a Flow prompt: a full brief is sent as written; Flow itself refused 28,800 characters
 MAX_SCENES = 12  # × 10 s = 2 minutes with Gemini, × 8 s = 1:36 with Google Flow
 
 _WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
@@ -105,8 +106,9 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
         prompt = prompt.strip()
         if not prompt:
             raise UserError("Write the prompt first.")
-        if len(prompt) > MAX_IDEA:
-            raise UserError(f"Keep the prompt under {MAX_IDEA:,} characters.")
+        most_words = MAX_IDEA_FLOW if provider == Provider.FLOW else MAX_IDEA
+        if len(prompt) > most_words:
+            raise UserError(f"Keep the prompt under {most_words:,} characters.")
         count = duration // step
         # Gemini's chat writes the script for a long video, condenses a long prompt for one clip, and
         # drafts it as a script whenever there is a cast to direct or a script to review. A Flow video's prompt is
@@ -171,7 +173,7 @@ def prompt_check(body: CheckBody, request: Request, user=Depends(require_api_use
         cast = [c.sheet() for c in s.scalars(select(Character).where(Character.user_id == user.id,
                                                                     Character.id.in_(body.cast[:MAX_CAST])))]
     step = SCENE_SECONDS[_provider(body.provider)]
-    return {"notes": prompt_notes(body.prompt[:MAX_IDEA], cast, body.style[:300], body.language[:40],
+    return {"notes": prompt_notes(body.prompt[:MAX_IDEA_FLOW], cast, body.style[:300], body.language[:40],
                                    max(0, min(body.seconds, MAX_SCENES * step)), clip=step)}
 
 

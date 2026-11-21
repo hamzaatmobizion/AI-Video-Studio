@@ -19,7 +19,7 @@
     <div id="auto-mode"{% if prefill_manual %} hidden{% endif %}>
       <p class="small prompt-help"><a href="/rules">How to write a prompt for the best video</a> · copy a ready-made format for any AI chat</p>
       <label>Prompt
-        <textarea name="prompt" rows="6" maxlength="10000" required placeholder="A paper boat drifting down a rain-soaked street at dusk, close-up, cinematic"{% if prefill_prompt %} autofocus{% endif %}{% if prefill_manual %} disabled{% endif %}>{{ prefill_prompt }}</textarea>
+        <textarea name="prompt" rows="6" maxlength="{{ 30000 if provider == 'flow' else 10000 }}" required placeholder="A paper boat drifting down a rain-soaked street at dusk, close-up, cinematic"{% if prefill_prompt %} autofocus{% endif %}{% if prefill_manual %} disabled{% endif %}>{{ prefill_prompt }}</textarea>
       </label>
       <label class="length">Duration
         <select name="duration" id="duration"{% if prefill_manual %} disabled{% endif %}>
@@ -90,6 +90,7 @@
       </label>
     </div>
     <p class="warn" id="talk-note" hidden></p>
+    <p class="warn" id="length-note" hidden></p>
     <div class="prompt-notes" id="prompt-notes" hidden></div>
     <p class="error" id="new-error" hidden></p>
     <button type="submit" id="generate" {% if not can_generate or not drive_connected %}disabled{% endif %}>Generate {{ step }}-second video</button>

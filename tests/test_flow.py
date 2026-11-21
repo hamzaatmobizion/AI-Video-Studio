@@ -327,6 +327,32 @@ def test_flow_clip_prompt_ends_in_a_few_short_rules():
     assert "squash and stretch and follow-through" in flow
 
 
+def test_flow_clip_ends_with_everyone_in_the_next_clip_in_frame(app, authed, drive_connected, net, tmp_path):
+    """Video 161: the bunny hopped out of clip 1, whose last frame starts clip 2 with no pictures, so clip 2 drew a
+    new bunny. Each clip but the last ends with whoever is also in the next one in view."""
+    from app import genres
+    from tests.test_app import by_hand
+    gid = by_hand(authed, ["Phuppo and Ali walk; Bunny hops off.", "Bunny zigzags; they stop.", "Ali waves."]).json()["id"]
+    with app.state.db.session() as s:
+        from app.models import Generation
+        g = s.get(Generation, gid)
+        cast = [[{"name": "Phuppo"}, {"name": "Ali"}, {"name": "Bunny"}], [{"name": "Bunny"}, {"name": "Ali"}],
+                [{"name": "Ali"}]]
+        for scene, people in zip(g.scenes, cast):
+            scene.characters = [{"id": None, "position": "", **p} for p in people]
+    first = authed.get(f"/generations/{gid}/by-hand").text
+    assert "End the clip with Ali and Bunny all clearly in frame: the next clip starts from its last frame." in first
+    # Phuppo isn't in clip 2: she's gone by the end of clip 1, so clip 2 doesn't start by removing her
+    assert "Phuppo leaves the frame naturally before the end and is not in the last frame." in first
+    authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", clip_bytes(tmp_path, "s1"), "video/mp4")})
+    second = authed.get(f"/generations/{gid}/by-hand").text
+    assert "End the clip with Ali all clearly in frame" in second
+    assert "Bunny leaves the frame naturally before the end" in second
+    authed.post(f"/generations/{gid}/scenes/2/clip", files={"clip": ("x.mp4", clip_bytes(tmp_path, "s2"), "video/mp4")})
+    assert "End the clip with" not in authed.get(f"/generations/{gid}/by-hand").text  # the last clip
+    assert "everyone in the next scene still in frame" in genres.plan_rules("kids", 2, flow=True)
+
+
 def test_flow_clip_with_no_lines_birdsong_and_an_animal():
     """Video 159: a clip with no lines said nothing about speech, "birds singing" dropped "no music", and the
     bunny was told "same person, hair, outfit"."""

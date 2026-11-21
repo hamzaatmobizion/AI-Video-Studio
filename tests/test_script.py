@@ -1252,7 +1252,8 @@ def test_by_hand_scene_with_the_same_people_starts_from_the_last_frame(app, auth
     hand = svc.hand_scene(gid, gen(app, gid).user_id)  # scene 2, the same people: Frames, from scene 1's last frame
     assert hand["mode"] == "frames" and hand["start_at"] == 0 and len(hand["images"]) == 1
     assert "reference image" not in hand["prompt"] and "exactly as in the start frame" in hand["prompt"]
-    assert hand["prompt"].endswith(script.FRAME_START)  # the same people: nobody is said to leave or arrive
+    assert script.FRAME_START in hand["prompt"]  # the same people: nobody is said to leave or arrive
+    assert "Not in this shot" not in hand["prompt"] and "New in this shot" not in hand["prompt"]
     assert "put this picture in <strong>Start" in authed.get(f"/generations/{gid}/by-hand").text
     authed.post(f"/generations/{gid}/scenes/2/clip", files={"clip": ("x.mp4", clip, "video/mp4")})
     hand = svc.hand_scene(gid, gen(app, gid).user_id)  # scene 3, Sara is new: her picture, as Ingredients

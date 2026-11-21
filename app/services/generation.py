@@ -32,7 +32,9 @@ from app.genres import plan_rules, valid_genre
 from app.timeline import bible_from_prompt, keep_prompt, missing_lines, script_from_timeline
 from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
-from app.script import (CONTINUE_FROM, ENTER_SHOT, FRAME_START, LEAVE_SHOT, MAX_SCENE_IMAGES, STARTS_FROM,
+from app.script import (CONTINUE_FROM, ENTER_SHOT, FRAME_START, KEEP_IN_FRAME, LEAVE_BY_END, LEAVE_SHOT,
+                        MAX_SCENE_IMAGES,
+                        STARTS_FROM,
                         cast_sheet, is_structured, merged_sheet,
                         still_prompt, compile_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
                         scene_images, scene_warnings, clean_text, style_from_prompt, prompt_limit,
@@ -241,6 +243,8 @@ class GenerationService:
             extra.append(FRAME_START)
         if gen.provider == Provider.FLOW and (frames or frame and lead == frame):  # it starts from the last frame
             extra += _cast_changes(gen, scene)
+        if gen.provider == Provider.FLOW:
+            extra += _keep_in_frame(gen, scene)
         if scene.redos and scene.check_note.startswith("Remade once: "):  # say what went wrong last time
             extra.append(f"Fix from the last try: {_fit_text(scene.check_note[13:].rstrip('.'), 300)}.")
         limit = prompt_limit(gen.provider)
@@ -1043,6 +1047,28 @@ def _cast_changes(gen: Generation, scene: Scene) -> list[str]:
     new = [n for n in now if n.lower() not in {x.lower() for x in then}]
     return [*([LEAVE_SHOT.format(names=" and ".join(gone))] if gone else []),
             *([ENTER_SHOT.format(names=" and ".join(new))] if new else [])]
+
+
+def _keep_in_frame(gen: Generation, scene: Scene) -> list[str]:
+    """Who this scene shares with the next one, told to stay in view to the end: the next clip starts from this
+    one's last frame with no pictures (video 161: the bunny hopped out of it, and the next clip drew a new bunny)."""
+    after = next((sc for sc in gen.scenes if sc.position == scene.position + 1), None)
+    if after is None:
+        return []
+    now = [p["name"] for p in scene.characters or []]
+    later = {p["name"].lower() for p in after.characters or []}
+    names = [n for n in now if n.lower() in later]
+    if not names:  # nobody carries on: the next clip is a new beginning
+        return []
+    # whoever the next clip doesn't have is gone by the end, so it doesn't start by removing them
+    gone = [n for n in now if n.lower() not in later]
+    return [KEEP_IN_FRAME.format(names=_and(names)),
+            *([LEAVE_BY_END.format(names=_and(gone), leave="leave" if len(gone) > 1 else "leaves",
+                                   are="are" if len(gone) > 1 else "is")] if gone else [])]
+
+
+def _and(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def _first_version(clip: Path) -> Path:

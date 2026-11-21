@@ -80,6 +80,10 @@ FRAME_START = ("The clip starts exactly from the start frame, the last frame of 
 # otherwise keeps whoever the frame shows and never brings in someone new
 LEAVE_SHOT = "Not in this shot: {names}, who leave the frame in the first second and don't come back."
 ENTER_SHOT = "New in this shot: {names}, who walk into the frame in the first two seconds and stay to the end."
+# The next clip starts from this one's last frame: whoever is in both stays in view to the end
+KEEP_IN_FRAME = "End the clip with {names} all clearly in frame: the next clip starts from its last frame."
+# …and whoever the next clip doesn't have is out of it by then
+LEAVE_BY_END = "{names} {leave} the frame naturally before the end and {are} not in the last frame."
 
 # With "Lock characters", each scene is first drawn as a still from the pictures; the clip then starts from it.
 STARTS_FROM = ("Reference image {n} is this shot's first frame: start the clip exactly from it, keeping the same "

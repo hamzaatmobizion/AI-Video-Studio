@@ -57,14 +57,13 @@ Run these in Terminal, in this folder.
 
 ## Hand bot (on its own Mac)
 Full details are in `handbot/README.md`.
-1. **Install:** `python3 -m venv .venv && .venv/bin/pip install -r requirements-bot.txt`
-2. **`.env` on the bot Mac:** `APP_URL=http://<app machine's address>:8000` and `BOT_API_KEY=` (the app's value).
-3. **Allow it:** System Settings → Privacy & Security → turn on **Accessibility** and **Screen Recording** for your
-   terminal, then restart the terminal.
-4. **Chrome:** sign in to Google and Flow by hand, keep the zoom at 100%, and turn off "Ask where to save each file".
-5. **Check the button pictures:** `.venv/bin/python -m handbot check` lists every button and whether it's on the
-   screen right now. On a new Mac, run it first: the pictures in `handbot/buttons/` match only at the same screen
-   type (Retina or not), display scaling, zoom and theme.
-6. **Capture a button again** (only the ones not found): `.venv/bin/python -m handbot capture <name>`. Switch to
-   Chrome during the 5-second countdown (`--delay 10` for more), drag a box round the button and press Enter.
-7. **Run it:** `.venv/bin/python -m handbot run`. Push the mouse into a screen corner to stop it at once.
+1. **Set up:** `./handbot/setup.sh` from the project folder. It installs everything, asks for the app's address
+   and `BOT_API_KEY` (the app's value) for `.env`, and opens **Accessibility** and **Screen Recording**: turn on
+   your terminal in both, restart it and run `./handbot/setup.sh` again.
+2. **Chrome:** sign in to Google and Flow by hand once. The setup's check says if Chrome asks where to save
+   downloads or Flow isn't at 100% zoom.
+3. **Buttons:** the pictures come with the project and are resized to any screen. The setup's check lists which
+   ones are on the screen; capture one again only if it isn't found or Flow's look changed:
+   `.venv/bin/python -m handbot capture <name>` (switch to Chrome during the 5-second countdown, drag a box round
+   the button and press Enter).
+4. **Run it:** `.venv/bin/python -m handbot run`. Push the mouse into a screen corner to stop it at once.

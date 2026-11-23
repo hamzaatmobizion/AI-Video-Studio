@@ -1,11 +1,13 @@
 """python -m handbot run | capture <button> | mark <point> | check"""
 import argparse
+import ctypes
 import json
 import logging
 import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from handbot.config import get_settings
 from handbot.flow import BUTTONS, POINTS
@@ -60,9 +62,15 @@ def cmd_capture(args) -> int:
     if w < 3 or h < 3:
         print("Cancelled.")
         return 1
+    import pyautogui
+
+    from handbot.screen import PICTURE_SCALE, to_scale
+
     x0, y0, x1, y1 = (int(round(v / k)) for v in (x, y, x + w, y + h))
-    cv2.imwrite(str(dest), shot[y0:y1, x0:x1])
-    print(f"Saved {dest} ({x1 - x0}×{y1 - y0})")
+    # kept at a Retina screen's scale whatever this screen's, so the picture works on every Mac
+    picture = to_scale(shot[y0:y1, x0:x1], PICTURE_SCALE / (shot.shape[1] / pyautogui.size().width))
+    cv2.imwrite(str(dest), picture)
+    print(f"Saved {dest} ({picture.shape[1]}×{picture.shape[0]})")
     return 0
 
 
@@ -90,12 +98,45 @@ def cmd_mark(args) -> int:
     return 0
 
 
+def _mac_problems(s) -> list[str]:
+    """What this Mac still needs: the terminal's Accessibility and Screen Recording permissions, and Chrome saving
+    downloads into DOWNLOAD_DIR without asking, at 100% zoom on Flow."""
+    out = []
+    ax = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+    ax.AXIsProcessTrusted.restype = ctypes.c_bool
+    if not ax.AXIsProcessTrusted():
+        out.append("Allow Accessibility for this terminal (System Settings → Privacy & Security), then restart it.")
+    cg = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    cg.CGPreflightScreenCaptureAccess.restype = ctypes.c_bool
+    if not cg.CGPreflightScreenCaptureAccess():
+        out.append("Allow Screen Recording for this terminal (System Settings → Privacy & Security), then restart it.")
+    chrome = Path("~/Library/Application Support/Google/Chrome").expanduser()
+    try:
+        profile = json.loads((chrome / "Local State").read_text()).get("profile", {}).get("last_used") or "Default"
+        prefs = json.loads((chrome / profile / "Preferences").read_text())
+    except (OSError, ValueError):
+        return out + ["Open Chrome once and sign in to Google and to Flow (no Chrome settings found)."]
+    download = prefs.get("download", {})
+    if download.get("prompt_for_download"):
+        out.append("In Chrome, Settings → Downloads: turn off \"Ask where to save each file\".")
+    folder = Path(download.get("default_directory") or "~/Downloads").expanduser()
+    if folder.resolve() != s.DOWNLOAD_DIR.resolve():
+        out.append(f"Chrome saves downloads in {folder}, not {s.DOWNLOAD_DIR}: change one of them "
+                   "(DOWNLOAD_DIR in .env).")
+    zoom = prefs.get("partition", {})
+    default = zoom.get("default_zoom_level", {}).get("x", 0)
+    flow = zoom.get("per_host_zoom_levels", {}).get("x", {}).get("flow.google.com", {})
+    if abs(flow.get("zoom_level", default)) > 0.01:
+        out.append("Chrome's zoom on Flow isn't 100%: press ⌘0 on Flow's page.")
+    return out
+
+
 def cmd_check(_args) -> int:
-    """Which button pictures are taken, and which of them are on the screen right now."""
+    """What this Mac still needs, which button pictures are taken, and which of them are on the screen right now."""
     from handbot.screen import Screen
 
     s = get_settings()
-    for p in s.problems():
+    for p in s.problems() + _mac_problems(s):
         print(f"✗ {p}")
     sc = Screen(s)
     shot = sc.grab()

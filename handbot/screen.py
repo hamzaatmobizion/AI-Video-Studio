@@ -1,5 +1,5 @@
 """The real screen, mouse and keyboard (macOS). Buttons are found by matching small pictures of them
-(handbot/buttons/<name>.png, taken with `python -m handbot capture`) against a screenshot."""
+(handbot/buttons/<name>.png, taken with `python -m handbot capture`, kept in git) against a screenshot."""
 import json
 import random
 import subprocess
@@ -16,6 +16,16 @@ from handbot.config import BotSettings
 
 pyautogui.FAILSAFE = True  # push the mouse into a screen corner to stop the bot at once
 pyautogui.PAUSE = 0.05
+# The button pictures are kept at a Retina screen's 2 pixels per point (`capture` saves them so on any screen), and
+# resized to this screen's pixels when matched, so they work on a non-Retina screen too
+PICTURE_SCALE = 2.0
+
+
+def to_scale(img: np.ndarray, k: float) -> np.ndarray:
+    """The picture resized by `k` (unchanged when that's 1)."""
+    if abs(k - 1) < 0.01:
+        return img
+    return cv2.resize(img, None, fx=k, fy=k, interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
 
 
 @dataclass
@@ -69,7 +79,7 @@ class Match:
 class Screen:
     def __init__(self, settings: BotSettings):
         self.s = settings
-        self._templates: dict[str, np.ndarray] = {}
+        self._templates: dict[tuple[str, float], np.ndarray] = {}
 
     # ---- seeing ----------------------------------------------------------
     def grab(self) -> np.ndarray:
@@ -82,13 +92,15 @@ class Screen:
     def has(self, name: str) -> bool:
         return (self.s.buttons_dir / f"{name}.png").exists()
 
-    def _template(self, name: str) -> np.ndarray:
-        if name not in self._templates:
+    def _template(self, name: str, k: float) -> np.ndarray:
+        """The button's picture at this screen's `k` pixels per point."""
+        key = (name, round(k, 2))
+        if key not in self._templates:
             path = self.s.buttons_dir / f"{name}.png"
             if not path.exists():
                 raise FileNotFoundError(f"No picture of '{name}': run  python -m handbot capture {name}")
-            self._templates[name] = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-        return self._templates[name]
+            self._templates[key] = to_scale(cv2.imread(str(path), cv2.IMREAD_GRAYSCALE), k / PICTURE_SCALE)
+        return self._templates[key]
 
     def locate(self, name: str, shot: np.ndarray | None = None, area: float = 0.0, either_way: bool = False,
                box: tuple[int, int, int, int] | None = None, outline: bool = False) -> Match | None:
@@ -99,7 +111,7 @@ class Screen:
         button over a picture that changes)."""
         shot = self.grab() if shot is None else shot
         k = self.scale(shot)
-        tpl = self._template(name)
+        tpl = self._template(name, k)
         left, top = 0, int(shot.shape[0] * area)
         right, bottom = shot.shape[1], shot.shape[0]
         if box:
@@ -124,7 +136,7 @@ class Screen:
         if not self.has(name):
             return 0
         shot = self.grab() if shot is None else shot
-        tpl = self._template(name)
+        tpl = self._template(name, self.scale(shot))
         if tpl.shape[0] > shot.shape[0] or tpl.shape[1] > shot.shape[1]:
             return 0
         res = cv2.matchTemplate(shot, tpl, cv2.TM_CCOEFF_NORMED)

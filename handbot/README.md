@@ -18,31 +18,22 @@ While it runs, the Mac's screen is kept awake (macOS's `caffeinate`), so it does
 Push the mouse into any corner of the screen to stop the bot at once (this is PyAutoGUI's fail-safe).
 
 ## Setup on the bot Mac
-1. Install everything:
+1. Get the project (`git clone`) and run, from its folder:
    ```
-   python3 -m venv .venv && .venv/bin/pip install -r requirements-bot.txt
+   ./handbot/setup.sh
    ```
-2. Create a `.env` file:
-   ```
-   APP_URL=http://<app host>:8000
-   BOT_API_KEY=<same as the app>
-   ```
-   On the app side, set `BOT_API_KEY` and `BOT_USER_EMAIL`, the account whose videos the bot makes.
-3. Allow the bot to control the Mac. In **System Settings → Privacy & Security**, turn on **Accessibility** and **Screen Recording** for your terminal app, then restart the terminal.
-4. Set up Chrome:
-   - Sign in to Google and to Flow by hand once.
-   - Keep the zoom at 100%.
-   - Keep Chrome on the main display with the same window size every time.
-   - In Settings → Downloads, turn off "Ask where to save each file".
-5. Take a picture of each button, one at a time:
-   ```
-   .venv/bin/python -m handbot capture new_project
-   ```
-   - The bot counts down 5 seconds. Switch to Chrome (⌘Tab) and show the button: open the settings panel, hover a tile for its ⋮, or open the ⋮ menu for Download. Add `--delay 10` for more time.
-   - It takes a silent screenshot and opens it in a window.
-   - Drag a tight box round the button and press **Enter**. Esc cancels.
-   Repeat for every button in the table below.
-6. Check the setup with `.venv/bin/python -m handbot check`. It lists every button picture and says which ones are on the screen right now.
+   It installs everything, asks for the app's address and `BOT_API_KEY` (the same as the app's) and saves them in `.env`. On the app side, set `BOT_API_KEY` and `BOT_USER_EMAIL`, the account whose videos the bot makes.
+2. The first time, it opens **Accessibility** and **Screen Recording** in System Settings: turn on your terminal app in both, restart the terminal and run `./handbot/setup.sh` again.
+3. In Chrome, sign in to Google and to Flow once. Keep Chrome on the main display. The setup's check tells you if Chrome asks where to save downloads or Flow isn't at 100% zoom.
+4. With Flow open, press Enter: it lists every button and whether it's on the screen. Then start the bot (see Run).
+
+The button pictures come with the project (`handbot/buttons/`), taken on a Retina MacBook; on a screen with a different scale they're resized to fit. Take one again only if `check` doesn't find it on a screen that shows it, or Flow's look changed:
+```
+.venv/bin/python -m handbot capture new_project
+```
+- The bot counts down 5 seconds. Switch to Chrome (⌘Tab) and show the button: open the settings panel, hover a tile for its ⋮, or open the ⋮ menu for Download. Add `--delay 10` for more time.
+- It takes a silent screenshot and opens it in a window.
+- Drag a tight box round the button and press **Enter**. Esc cancels.
 
 | Button | Needed | What to capture |
 |---|---|---|

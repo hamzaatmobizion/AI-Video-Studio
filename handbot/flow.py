@@ -97,6 +97,7 @@ CAPTCHA = re.compile(r"not a robot|unusual traffic|verify (that )?you('| a)re (a
 FAILED = re.compile(r"^\s*failed\b", re.I)
 REFUNDED = re.compile(r"be refunded", re.I)  # one line a failed clip ("You will be refunded…"), not its "refund to appear"
 UNUSUAL = re.compile(r"unusual activity", re.I)
+EMPTY_PROMPT = re.compile(r"what do you want to create", re.I)  # the prompt box's hint, shown only while it's empty
 LOAD_FAILED = re.compile(r"failed to load", re.I)  # "The video failed to load.": made again with its tile's ↻
 
 
@@ -487,6 +488,18 @@ class FlowHand:
         self.sc.paste(prompt)
         time.sleep(random.uniform(1, 2))
 
+    def _prompt_typed(self, prompt: str) -> None:
+        """Make sure the prompt is in the box before Generate: adding the Start frame or switching mode after pasting
+        can empty it, and then Flow only says "Prompt must be provided". Pasted once more if the box is empty."""
+        for attempt in range(2):
+            if not any(EMPTY_PROMPT.search(x.text) for x in self.sc.texts()):
+                return
+            log.warning("the prompt box is empty; pasting the prompt %s", "again" if attempt else "once more")
+            self.paste_prompt(prompt)  # (not the ✕ first: it would take the Start frame and pictures out too)
+        if any(EMPTY_PROMPT.search(x.text) for x in self.sc.texts()):
+            raise self._stop("The prompt didn't go into Flow's prompt box (it still says \"What do you want to "
+                             "create?\"). Check Chrome.", "prompt_empty")
+
     def generate(self) -> None:
         self._click("generate")
         self.sc.save(self.s.logs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-sent.jpg")
@@ -682,6 +695,7 @@ class FlowHand:
                     if attempt:  # the same prompt and pictures again, from an empty prompt bar
                         self._maybe("prompt_clear", 2)
                     self._fill(prompt, aspect, images, settings=not attempt, frames=frames)
+                    self._prompt_typed(prompt)
                     failed_before = self._failures()
                     self.generate()
                 try:

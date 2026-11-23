@@ -16,7 +16,8 @@ MARKER = re.compile(
     r"(?:seconds?|secs?|s)\b)?\s*\)?\s*:", re.I)
 # Video-wide notes that follow the timeline: "Visual style: …", "Strict rules: …", "🎵 Music: …"
 NOTES = re.compile(r"(?:^|\n|(?<=[.!?\"'”]))\s*(?:[^\w\s\"'“”‘’]{1,3}\s*)?(?:[A-Za-z]+ ){0,3}(?:style|audio|music|rules|"
-                   r"animation|language|voice|instructions|format|notes?|sounds?)\s*:", re.I)
+                   r"animation|language|voice|instructions|format|notes?|sounds?|settings|requirements|quality|"
+                   r"specifications?|output|export)\s*:", re.I)  # "VIDEO AND AUDIO SETTINGS:" (video 173)
 SETTING = re.compile(r"\bsetting\s*:\s*(.+?)(?:\n|$)", re.I)
 SOUND = re.compile(r"(?:^|\n)\s*(?:[^\w\s]{1,3}\s*)?sounds?\s*:\s*(.+?)(?:\n|$)", re.I)
 # "Shinda: A man in his 30s, … Voice: Overconfident…" on a line of its own: a person the prompt describes

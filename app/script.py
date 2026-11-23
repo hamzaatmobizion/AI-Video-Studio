@@ -168,7 +168,12 @@ ON_SCREEN_TEXT = re.compile(r"\b(text|signs?|signboard|titles?|captions?|banners
 # A spoken line in the action ("Billa asks: "…""): words said aloud, not words on screen
 SPEECH_VERBS = (r"says|said|asks|asked|replies|replied|answers|answered|shouts|shouted|yells|yelled|whispers|"
                 r"whispered|exclaims|exclaimed|adds|added|cries|cried|calls|called|screams|screamed|mutters|"
-                r"muttered|sings|sang|tells \w+|speaks|says to \w+|asks \w+")
+                r"muttered|sings|sang|tells \w+|speaks|says to \w+|asks \w+|"
+                # video 173: "while joking", "as he responds" left their lines unplaced, for the wrong mouth
+                r"responds|responded|responding|jokes|joked|joking|teases|teased|teasing|announces|announced|"
+                r"declares|declared|complains|complained|boasts|boasted|boasting|begs|begged|mumbles|mumbled|"
+                r"whines|whined|grumbles|grumbled|explains|explained|adds|shouts back|says back|speaking|saying|"
+                r"talking|asking|replying|answering|telling \w+")
 PRONOUNS = ("she", "he")
 # Birdsong in a sound list ("birds singing", "songbirds"): a sound effect, not a request for music
 BIRDSONG = re.compile(r"\b(?:song)?birds?\b[^.,;]{0,20}?\b(?:sing\w*|song\w*|chirp\w*)|\bsinging\s+birds?\b|"
@@ -418,25 +423,52 @@ def quality_rules(scene: dict, style: str = "", music: bool = True, short: bool 
     return " ".join(rules)
 
 
-def speak_inline(action: str, dialogue: list[dict], sides: dict[str, str], lang: str = "") -> tuple[str, set[int]]:
+def _referent(before: str, names: list[str]) -> str:
+    """Whom a "he"/"she" right after `before` means: the first name in its sentence, else in the sentence before."""
+    found = [re.search(rf"(?<!\w)(?:{'|'.join(re.escape(n) for n in names)})(?!\w)", s, re.I) if names else None
+             for s in re.split(r"(?<=[.!?])\s+", before)[-2:][::-1]]
+    return next((f.group(0).lower() for f in found if f), "")
+
+
+def speak_inline(action: str, dialogue: list[dict], sides: dict[str, str], lang: str = "",
+                 names: list[str] = (), verb: str = "says") -> tuple[str, set[int]]:
     """The action with each spoken line back where the prompt had it ("Bahu puts her hands on her hips and says."
     → "Bahu (frame left) puts her hands on her hips and says: "…""), the speaker's place in the frame next to their
     name, and the indexes of the lines it placed. Veo then knows when each line is said and by whom: listed after
-    the action, lines drifted from the lips and went to the wrong mouth. A line with no such spot is left out."""
+    the action, lines drifted from the lips and went to the wrong mouth. A line with no such spot is left out.
+    `names`: who is in the shot; the others are said to stay silent at each line (video 173: two men side by side,
+    and the listener's mouth took the speaker's line in nearly every clip)."""
     placed, pos = set(), 0
     for i, d in enumerate(dialogue):
         who = "|".join([re.escape(d["name"]), *PRONOUNS])
         m = re.compile(rf"(?<!\w)(?P<who>{who})(?!\w)(?P<lead>[^.!?:\"“”]{{0,300}}?\b(?:{SPEECH_VERBS})"
                        rf"(?:\s+[^\W\d_]+ly)?)\.", re.I).search(action, pos)
-        if not m:
-            continue
+        while m and m.group("who").lower() in PRONOUNS and _referent(action[:m.start()], names) != d["name"].lower():
+            # "Pappu smiles as he responds" is Pappu speaking, never the friend (video 173 put his line there)
+            m = re.compile(rf"(?<!\w)(?P<who>{who})(?!\w)(?P<lead>[^.!?:\"“”]{{0,300}}?\b(?:{SPEECH_VERBS})"
+                           rf"(?:\s+[^\W\d_]+ly)?)\.", re.I).search(action, m.end())
         side = sides.get(d["name"].lower())
+        quiet = [n for n in names if n.lower() != d["name"].lower()]
+        hush = f" ({quiet[0] if len(quiet) == 1 else ', '.join(quiet[:-1]) + ' and ' + quiet[-1]} silent, lips " \
+               "closed)" if quiet else ""
+        if not m:
+            if not names:  # no shot to speak in: listed after the action, as before
+                continue
+            # no "says" for this line (video 173: "raising his eyebrows in curiosity"): said right after the sentence
+            # about its speaker, in story order, never listed after the action for whichever mouth Veo picks
+            about = re.search(rf"(?<!\w){re.escape(d['name'])}(?!\w)[^.!?]*[.!?]", action[pos:], re.I)
+            at = pos + about.end() if about else pos
+            said = f'{" " if at else ""}{d["name"]}{f" ({side})" if side else ""} {verb}{lang}: "{d["line"]}"{hush}.'
+            action = action[:at] + said + (" " if at == 0 and action else "") + action[at:]
+            pos = at + len(said)
+            placed.add(i)
+            continue
         named = m.group("who")
         if named.lower() in PRONOUNS:
             named += f" ({d['name']}, {side})" if side else f" ({d['name']})"
         elif side:
             named += f" ({side})"
-        said = f'{named}{m.group("lead")}{lang}: "{d["line"]}"'
+        said = f'{named}{m.group("lead")}{lang}: "{d["line"]}"{hush}{"." if hush else ""}'
         action = action[:m.start()] + said + action[m.end():]
         pos = m.start() + len(said)
         placed.add(i)
@@ -737,7 +769,8 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
     sides = {p["name"].lower(): p.get("position") or "" for p in scene.get("characters") or []}
     placed = set()
     if flow:  # each line said where it happens in the action, by the person on their side: in time and in sync
-        action, placed = speak_inline(action, scene.get("dialogue") or [], sides, lang)
+        action, placed = speak_inline(action, scene.get("dialogue") or [], sides, lang,
+                                      [p["name"] for p in scene.get("characters") or []], verb)
     voices = []
     for i, d in enumerate(scene.get("dialogue") or []):
         voice = merged_sheet(by_id[d["id"]], bible).get("voice") if d.get("id") in by_id \
@@ -751,8 +784,12 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         who = d["name"] + (f" ({side}; voice: {voice})" if side and voice else f" ({side or 'voice: ' + voice})"
                            if side or voice else "")
         tail.append(f"{who} {verb}{lang}: '{d['line']}'")
+    talkers = list(dict.fromkeys(d["name"] for d in scene.get("dialogue") or []))
+    apart = " Each sounds clearly different (pitch, age, tone), never alike." if flow and len(talkers) > 1 else ""
     if voices:
-        tail.insert(0, "Voices: " + "; ".join(voices) + ".")
+        tail.insert(0, "Voices: " + "; ".join(voices) + "." + apart)
+    elif apart:  # no voices given (video 173): still two voices that can't be mixed up
+        tail.insert(0, f"Voices: {', '.join(talkers)}." + apart)
     if scene.get("sound"):
         tail.append(f"Sound: {_sentence(scene['sound'])}")
     rules = quality_rules(scene, style, music)

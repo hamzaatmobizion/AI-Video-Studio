@@ -264,6 +264,25 @@ def test_a_quoted_title_is_not_a_missing_line():
     assert missing_lines(prompt, said) == [] and missing_lines(prompt, []) == ["اوئے پپو! ویاہ کدوں اے؟"]
 
 
+def test_every_line_is_said_in_order_by_its_speaker_with_the_listener_silent():
+    """Video 173: in nearly every clip one man's line came out of the other's mouth. "as he responds" (Pappu) took
+    the Friend's line; the Friend's question, with no "says", went after the action; and nothing told the listener
+    to keep quiet at the moment of each line."""
+    from app import genres, script
+    scene = {"characters": [{"name": "Pappu", "position": "frame left"}, {"name": "Friend", "position": "frame right"}],
+             "action": "Friend leans forward, raising his eyebrows in curiosity. Pappu smiles proudly as he responds.",
+             "dialogue": [{"name": "Friend", "line": "تے ہُن لبھ گئی؟"}, {"name": "Pappu", "line": "ہاں یار، لبھ گئی!"}]}
+    text = script.compile_prompt(scene, [], flow=True, room=script.FLOW_MAX_PROMPT)
+    assert ('Friend leans forward, raising his eyebrows in curiosity. Friend (frame right) says: "تے ہُن لبھ گئی؟" '
+            '(Pappu silent, lips closed). Pappu (frame left) smiles proudly as he responds: "ہاں یار، لبھ گئی!" '
+            '(Friend silent, lips closed).') in text
+    assert "Each sounds clearly different (pitch, age, tone), never alike." in text
+    joking = dict(scene, action="Friend gestures at Pappu while joking.", dialogue=scene["dialogue"][:1])
+    assert 'Friend (frame right) gestures at Pappu while joking: "تے ہُن لبھ گئی؟"' in script.compile_prompt(
+        joking, [], flow=True, room=script.FLOW_MAX_PROMPT)
+    assert "One speaker per scene where the story allows" in genres.plan_rules("comedy", 8, flow=True)
+
+
 def test_flow_screen_ticks_only_making_the_clips_by_hand(authed, drive_connected):
     flow = authed.get("/flow").text
     assert 'name="by_hand" value="1" checked' in flow
@@ -296,7 +315,7 @@ def test_flow_music_video_lines_are_sung(authed):
     from app import script
     scene = {"characters": [{"name": "Bahu"}], "action": "Bahu dances.",
              "dialogue": [{"name": "Bahu", "line": "ساڈے دل وچ چاہواں نیں"}]}
-    assert "Bahu sings: 'ساڈے دل وچ چاہواں نیں'" in script.compile_prompt(scene, [], genre="music", flow=True)
+    assert 'Bahu sings: "ساڈے دل وچ چاہواں نیں"' in script.compile_prompt(scene, [], genre="music", flow=True)
     assert "Bahu says:" in script.compile_prompt(scene, [], genre="music")  # Gemini Studio: as before
     assert "Bahu says:" in script.compile_prompt(scene, [], genre="comedy", flow=True)
 
@@ -674,8 +693,9 @@ def test_flow_keeps_what_the_prompt_already_says(app, authed, drive_connected, n
     assert {c["name"]: c["voice"] for c in g.bible["cast"]} == {
         "Bahu": "young woman, calm and cheeky, Pakistani Punjabi accent", "Ammi": "older woman, loud and dramatic"}
     # each line where it happens, by the person on their side; their voices in one line
-    assert ('Ammi walks in on the right and jumps back. Ammi (frame right) screams: "ہائے ربا! بھوت!" '
-            'Bahu (frame left), not moving, says calmly: "امی جی، میں آں!"') in first.prompt
+    assert ('Ammi walks in on the right and jumps back. Ammi (frame right) screams: "ہائے ربا! بھوت!" (Bahu silent, '
+            'lips closed). Bahu (frame left), not moving, says calmly: "امی جی، میں آں!" (Ammi silent, lips closed).'
+            ) in first.prompt
     assert "Voices: Ammi (frame right): older woman, loud and dramatic; Bahu (frame left): young woman, calm and " \
            "cheeky, Pakistani Punjabi accent." in first.prompt
     assert "Urdu accent" not in first.prompt and "Medium shot," not in first.prompt

@@ -136,7 +136,10 @@ FLOW_RULES = ["Each scene: one shot, angle and one calm move (static or slow pus
               "Lines: short and natural; Punjabi is everyday Pakistani Punjabi in Shahmukhi, not translated Urdu. At "
               "most 14 words per scene with two speakers, 16 with one, never more than 20.",
               "Nobody speaks while eating or laughing; laughter after the last line.",
-              "Speakers get clearly different voices.",
+              "Speakers get clearly different voices (pitch, age, tone).",
+              # video 173: two men side by side talking in every clip; the wrong mouth took lines throughout
+              "One speaker per scene where the story allows; the other only reacts. Write 'Name says.' in the action "
+              "where each line is said, and favour the speaker in the camera (closer on whoever talks).",
               "Nobody holding something claps; they put it down first.",
               "At most one turn per scene; faces mostly toward the camera.",
               "Style and mood fit the story; no comedy or Pixar style unless asked.",

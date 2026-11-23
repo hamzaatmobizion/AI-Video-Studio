@@ -174,9 +174,9 @@ def test_prompt_check_counts_flow_clips(authed):
     assert any("2 clips of 8 seconds" in n["text"] for n in notes)
 
 
-def test_flow_keeps_its_length_and_stops_only_for_a_crammed_clip(app, authed, drive_connected, net):
-    """A tight clip (up to 20 words) is made as written, never split into more scenes; only more than 20 words in
-    8 seconds waits for the user to shorten a line."""
+def test_flow_keeps_its_length_and_never_stops_for_its_word_count(app, authed, drive_connected, net):
+    """A tight clip is made as written, never split into more scenes; and since 2026-11-23 not even more than 20
+    words in 8 seconds stops it for review (the user's call: Flow takes the words; the script page only warns)."""
     line = "ek do teen char panch chhe saat aath"  # 8 words
     tight = [{"name": "Ali", "line": f"{line} one"}, {"name": "Sara", "line": f"{line} two"},
              {"name": "Ali", "line": "phir milenge"}]  # 20 words
@@ -192,7 +192,7 @@ def test_flow_keeps_its_length_and_stops_only_for_a_crammed_clip(app, authed, dr
                                                                                 "dialogue": crammed}])
     tick(app)
     g = gen(app, gid)
-    assert len(g.scenes) == 1 and g.status == GenStatus.REVIEW
+    assert len(g.scenes) == 1 and g.status != GenStatus.REVIEW
 
 
 def test_flow_script_that_drops_a_line_waits_for_review(app, authed, drive_connected, net):
@@ -281,6 +281,36 @@ def test_every_line_is_said_in_order_by_its_speaker_with_the_listener_silent():
     assert 'Friend (frame right) gestures at Pappu while joking: "تے ہُن لبھ گئی؟"' in script.compile_prompt(
         joking, [], flow=True, room=script.FLOW_MAX_PROMPT)
     assert "One speaker per scene where the story allows" in genres.plan_rules("comedy", 8, flow=True)
+
+
+def test_a_brief_sent_as_written_says_who_is_where_and_who_says_each_line():
+    """Video 175: a brief with "his friend asks" and no sides, two alike villagers; Pappu's mouth said the friend's
+    line and the friend's said Pappu's. A brief sent as written now ends with who is where and who says what."""
+    from app import script
+    brief = 'His friend asks: "ڈاکٹر صاحب! دوا دیو!" Pappu says: "لسی پی لے!" ' * 40
+    scene = {"characters": [{"name": "Pappu", "position": "frame left, sitting on the charpai"},
+                            {"name": "Friend", "position": "frame right, standing"}],
+             "dialogue": [{"name": "Friend", "line": "ڈاکٹر صاحب! دوا دیو!"}, {"name": "Pappu", "line": "لسی پی لے!"}]}
+    sent = script.as_written_prompt(brief, [], scene, "3D cartoon", True)
+    assert "Who is where, the whole clip: Pappu frame left, Friend frame right." in sent
+    assert ('Who says what, in this order; while one speaks, everyone else stays silent, lips closed: '
+            '1. Friend (frame right): "ڈاکٹر صاحب! دوا دیو!" 2. Pappu (frame left): "لسی پی لے!" Their voices sound '
+            'clearly different') in sent
+    assert "Who says" not in script.as_written_prompt(brief, [], {"characters": scene["characters"]}, "", True)
+
+
+def test_a_line_already_written_in_the_action_is_said_there_once():
+    """Video 177: Gemini wrote "Friend says, '…'." in the action; the app added each line a second time, one inside
+    the other's quote, for Flow to say twice and to the wrong mouth."""
+    from app import script
+    scene = {"characters": [{"name": "Pappu", "position": "frame left"}, {"name": "Friend", "position": "frame right"}],
+             "action": "Friend holds his stomach. Friend says, 'اوئے پپو! دوا دیو!'. Pappu twirls his moustache and "
+                       "says, 'بس لسی پی لے!'. Friend stares.",
+             "dialogue": [{"name": "Friend", "line": "اوئے پپو! دوا دیو!"}, {"name": "Pappu", "line": "بس لسی پی لے!"}]}
+    text = script.compile_prompt(scene, [], flow=True, room=script.FLOW_MAX_PROMPT)
+    assert text.count("اوئے پپو! دوا دیو!") == 1 and text.count("بس لسی پی لے!") == 1
+    assert ('Friend (frame right) says, "اوئے پپو! دوا دیو!" (Pappu silent, lips closed). Pappu (frame left) twirls '
+            'his moustache and says, "بس لسی پی لے!" (Friend silent, lips closed).') in text
 
 
 def test_flow_screen_ticks_only_making_the_clips_by_hand(authed, drive_connected):

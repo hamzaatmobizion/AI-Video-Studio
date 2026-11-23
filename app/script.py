@@ -451,6 +451,22 @@ def speak_inline(action: str, dialogue: list[dict], sides: dict[str, str], lang:
         quiet = [n for n in names if n.lower() != d["name"].lower()]
         hush = f" ({quiet[0] if len(quiet) == 1 else ', '.join(quiet[:-1]) + ' and ' + quiet[-1]} silent, lips " \
                "closed)" if quiet else ""
+        written = re.search(rf"[\"“”'‘’]\s*{re.escape(d['line'].strip())}\s*[\"“”'‘’]", action[pos:])
+        if written:
+            # the line is already in the action ("Friend says, '…'.", video 177): said there, once, by its speaker
+            start, end = pos + written.start(), pos + written.end()
+            sentence = max(action.rfind(". ", 0, start), action.rfind("! ", 0, start), action.rfind("? ", 0, start)) + 1
+            who_at = [x for x in re.finditer(rf"(?<!\w){re.escape(d['name'])}(?!\w)", action[sentence:start], re.I)]
+            quote = f'"{d["line"]}"{hush}'
+            if who_at and side:
+                at = sentence + who_at[-1].end()
+                action = action[:at] + f" ({side})" + action[at:start] + quote + action[end:]
+                pos = start + len(f" ({side})") + len(quote)
+            else:
+                action = action[:start] + quote + action[end:]
+                pos = start + len(quote)
+            placed.add(i)
+            continue
         if not m:
             if not names:  # no shot to speak in: listed after the action, as before
                 continue
@@ -487,9 +503,27 @@ def as_written_prompt(prompt: str, pictured: list[str], scene: dict, style: str 
     # its own lines are in quotes even when the script missed them: the rules mustn't say "nobody speaks"
     spoken = scene.get("dialogue") or ([{"name": "", "line": "…"}] if re.search(r"[\"“”]", prompt) else [])
     rules = flow_rules({**scene, "action": prompt, "dialogue": spoken}, style, music)
-    if len(prompt) + len("\n".join(head + rules + BRIEF_ESSENTIALS)) > FLOW_TESTED:  # it has its own rules
+    talk = who_says(scene)
+    if len(prompt) + len("\n".join(head + rules + BRIEF_ESSENTIALS + talk)) > FLOW_TESTED:  # it has its own rules
         rules = []
-    return "\n".join([prompt.strip(), "", *head, *BRIEF_ESSENTIALS, *rules[1:]])
+    return "\n".join([prompt.strip(), "", *head, *BRIEF_ESSENTIALS, *talk, *rules[1:]])
+
+
+def who_says(scene: dict) -> list[str]:
+    """After a brief sent as written: where each speaker is, and its lines in order, each by its speaker with the
+    others silent, from the script of the clip (video 175: "his friend asks" with no sides given, two alike
+    villagers, and Pappu's mouth said the friend's line and the friend's said Pappu's)."""
+    lines = scene.get("dialogue") or []
+    if not lines:
+        return []
+    sides = {p["name"].lower(): (p.get("position") or "").split(",")[0].strip() for p in scene.get("characters") or []}
+    where = [f"{p['name']} {sides[p['name'].lower()]}" for p in scene.get("characters") or [] if sides[p["name"].lower()]]
+    said = " ".join(f'{i}. {d["name"]}{f" ({s})" if (s := sides.get(d["name"].lower())) else ""}: "{d["line"]}"'
+                    for i, d in enumerate(lines, 1))
+    apart = " Their voices sound clearly different (pitch, age, tone), never alike." \
+        if len({d["name"].lower() for d in lines}) > 1 else ""
+    return [*([f"Who is where, the whole clip: {', '.join(where)}."] if where else []),
+            f"Who says what, in this order; while one speaks, everyone else stays silent, lips closed: {said}{apart}"]
 
 
 # Said after every brief, even one near Flow's limit (video 164: the buffalo stood behind Chacha from the first frame

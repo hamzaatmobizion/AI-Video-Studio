@@ -39,7 +39,7 @@ from app.script import (AS_WRITTEN_MIN, BRIEF_MIN, CONTINUE_FROM, ENTER_SHOT, FL
                         cast_sheet, is_structured, merged_sheet,
                         still_prompt, compile_prompt, as_written_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
                         scene_images, scene_warnings, clean_text, style_from_prompt, prompt_limit,
-                        FLOW_MOST_WORDS, keep_places, spoken_words)
+                        keep_places)
 from app.video_join import JoinError, clip_seconds, frame_at, join_clips, last_frame, late_cut, trim_clip
 
 log = logging.getLogger("app.generation")
@@ -676,11 +676,10 @@ class GenerationService:
             script = include_cast([ensure_cast(sc, cast, gen.bible) for sc in scenes], cast)
             if gen.provider == Provider.FLOW:  # nobody swaps places from one clip to the next
                 script = keep_places(script)
-            # A Flow script that dropped or reworded a line, or crams a clip with more words than 8 seconds can say:
-            # the user sees it first. Its length stays as asked; the script page warns of a tight clip.
-            # (A full brief for one clip goes to Flow as written, not as this script: nothing to check.)
-            if gen.provider == Provider.FLOW and not _as_written(gen) and (
-                    missing_lines(gen.prompt, script) or any(spoken_words(sc) > FLOW_MOST_WORDS for sc in script)):
+            # A Flow script that dropped or reworded a line: the user sees it first. How many words a clip has is
+            # theirs to judge (the script page only warns of a tight clip): it never stops the video.
+            # (A full brief goes to Flow as written, not as this script: nothing to check.)
+            if gen.provider == Provider.FLOW and not _as_written(gen) and missing_lines(gen.prompt, script):
                 gen.review = True
             gen.style = gen.style or gen.bible["style"]  # the look Gemini fixed for every scene, shown in the editor
             for scene, sc in zip(gen.scenes, script):

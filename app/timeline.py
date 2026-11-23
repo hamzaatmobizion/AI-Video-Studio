@@ -35,6 +35,7 @@ CAMERA = re.compile(r"(?<![\w-])camera\s*:", re.I)
 # or "She"/"He": the last person named before it)
 QUOTE = r"[\"“”„«»]"
 ARABIC_SCRIPT = re.compile(r"[\u0600-\u06FF]")  # Urdu and Shahmukhi letters
+TITLED = re.compile(rf"\b(?:titled|title|called|named|caption)\b\s*:?\s*{QUOTE}[^\"“”„«»\n]+{QUOTE}", re.I)
 
 
 def _segments(prompt: str) -> list[tuple[float | None, int | None, str]]:
@@ -241,7 +242,9 @@ def missing_lines(prompt: str, scenes: list[dict]) -> list[str]:
     lines = [d["line"] for sc in scenes for d in sc.get("dialogue") or []]
     said = re.sub(r"[\W_]+", "", " ".join(lines)).casefold()
     out = []
-    for line in re.findall(rf"{QUOTE}([^\"“”„«»\n]+){QUOTE}", prompt or ""):
+    # a title in quotes ('titled: "پپو دا لیٹ ویاہ 😂"', video 172) isn't a line anyone says
+    spoken = TITLED.sub(" ", prompt or "")
+    for line in re.findall(rf"{QUOTE}([^\"“”„«»\n]+){QUOTE}", spoken):
         words = re.sub(r"[\W_]+", "", line).casefold()
         if len(line.split()) > 1 and words and words not in said and line.strip() not in out:
             out.append(line.strip())

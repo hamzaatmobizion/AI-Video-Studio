@@ -256,6 +256,14 @@ def test_the_key_moment_is_possible_and_objects_say_only_where_they_start():
     assert "then eaten completely" in script.compile_prompt(scene, [], room=script.FLOW_MAX_PROMPT)  # Studio as was
 
 
+def test_a_quoted_title_is_not_a_missing_line():
+    """Video 172 stopped for review unasked: 'titled: "پپو دا لیٹ ویاہ 😂"' was taken for a line nobody says."""
+    from app.timeline import missing_lines
+    prompt = 'A comedy short film titled:\n\n"پپو دا لیٹ ویاہ 😂"\n\nHis friend jokes: "اوئے پپو! ویاہ کدوں اے؟"'
+    said = [{"dialogue": [{"line": "اوئے پپو! ویاہ کدوں اے؟"}]}]
+    assert missing_lines(prompt, said) == [] and missing_lines(prompt, []) == ["اوئے پپو! ویاہ کدوں اے؟"]
+
+
 def test_flow_screen_ticks_only_making_the_clips_by_hand(authed, drive_connected):
     flow = authed.get("/flow").text
     assert 'name="by_hand" value="1" checked' in flow

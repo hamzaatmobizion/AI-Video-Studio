@@ -32,16 +32,20 @@ def _probe(path: Path) -> dict:
 
 MUSIC_VOLUME = 0.35  # the track under the video, before it dips further under speech
 LOUDNESS = "loudnorm=I=-16:TP=-1.5:LRA=11"  # every clip's sound at one level, so no clip is louder than the next
+SOUND_VOLUME = 0.8  # a scene's sound effect (a chime, a whoosh): heard over the music, never turned down
 
 
-def join_clips(paths: list[Path], dest: Path, music: Path | None = None) -> int:
-    """Write the clips, in order, to `dest`; return its size. One clip without music is copied as-is (no
+def join_clips(paths: list[Path], dest: Path, music: Path | None = None,
+               sounds: list[Path | None] | None = None) -> int:
+    """Write the clips, in order, to `dest`; return its size. One clip without music or sounds is copied as-is (no
     re-encode). `music`: one track laid under the whole video, looped or cut to its length, faded in and out, and
-    turned down while anyone speaks. The joined length is checked against the clips'."""
+    turned down while anyone speaks. `sounds`: each scene's sound effect (or None), starting where its clip starts
+    and cut at the video's end, so it never makes the video longer. The joined length is checked against the clips'."""
     if not paths:
         raise JoinError("There are no scenes to join.")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if len(paths) == 1 and not music:  # copied, not moved: the scene's clip is kept to watch or remake
+    sounds = [(i, p) for i, p in enumerate(sounds or []) if p and i < len(paths)]
+    if len(paths) == 1 and not music and not sounds:  # copied, not moved: the scene's clip is kept to watch or remake
         shutil.copyfile(paths[0], dest)
         return dest.stat().st_size
     if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
@@ -69,12 +73,23 @@ def join_clips(paths: list[Path], dest: Path, music: Path | None = None) -> int:
                   "[m][key]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=400[bed]",
                   "[speech][bed]amix=inputs=2:duration=first:normalize=0[mixed]"]
         out = "[mixed]"
+    if sounds:
+        first = len(paths) + (1 if music else 0)  # the sounds' inputs come after the clips and the music
+        for k, (i, _) in enumerate(sounds):
+            at = round(sum(info["duration"] for info in infos[:i]) * 1000)
+            parts.append(f"[{first + k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={SOUND_VOLUME},"
+                         f"adelay={at}:all=1[s{k}]")
+        parts.append(out + "".join(f"[s{k}]" for k in range(len(sounds)))
+                     + f"amix=inputs={len(sounds) + 1}:duration=first:normalize=0,atrim=duration={total:.3f}[fx]")
+        out = "[fx]"
     part = dest.with_suffix(".part")
     cmd = ["ffmpeg", "-v", "error", "-nostdin", "-y"]
     for p in paths:
         cmd += ["-i", str(p)]
     if music:
         cmd += ["-stream_loop", "-1", "-i", str(music)]
+    for _, p in sounds:
+        cmd += ["-i", str(p)]
     cmd += ["-filter_complex", ";".join(parts), "-map", "[v]", "-map", out,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
             "-movflags", "+faststart", "-f", "mp4", str(part)]

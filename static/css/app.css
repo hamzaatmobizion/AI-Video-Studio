@@ -115,7 +115,7 @@ hr { border:none; border-top:1px solid var(--line); margin:20px 0; }
 .stack .error { margin:0 0 12px; }
 .form-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:4px; }
 .ok-text { color:var(--ok); }
-a.button.secondary { background:transparent; color:var(--accent); }
+a.button.secondary, label.button.secondary { background:transparent; color:var(--accent); }
 button.danger { color:var(--bad); border-color:var(--bad); }
 input[type=search] { padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); font:inherit; }
 .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:12px 0 8px; }
@@ -206,6 +206,10 @@ label.check input { margin-top:4px; }
 .compiled { margin-top:10px; }
 .compiled summary { cursor:pointer; color:var(--muted); font-size:.9em; }
 .compiled pre { white-space:pre-wrap; overflow-wrap:anywhere; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px; font-size:.85em; margin:6px 0 0; }
+.scene-media { margin-top:12px; padding-top:10px; border-top:1px dashed var(--line); }
+.scene-media .line { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:6px 0; }
+.scene-media audio { width:100%; max-width:360px; }
+.start-pic { display:block; max-width:180px; max-height:320px; border-radius:6px; border:1px solid var(--line); margin:6px 0; }
 .warn { color:var(--warn); font-size:.9em; margin:6px 0 0; }
 .note-error { color:var(--bad); font-size:.9em; margin:6px 0 0; }
 .note-ok { color:var(--ok); font-size:.9em; margin:6px 0 0; }

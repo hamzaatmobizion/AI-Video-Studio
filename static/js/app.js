@@ -63,9 +63,11 @@
     if (!btn) return;
     e.preventDefault();
     if (btn.dataset.confirm && !confirm(btn.dataset.confirm)) return;
+    const name = btn.dataset.ask ? prompt(btn.dataset.ask) : null;  // a name to send (Save as series)
+    if (btn.dataset.ask && !(name || "").trim()) return;
     btn.disabled = true;
     try {
-      const data = await post(btn.dataset.post);
+      const data = await post(btn.dataset.post, btn.dataset.ask ? { name } : undefined);
       if (btn.dataset.then) location.href = btn.dataset.then;
       else if (btn.dataset.reload !== undefined) location.reload();
       else if (btn.dataset.show) document.getElementById(btn.dataset.show).textContent = data.message || "OK";
@@ -346,6 +348,13 @@
     try { await post(handUpload.dataset.url, new FormData(handUpload)); location.reload(); }
     catch (ex) { showError(err, ex.message); btn.disabled = false; btn.textContent = "Upload again"; }
   });
+  // By hand: the waiting scene's own start picture, uploaded or removed, then the page shows its Frames-mode prompt
+  document.querySelectorAll("form.media-upload").forEach((form) => form.addEventListener("change", async () => {
+    const err = form.querySelector(".error");
+    showError(err, "");
+    try { await post(form.dataset.url, new FormData(form)); location.reload(); }
+    catch (ex) { showError(err, ex.message); }
+  }));
   // By hand: "Create Video" gives the waiting clip to the hand bot
   const botCreate = document.getElementById("bot-create");
   if (botCreate) botCreate.addEventListener("click", async () => {
@@ -762,7 +771,7 @@
         el("h3", { class: "sub", text: "Objects in this scene" }), propRows,
         editable ? el("button", { type: "button", class: "link", text: "+ Add object",
           onclick: () => { sc.props.push({ name: "", state: "" }); drawProps(); changed(); } }) : "",
-        warns,
+        warns, media(i),
         // the finished clip, to watch it and remake just this scene (the others are kept)
         data.clips && data.clips[i] ? el("div", { class: "scene-clip" },
           el("video", { controls: true, preload: "metadata", playsinline: true,
@@ -776,6 +785,46 @@
               catch (ex) { e.target.disabled = false; alert(ex.message); }
             } }) : "") : "",
         el("details", { class: "compiled" }, el("summary", { text: "Clip prompt" }), prompt));
+    }
+    // A Flow scene's own start picture (drawn in Flow from its picture prompt) and sound effect: saved at once, by
+    // the scene's number, while the rest of the script keeps its unsaved edits
+    function media(i) {
+      const m = (data.media || [])[i];
+      if (!m) return "";
+      const base = `/generations/${editor.dataset.id}/scenes/${i + 1}`;
+      const send = async (url, body, what) => {
+        try { await post(url, body); m[what] = !!body; m.v = Date.now(); draw(); } catch (ex) { alert(ex.message); }
+      };
+      const upload = (what, field, accept, label) => el("label", { class: "button secondary small" }, label,
+        el("input", { type: "file", accept, hidden: true, onchange: (e) => {
+          const f = e.target.files[0];
+          if (!f) return;
+          const body = new FormData();
+          body.append(field, f);
+          send(`${base}/${what}`, body, what);
+        } }));
+      const remove = (what) => el("button", { type: "button", class: "link", text: "Remove",
+        onclick: () => send(`${base}/${what}/delete`, null, what) });
+      const picture = el("pre", { class: "prompt-text", text: m.picture || "" });
+      return el("div", { class: "scene-media" },
+        el("h3", { class: "sub", text: "First picture" }),
+        el("p", { class: "muted small", text: `This clip starts from ${m.from}.` + (m.picture ? " To give it its own, " +
+          "draw the picture prompt in Flow's image mode with the character pictures attached, then upload it here." : "") }),
+        m.start ? el("img", { class: "start-pic", alt: `Scene ${i + 1}'s start picture`, src: `${base}/start?v=${m.v || 0}` }) : "",
+        el("div", { class: "line" },
+          m.can_start ? upload("start", "image", "image/jpeg,image/png,image/webp", m.start ? "Replace start picture" : "Upload start picture") : "",
+          m.can_start && m.start ? remove("start") : ""),
+        m.picture ? el("details", { class: "compiled" }, el("summary", { text: "Picture prompt" }), picture,
+          el("button", { type: "button", class: "secondary small", text: "Copy", onclick: async (e) => {
+            await navigator.clipboard.writeText(picture.textContent);
+            e.target.textContent = "Copied ✓"; setTimeout(() => { e.target.textContent = "Copy"; }, 1500);
+          } })) : "",
+        el("h3", { class: "sub", text: "Sound effect" }),
+        el("p", { class: "muted small", text: "Optional: a chime or whoosh laid under the video where this scene starts, over the music." }),
+        m.sound ? el("audio", { controls: true, preload: "none", src: `${base}/sound?v=${m.v || 0}` }) : "",
+        el("div", { class: "line" },
+          m.can_sound ? upload("sound", "sound", "audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg", m.sound ? "Replace sound" : "Upload sound") : "",
+          m.can_sound && m.sound ? remove("sound") : ""));
     }
     function draw() { editor.replaceChildren(...scenes.map(card)); }
     draw();

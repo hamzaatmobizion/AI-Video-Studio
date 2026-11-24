@@ -82,6 +82,11 @@ FRAME_START = ("The clip starts exactly from the start frame, the last frame of 
                "on from it, keeping the place, light and every person's face, clothes and colours exactly the same; "
                "the action begins naturally from where everyone stands in it.")
 
+# A Flow scene made in Frames mode from its own start picture (drawn in Flow and approved first): a new shot
+OWN_START = ("The clip starts exactly from the start frame, this shot's first picture, keeping the place, light and "
+             "every person's face, clothes and colours exactly the same; the action begins naturally from where "
+             "everyone stands in it.")
+
 # A Flow scene that carries on from the previous clip's last frame, when its people differ from that frame's: Veo
 # otherwise keeps whoever the frame shows and never brings in someone new
 LEAVE_SHOT = "Not in this shot: {names}, who leave the frame in the first second and don't come back."
@@ -165,6 +170,8 @@ ANIMATED = re.compile(r"\b(anim\w*|anime|cartoon\w*|pixar|3d|clay\w*|stop[- ]mot
 # The action asks for words on screen: a sign, a title, or text in quotes.
 ON_SCREEN_TEXT = re.compile(r"\b(text|signs?|signboard|titles?|captions?|banners?|posters?|logos?|written|"
                             r"writing|reads|labels?)\b|(^|\s)['\"][^'\"]{2,}['\"]", re.I)
+# On Flow, a letter shown on screen (an alphabet video's glowing "A", a sky trail or confetti shaped like it)
+LETTERS = re.compile(r"\b(?:letters?|alphabets?)\b|(?:^|\s)[\"'“‘][A-Za-z][\"'”’](?!\w)", re.I)
 # A spoken line in the action ("Billa asks: "…""): words said aloud, not words on screen
 SPEECH_VERBS = (r"says|said|asks|asked|replies|replied|answers|answered|shouts|shouted|yells|yelled|whispers|"
                 r"whispered|exclaims|exclaimed|adds|added|cries|cried|calls|called|screams|screamed|mutters|"
@@ -404,19 +411,26 @@ def animated(scene: dict, style: str = "") -> bool:
     return bool(ANIMATED.search(" ".join([style, scene.get("setting") or "", scene.get("action") or ""])))
 
 
+def asks_for_text(action: str, flow: bool = False) -> bool:
+    """True when the action shows words on screen (a sign, a title, text in quotes) outside its spoken lines; on
+    Flow, a letter too (an alphabet video's glowing "A")."""
+    shown = SPOKEN_LINE.sub(" ", action or "")
+    return bool(ON_SCREEN_TEXT.search(shown) or flow and LETTERS.search(shown))
+
+
 def quality_rules(scene: dict, style: str = "", music: bool = True, short: bool = False,
-                  cinematic: bool = True) -> str:
+                  cinematic: bool = True, flow: bool = False) -> str:
     """The closing line of every clip prompt: one shot, the same people throughout, believable motion, the master
     rules' camera and physics line, no text, and (without `music`) no music, unless the scene itself asks for it.
     `short`: in fewer words, for a prompt that would otherwise cut its action; it and `cinematic=False` leave out the
-    camera and physics line."""
+    camera and physics line. `flow`: a Flow clip, where a letter on screen also counts as asked-for text."""
     cartoon = animated(scene, style)
     rules = [ONE_SHOT, CONTINUITY_SHORT] if short else [ONE_SHOT, CONTINUITY, ANIMATED_REALISM if cartoon else REALISM]
     if cinematic and not short:
         rules.append(CINEMATIC_CARTOON.format(style=_style_name(style)) if cartoon else CINEMATIC)
     if cartoon and len(scene.get("characters") or []) > 1:
         rules.append(SAME_STYLE.format(style=_style_name(style)))
-    if not ON_SCREEN_TEXT.search(SPOKEN_LINE.sub(" ", scene.get("action") or "")):
+    if not asks_for_text(scene.get("action") or "", flow):
         rules.append(NO_TEXT)
     if not music and not MUSIC.search(" ".join([scene.get("action") or "", scene.get("sound") or ""])):
         rules.append(NO_MUSIC)
@@ -571,7 +585,7 @@ def flow_rules(scene: dict, style: str = "", music: bool = True) -> list[str]:
     elif people:  # with no lines Veo may make someone mumble or chat
         lines.append("Speech: nobody speaks; laughs and giggles are fine.")
     look = [f"one {_style_name(style)} look, never photorealistic" if cartoon else "", "steady light, no flicker"]
-    if not ON_SCREEN_TEXT.search(SPOKEN_LINE.sub(" ", action)):
+    if not asks_for_text(action, flow=True):
         look.append("no text, subtitles, logos or writing anywhere")
     elif scene.get("dialogue"):
         look.append("no subtitles")
@@ -826,7 +840,7 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
         tail.insert(0, f"Voices: {', '.join(talkers)}." + apart)
     if scene.get("sound"):
         tail.append(f"Sound: {_sentence(scene['sound'])}")
-    rules = quality_rules(scene, style, music)
+    rules = quality_rules(scene, style, music, flow=flow)
     if scene.get("dialogue") and not flow:
         speakers = {d["name"] for d in scene["dialogue"]}
         no_subs = "" if NO_TEXT in rules else " No subtitles."
@@ -865,6 +879,36 @@ def compile_prompt(scene: dict, cast: list[dict], style: str = "", language: str
     if ruled is not None and not fit and len("\n".join(head + tail)) > room:  # an unfitted one may still fit
         tail[ruled] = quality_rules(scene, style, music, cinematic=False)
     return "\n".join(head + tail)
+
+
+def picture_prompt(scene: dict, cast: list[dict], style: str = "", bible: dict | None = None, aspect: str = "",
+                   genre: str = "") -> str:
+    """A Flow scene's first picture, to draw by hand in Flow's image mode with the characters' pictures and upload as
+    its start picture (the PDF's first-frame stills): the scene as its still shows it (still_prompt), which picture
+    is whom, the framing, and what to avoid (each character's "never", the genre's, and text unless the scene
+    shows a letter or sign)."""
+    by_id, bible = {c["id"]: c for c in cast}, bible or {}
+    pictured = [p["name"] for p in scene.get("characters") or []
+                if by_id.get(p.get("id"), {}).get("image_path")][:MAX_SCENE_IMAGES]
+    lines = []
+    if aspect in FORMATS:
+        lines.append(FORMATS[aspect].replace("video", "picture"))
+    if pictured:
+        lines.append("Attach: " + ", ".join(f"picture {i} = {n}" for i, n in enumerate(pictured, 1))
+                     + "; each looks exactly as in their picture.")
+    lines.append(still_prompt(scene, cast, style, bible))
+    # what else the shot shows (the glowing "A" in the sky), not its spoken lines: the still names the first moment
+    rest = re.split(r"(?<=[.!?])\s", SPOKEN_LINE.sub(" ", scene.get("action") or "").strip())[1:]
+    rest = [x.strip() for x in rest if len(x.split()) >= 3 and not re.search(r"[\"“”]\s*$", x.strip())]
+    if rest:
+        lines.append(_sentence("Also in view: " + _fit(" ".join(rest), 600)))
+    avoid = clip_avoid(genre) + [merged_sheet(by_id[p["id"]], bible).get("never") or "" if p.get("id") in by_id
+                                 else "" for p in scene.get("characters") or []]
+    if not asks_for_text(scene.get("action") or "", flow=True):
+        lines.append("No text, captions, logos or written words.")
+    if _avoid(avoid):
+        lines.append(_avoid(avoid))
+    return "\n".join(lines)
 
 
 def still_prompt(scene: dict, cast: list[dict], style: str = "", bible: dict | None = None) -> str:

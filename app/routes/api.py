@@ -1,6 +1,7 @@
 import base64
 import math
 import re
+import shutil
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
@@ -17,7 +18,7 @@ from app.enums import SCENE_SECONDS, Aspect, GenStatus, Provider
 from app.interfaces import StorageError
 from app.media import (MAX_IMAGE_BYTES, MAX_IMAGES, MAX_MUSIC_BYTES, MAX_VIDEO_BYTES, audio_kind, image_kind,
                        video_kind)
-from app.models import Character, Generation
+from app.models import Character, Generation, Series
 from app.script import MAX_CAST, TEXT_LIMITS, aspect_from_prompt
 from app.routes.views import cards_for
 from app.services.generation import UserError, drive_name
@@ -77,14 +78,15 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
                             cast: list[str] = Form(default=[]), style: str = Form(""), language: str = Form(""),
                             review: str = Form(""), genre: str = Form(""), music: UploadFile | None = File(None),
                             lock_frames: str = Form(""), check_clips: str = Form(""), provider: str = Form(""),
-                            by_hand: str = Form("")):
+                            by_hand: str = Form(""), series_music: str = Form("")):
     """Either one `prompt` + `duration` (Gemini writes the script), or `scenes` written by the user.
     An empty `duration` (Default) takes the length from the prompt, else 10 seconds.
     `cast`: ids of the user's characters to use. `review`: stop for the user to edit and approve the script.
     `genre`: the video type (app/genres.py); empty (Auto) reads it from the prompt. `music`: one track under the
     whole video. `lock_frames`: each scene starts from a still made first; `check_clips`: Gemini checks each clip.
     `provider`: where the clips are made, gemini (10-second scenes) or flow (Google Flow, 8-second scenes).
-    `by_hand` (Flow): the user makes each clip in Google Flow and uploads it on the by-hand page."""
+    `by_hand` (Flow): the user makes each clip in Google Flow and uploads it on the by-hand page.
+    `series_music`: the id of the user's series whose music goes under the video when no track is uploaded."""
     plan = None
     provider = _provider(provider)
     step = SCENE_SECONDS[provider]
@@ -149,6 +151,13 @@ async def create_generation(request: Request, user=Depends(require_post), prompt
         if kind is None:
             raise UserError(f"{music.filename} isn't an MP3, M4A, WAV or OGG file.")
         track = (kind, data)
+    elif series_music.strip().isdigit():  # the series' track, kept from the episode it was saved from
+        with request.app.state.db.session() as s:
+            row = s.get(Series, int(series_music))
+            path = Path(row.music_path) if row and row.user_id == user.id and row.music_path else None
+        if path and path.exists():
+            data = path.read_bytes()
+            track = (audio_kind(data[:16]) or path.suffix.lstrip("."), data)
     on = lambda v: v.strip().lower() in ("1", "on", "true", "yes")  # noqa: E731
     gen_id = request.app.state.service.create(user.id, scenes, aspect, checked, plan=plan, cast_ids=cast_ids,
                                               style=style, language=language, review=review, genre=genre,
@@ -249,6 +258,60 @@ async def upload_scene_clip(gen_id: int, position: int, request: Request, user=D
     return {"ok": True}
 
 
+MAX_SOUND_BYTES = 5 * 1024 * 1024  # one scene's sound effect: a chime, a whoosh
+
+
+@router.post("/generations/{gen_id}/scenes/{position}/start")
+async def upload_scene_start(gen_id: int, position: int, request: Request, user=Depends(require_post),
+                             image: UploadFile = File(...)):
+    """A Flow scene's own start picture (drawn in Flow's image mode from its picture prompt): its clip starts from it."""
+    data = await image.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise UserError(f"{image.filename} is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB.")
+    kind = image_kind(data[:16])
+    if kind is None:
+        raise UserError(f"{image.filename} isn't a JPG, PNG or WebP picture.")
+    request.app.state.service.scene_media(gen_id, user.id, position, "start", data, kind)
+    return {"ok": True}
+
+
+@router.post("/generations/{gen_id}/scenes/{position}/sound")
+async def upload_scene_sound(gen_id: int, position: int, request: Request, user=Depends(require_post),
+                             sound: UploadFile = File(...)):
+    """A Flow scene's sound effect (a chime, a whoosh), laid under the video where the scene starts."""
+    data = await sound.read(MAX_SOUND_BYTES + 1)
+    if len(data) > MAX_SOUND_BYTES:
+        raise UserError(f"{sound.filename} is larger than {MAX_SOUND_BYTES // (1024 * 1024)} MB.")
+    kind = audio_kind(data[:16])
+    if kind is None:
+        raise UserError(f"{sound.filename} isn't an MP3, M4A, WAV or OGG sound.")
+    request.app.state.service.scene_media(gen_id, user.id, position, "sound", data, kind)
+    return {"ok": True}
+
+
+@router.post("/generations/{gen_id}/scenes/{position}/{kind}/delete")
+def remove_scene_media(gen_id: int, position: int, kind: str, request: Request, user=Depends(require_post)):
+    """Remove a scene's own start picture ("start") or sound effect ("sound")."""
+    if kind not in ("start", "sound"):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    request.app.state.service.scene_media(gen_id, user.id, position, kind)
+    return {"ok": True}
+
+
+@router.get("/generations/{gen_id}/scenes/{position}/{kind}")
+def scene_media_file(gen_id: int, position: int, kind: str, request: Request, user=Depends(require_api_user)):
+    """A scene's own start picture or sound effect."""
+    path = request.app.state.service.scene_media_file(gen_id, user.id, position, kind)
+    if path is None:
+        return JSONResponse({"detail": "This scene has none."}, status_code=404)
+    with open(path, "rb") as f:
+        head = f.read(16)
+    ext = image_kind(head) if kind == "start" else audio_kind(head)
+    media = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp", "mp3": "audio/mpeg", "m4a": "audio/mp4",
+             "wav": "audio/wav", "ogg": "audio/ogg"}.get(ext or "", "application/octet-stream")
+    return FileResponse(path, media_type=media, headers={"Cache-Control": "private, no-cache"})
+
+
 async def clip_bytes(clip: UploadFile) -> bytes:
     """An uploaded Flow clip's bytes, once it's checked to be an MP4 that isn't too large."""
     data = await clip.read(MAX_VIDEO_BYTES + 1)
@@ -276,6 +339,52 @@ def hand_picture(path, gen_id: int, index: int, download: bool):
     if download:
         headers["Content-Disposition"] = f'attachment; filename="gen-{gen_id}-image-{index}.{ext}"'
     return FileResponse(path, media_type=f"image/{'jpeg' if ext == 'jpg' else ext}", headers=headers)
+
+
+class SeriesBody(BaseModel):
+    name: str = ""
+
+
+@router.post("/generations/{gen_id}/series")
+def save_series(gen_id: int, body: SeriesBody, request: Request, user=Depends(require_post)):
+    """Save a Flow video's form as a series (its prompt, length, cast, style, music and ticks), to refill the Flow
+    screen for the next episode."""
+    name = " ".join(body.name.split())[:80]
+    if not name:
+        raise UserError("Give the series a name.")
+    st = request.app.state
+    with st.db.session() as s:
+        gen = s.get(Generation, gen_id)
+        if gen is None or gen.user_id != user.id:
+            raise UserError("Video not found.", 404)
+        if gen.provider != Provider.FLOW:
+            raise UserError("Series are for Google Flow videos.")
+        row = Series(user_id=user.id, name=name, prompt=gen.prompt, aspect=gen.aspect, scenes=max(len(gen.scenes), 1),
+                     cast_ids=gen.cast_ids or [], style=gen.style or "", language=gen.language or "",
+                     genre=gen.genre or "", review=bool(gen.review), lock_frames=bool(gen.lock_frames),
+                     check_clips=bool(gen.check_clips), by_hand=bool(gen.by_hand))
+        s.add(row)
+        s.flush()
+        music = Path(gen.music_path) if gen.music_path else None
+        if music and music.exists():
+            dest = st.settings.series_dir / str(row.id) / music.name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(music.read_bytes())
+            row.music_path = str(dest)
+    return {"ok": True, "message": f"Saved as series “{name}”. Pick it on the Flow screen for the next episode."}
+
+
+@router.post("/series/{series_id}/delete")
+def delete_series(series_id: int, request: Request, user=Depends(require_post)):
+    """Remove a saved series and its music copy. Videos made from it are kept."""
+    st = request.app.state
+    with st.db.session() as s:
+        row = s.get(Series, series_id)
+        if row is None or row.user_id != user.id:
+            raise UserError("Series not found.", 404)
+        s.delete(row)
+    shutil.rmtree(st.settings.series_dir / str(series_id), ignore_errors=True)
+    return {"ok": True}
 
 
 @router.post("/generations/{gen_id}/{action}")

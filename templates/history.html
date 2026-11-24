@@ -62,6 +62,7 @@
         <button type="button" class="link clamp-more" hidden>Show more</button>{% endif %}
         <div class="actions">
           <a class="button secondary" href="{{ '/flow' if g.provider == 'flow' else '/' }}?prompt_from={{ g.id }}">Use prompt again</a>
+          {% if g.provider == 'flow' %}<button type="button" class="secondary" data-post="/generations/{{ g.id }}/series" data-ask="Name this series (e.g. Alphabet Adventures). The Flow screen can then refill this video's prompt, length, cast, style, music and ticks for the next episode." data-show="series-note-{{ g.id }}">Save as series</button><span class="muted small" id="series-note-{{ g.id }}"></span>{% endif %}
           {% if g.status == "READY" %}
             <a class="button secondary" href="/generations/{{ g.id }}/file?download=1">Download</a>
             {% if g.drive_file_id %}<a class="button secondary" href="https://drive.google.com/file/d/{{ g.drive_file_id }}/view" target="_blank" rel="noopener">Open in Drive</a>{% endif %}

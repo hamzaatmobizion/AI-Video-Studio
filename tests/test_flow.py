@@ -751,3 +751,109 @@ def test_flow_line_after_she_is_said_by_whom_the_sentence_before_is_about():
     assert 'Saas (frame right) freezes' in prompt and "Colour palette" not in prompt  # the portraits set the colours
     studio = script.compile_prompt(scene, cast, bible={"palette": "warm yellow"}, room=script.FLOW_MAX_PROMPT)
     assert "Colour palette" in studio and "Bahu (voice" not in studio and "Bahu says: 'بلی اتھے اے!'" in studio
+
+
+# ---- what an alphabet story map needs: letters on screen, a start picture and sound per scene, series ------------
+def test_flow_scene_may_show_a_letter_on_screen():
+    """An alphabet video's glowing "A" is asked-for text on Flow; Studio's rules and a plain scene are unchanged."""
+    from app import script
+    letter = {"action": 'A glowing letter "A" floats in the sky. Fiona says: "A! A! Apple!"',
+              "dialogue": [{"name": "Fiona", "line": "A! A! Apple!"}]}
+    plain = {"action": 'Fiona says: "A! A! Apple!" and smiles.', "dialogue": [{"name": "Fiona", "line": "A! A! Apple!"}]}
+    assert script.NO_TEXT not in script.quality_rules(letter, flow=True)
+    assert script.NO_TEXT in script.quality_rules(letter)  # Studio as before
+    assert "no text" not in script.flow_rules(letter)[-1] and "no text" in script.flow_rules(plain)[-1]
+    assert script.NO_TEXT in script.quality_rules(plain, flow=True)  # a spoken "A!" isn't on screen
+
+
+def test_picture_prompt_says_whom_to_attach_what_else_is_in_view_and_what_to_avoid():
+    from app import script
+    cast = [{"id": 1, "name": "Fiona", "appearance": "cream bunny", "outfit": "", "voice": "", "personality": "",
+             "locked": "", "never": "upright ears, brown fur", "image_path": "/x/fiona.png"}]
+    scene = {"setting": "sunny meadow", "action": 'Fiona points at the apple. A glowing letter "A" floats in the sky. '
+             'Fiona says: "Apple starts with A!"', "characters": [{"id": 1, "name": "Fiona", "position": "centre"}]}
+    text = script.picture_prompt(scene, cast, "Pixar-style 3D animation", {}, "9:16")
+    assert text.startswith("Vertical 9:16 picture.") and "picture 1 = Fiona" in text
+    assert 'Also in view: A glowing letter "A" floats in the sky.' in text and "Apple starts" not in text
+    assert "Avoid: upright ears, brown fur." in text and "No text" not in text
+
+
+def test_own_start_picture_makes_its_scene_start_from_it_in_frames_mode(app, authed, drive_connected, net, tmp_path):
+    from app import script
+    from tests.fakes import PNG
+    from tests.test_app import by_hand
+    gid = by_hand(authed, ["they dance", "they bow"]).json()["id"]
+    svc = app.state.service
+    assert authed.post(f"/generations/{gid}/scenes/2/start", files={"image": ("p.png", PNG, "image/png")}).status_code == 200
+    assert authed.get(f"/generations/{gid}/scenes/2/start").content == PNG
+    assert svc.hand_scene(gid, 1)["mode"] == "ingredients"  # scene 1 has none: as before
+    bad = authed.post(f"/generations/{gid}/scenes/1/start", files={"image": ("n.txt", b"hello", "text/plain")})
+    assert bad.status_code == 400 and "isn't a JPG" in bad.json()["detail"]
+    authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", clip_bytes(tmp_path, "s1", 2.0), "video/mp4")})
+    hand = svc.hand_scene(gid, 1)
+    assert hand["mode"] == "frames" and hand["images"][0]["label"] == "Scene 2's start picture"
+    assert script.OWN_START in hand["prompt"] and script.FRAME_START not in hand["prompt"]
+    assert "its own start picture" in authed.get(f"/generations/{gid}/by-hand").text
+    late = authed.post(f"/generations/{gid}/scenes/1/start", files={"image": ("p.png", PNG, "image/png")})
+    assert late.status_code == 400 and "clip is made already" in late.json()["detail"]
+    authed.post(f"/generations/{gid}/scenes/2/start/delete")
+    hand = svc.hand_scene(gid, 1)  # back to the previous clip's last frame
+    assert hand["images"][0]["label"] == "Previous scene's last frame" and script.FRAME_START in hand["prompt"]
+
+
+def test_start_pictures_and_sounds_are_for_flow_videos(app, authed, drive_connected, net):
+    from tests.fakes import PNG
+    gid = authed.post("/generations", data={"prompt": "a boat", "duration": "10", "aspect": "9:16"}).json()["id"]
+    r = authed.post(f"/generations/{gid}/scenes/1/start", files={"image": ("p.png", PNG, "image/png")})
+    assert r.status_code == 400 and "Google Flow" in r.json()["detail"]
+
+
+def test_join_lays_each_scenes_sound_where_it_starts_without_lengthening(tmp_path):
+    from app.video_join import _probe, join_clips
+    from tests.fakes import make_clip
+    from tests.test_script import _music
+    a, b = make_clip(tmp_path / "a.mp4", 3.0), make_clip(tmp_path / "b.mp4", 2.0)
+    (tmp_path / "chime.mp3").write_bytes(_music(tmp_path))  # 4 s: longer than scene 2, so it's cut at the end
+    join_clips([a, b], tmp_path / "out.mp4", sounds=[None, tmp_path / "chime.mp3"])
+    info = _probe(tmp_path / "out.mp4")
+    assert info["audio"] and abs(info["duration"] - 5.0) < 0.5
+    join_clips([a], tmp_path / "one.mp4", sounds=[tmp_path / "chime.mp3"])  # one clip is re-encoded for it
+    assert abs(_probe(tmp_path / "one.mp4")["duration"] - 3.0) < 0.5
+
+
+def test_scene_sound_is_joined_under_a_by_hand_video(app, authed, drive_connected, net, tmp_path):
+    from tests.test_app import by_hand
+    from tests.test_script import _music
+    gid = by_hand(authed, ["they dance"]).json()["id"]
+    r = authed.post(f"/generations/{gid}/scenes/1/sound", files={"sound": ("c.mp3", _music(tmp_path), "audio/mpeg")})
+    assert r.status_code == 200 and gen(app, gid).scenes[0].sound_path.endswith("scene-1-sound.mp3")
+    assert '"sound": true' in authed.get(f"/generations/{gid}/script").text
+    authed.post(f"/generations/{gid}/scenes/1/clip", files={"clip": ("x.mp4", clip_bytes(tmp_path, "s1", 2.0), "video/mp4")})
+    tick(app)
+    assert gen(app, gid).status in (GenStatus.SAVING, GenStatus.READY), gen(app, gid).error
+
+
+def test_series_saves_a_flow_video_and_refills_the_form_with_its_music(app, authed, drive_connected, net, tmp_path):
+    from tests.test_script import _music
+    gid = authed.post(
+        "/generations", data={"scenes": ["Fiona meets an ant", "an airplane flies by"], "aspect": "9:16",
+                              "provider": "flow", "by_hand": "1", "style": "Pixar-style 3D animation"},
+        files=[("music", ("uke.mp3", _music(tmp_path), "audio/mpeg"))]).json()["id"]
+    assert authed.post(f"/generations/{gid}/series", json={"name": "  "}).status_code == 400
+    r = authed.post(f"/generations/{gid}/series", json={"name": "Alphabet Adventures"})
+    assert r.status_code == 200 and "Alphabet Adventures" in r.json()["message"]
+    flow = authed.get("/flow").text
+    assert "Alphabet Adventures</option>" in flow
+    from app.models import Series
+    with app.state.db.session() as s:
+        sid = s.query(Series).one().id
+    page = authed.get(f"/flow?series={sid}").text
+    assert f'name="series_music" value="{sid}"' in page and 'name="style" value="Pixar-style 3D animation"' in page
+    assert '<option value="16" selected' in page or 'value="16" selected' in page
+    new = authed.post("/generations", data={"prompt": "Fiona meets a bee", "duration": "16", "aspect": "9:16",
+                                            "provider": "flow", "by_hand": "1", "series_music": str(sid)}).json()["id"]
+    assert gen(app, new).music_path and Path(gen(app, new).music_path).exists()
+    assert authed.post(f"/series/{sid}/delete").status_code == 200
+    assert "Alphabet Adventures" not in authed.get("/flow").text
+    gemini = authed.post("/generations", data={"prompt": "a boat", "duration": "10", "aspect": "9:16"}).json()["id"]
+    assert authed.post(f"/generations/{gemini}/series", json={"name": "x"}).status_code == 400

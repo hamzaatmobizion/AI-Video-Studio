@@ -46,6 +46,10 @@ class Settings(BaseSettings):
         return self.VAR_DIR / "portraits"
 
     @property
+    def series_dir(self) -> Path:
+        return self.VAR_DIR / "series"
+
+    @property
     def google_redirect_uri(self) -> str:
         return self.PUBLIC_BASE_URL.rstrip("/") + "/auth/google/callback"
 

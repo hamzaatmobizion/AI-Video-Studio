@@ -14,8 +14,28 @@
   {% elif not drive_connected %}
     <p class="notice">Connect Google Drive in <a href="/settings">Settings</a> first, so finished videos have somewhere to go.</p>
   {% endif %}
+  {% if provider == 'flow' and all_series %}
+  <div class="series-pick">
+    <label>Series
+      <select onchange="location.href = this.value ? '/flow?series=' + this.value : '/flow'">
+        <option value="">None: a new video</option>
+        {% for x in all_series %}<option value="{{ x.id }}"{% if series and series.id == x.id %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
+      </select>
+    </label>
+    {% if series %}
+      <p class="muted small">Filled in from the series “{{ series.name }}”: its prompt, {{ series.scenes * step }} seconds, cast, style{% if series.music_path %}, music{% endif %} and ticks. Change the prompt for the next episode, then Generate.
+        <button type="button" class="link danger" data-post="/series/{{ series.id }}/delete" data-confirm="Remove the series “{{ series.name }}”? Videos made from it are kept." data-then="/flow">Remove series</button></p>
+    {% endif %}
+  </div>
+  {% endif %}
   <form id="new-video" data-step="{{ step }}" data-provider="{{ provider }}">
     <input type="hidden" name="provider" value="{{ provider }}">
+    {% if series %}
+    <input type="hidden" name="style" value="{{ series.style }}">
+    <input type="hidden" name="language" value="{{ series.language }}">
+    <input type="hidden" name="genre" value="{{ series.genre }}">
+    {% if series.music_path %}<input type="hidden" name="series_music" value="{{ series.id }}">{% endif %}
+    {% endif %}
     <div id="auto-mode"{% if prefill_manual %} hidden{% endif %}>
       <p class="small prompt-help"><a href="/rules">How to write a prompt for the best video</a> · copy a ready-made format for any AI chat</p>
       <label>Prompt
@@ -87,6 +107,7 @@
       <label class="grow">Background music (optional · MP3/M4A/WAV · 20 MB)
         <input type="file" name="music" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg">
         <span class="hint">One track under the whole video, quieter while anyone speaks. The clips then make no music of their own.</span>
+        {% if series and series.music_path %}<span class="hint">Empty: the series' music is used.</span>{% endif %}
       </label>
     </div>
     <p class="warn" id="talk-note" hidden></p>

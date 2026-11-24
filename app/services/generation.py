@@ -33,7 +33,7 @@ from app.timeline import bible_from_prompt, brief_clips, keep_prompt, missing_li
 from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
 from app.script import (AS_WRITTEN_MIN, BRIEF_MIN, CONTINUE_FROM, ENTER_SHOT, FLOW_INPUT_LIMIT, FRAME_START, KEEP_IN_FRAME,
-                        LEAVE_BY_END, LEAVE_SHOT,
+                        LEAVE_BY_END, LEAVE_SHOT, OWN_START,
                         MAX_SCENE_IMAGES,
                         STARTS_FROM,
                         cast_sheet, is_structured, merged_sheet,
@@ -192,7 +192,8 @@ class GenerationService:
                 names = _pictured_names(scene, library) if scene.characters else []
                 frame = self._previous_frame(gen, scene)
                 ref = f"gen-{gen.id}-s{scene.position}-{uuid.uuid4().hex[:6]}"
-                if gen.lock_frames and scene.still_path is None and frame is None and 0 < len(names) < MAX_SCENE_IMAGES:
+                if gen.lock_frames and scene.still_path is None and frame is None and _own_start(scene) is None \
+                        and 0 < len(names) < MAX_SCENE_IMAGES:
                     # A Flow video's still is drawn in Flow (its credits), so it uses no Gemini image
                     lane = "flow" if gen.provider == Provider.FLOW else "chat"
                     # "Lock characters", first scene: draw its opening frame from the pictures, then animate it. Later
@@ -225,8 +226,9 @@ class GenerationService:
     def _clip_inputs(self, gen: Generation, scene: Scene, library: list[dict],
                      frame: Path | None, frames: bool = False) -> tuple[str, list[Path], int | None]:
         """One scene's clip prompt, the pictures that go with it, and which of them is its start frame (if any).
-        `frame`: the previous clip's last frame. `frames`: the prompt for Flow's Frames mode, where the previous clip's
-        last frame is the Start frame and there are no reference pictures (its people are as in that frame)."""
+        `frame`: the previous clip's last frame. `frames`: the prompt for Flow's Frames mode, where the scene's own start
+        picture, else the previous clip's last frame, is the Start frame and there are no reference pictures (its
+        people are as in that frame)."""
         paths, pictured = gen.ref_images, 0
         if scene.characters:  # the pictures of who is in this shot first, then the video's own uploads
             pictured = len(_pictured_names(scene, library))
@@ -238,16 +240,18 @@ class GenerationService:
             prompt = as_written_prompt(brief[scene.position - 1], [] if frames else _pictured_names(scene, library),
                                        scene.script(), gen.style, _prompt_options(gen)["music"])
         extra = []  # lines added now; the scene's action is shortened to make room, never these
-        start = Path(scene.still_path) if scene.still_path and Path(scene.still_path).exists() else None
-        lead = start or frame  # the scene's own first frame, else the previous clip's last one
+        own = _own_start(scene)
+        still = Path(scene.still_path) if scene.still_path and Path(scene.still_path).exists() else None
+        start = own or still
+        lead = start or frame  # the scene's own first picture or still, else the previous clip's last frame
         # Gemini and Flow alike: the pictures of who is in the shot, then the frame, so every name in the
         # prompt keeps its own "reference image N" (Flow takes them all as Ingredients)
-        if lead and pictured < MAX_SCENE_IMAGES:
+        if lead and pictured < MAX_SCENE_IMAGES and not frames:
             paths = [*paths[:pictured], str(lead), *paths[pictured:]][:MAX_SCENE_IMAGES]
             extra.append((STARTS_FROM if start or gen.lock_frames else CONTINUE_FROM).format(n=pictured + 1))
         if frames:
-            extra.append(FRAME_START)
-        if gen.provider == Provider.FLOW and (frames or frame and lead == frame):  # it starts from the last frame
+            extra.append(OWN_START if own else FRAME_START)
+        if gen.provider == Provider.FLOW and not own and (frames or frame and lead == frame):  # from the last frame
             extra += _cast_changes(gen, scene)
         if gen.provider == Provider.FLOW:
             extra += _keep_in_frame(gen, scene)
@@ -268,7 +272,7 @@ class GenerationService:
     # ---- by hand ---------------------------------------------------------
     def hand_scene(self, gen_id: int, user_id: int) -> dict:
         """What the by-hand page shows: the video, and for the scene waiting for its clip, the prompt and the
-        pictures to give Google Flow, in order."""
+        pictures to give Google Flow, in order. A scene with its own start picture is made in Frames mode from it."""
         with self.db.session() as s:
             gen = self._get(s, gen_id, user_id)
             if not gen.by_hand:
@@ -278,10 +282,12 @@ class GenerationService:
             if scene is not None:
                 library = self._library(s, user_id)
                 frame = self._previous_frame(gen, scene)
-                if self._frames_scene(gen, scene, frame):
+                own = _own_start(scene)
+                if own or self._frames_scene(gen, scene, frame):  # its own picture, else the last frame, is Start
                     prompt, _, _ = self._clip_inputs(gen, scene, library, None, frames=True)
                     out.update(prompt=prompt, start_at=0, mode="frames",
-                               images=[{"path": frame, "label": "Previous scene's last frame"}])
+                               images=[{"path": own, "label": f"Scene {scene.position}'s start picture"} if own
+                                       else {"path": frame, "label": "Previous scene's last frame"}])
                     return out
                 prompt, images, start_at = self._clip_inputs(gen, scene, library, frame)
                 names = _pictured_names(scene, library) if scene.characters else []
@@ -369,6 +375,44 @@ class GenerationService:
             if gen.check_clips and not scene.redos and self._submit_check(gen, scene, self._library(s, user_id)):
                 return
         self._continue(gen_id)
+
+    def scene_media(self, gen_id: int, user_id: int, position: int, kind: str,
+                    data: bytes | None = None, ext: str = "") -> None:
+        """A Flow scene's own start picture (`kind` "start": its clip starts from it) or sound effect ("sound": laid
+        under the video where the scene starts): saved from `data`, or removed when there's none. A start picture
+        can change only until the scene's clip is made or while it's being made; a sound until the video is joined."""
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            if gen.provider != Provider.FLOW:
+                raise UserError("Start pictures and sound effects are for Google Flow videos.")
+            scene = next((sc for sc in gen.scenes if sc.position == position), None)
+            if scene is None:
+                raise UserError("That scene doesn't exist. Reload the page.", 404)
+            if gen.status in (GenStatus.CANCELLED, GenStatus.READY, GenStatus.SAVING, GenStatus.SAVE_FAILED):
+                raise UserError("This video is finished. Remake the scene to change it.")
+            if kind == "start":
+                if scene.clip_path:
+                    raise UserError(f"Scene {position}'s clip is made already. Remake the scene to change its picture.")
+                if gen.worker_job_id and _next_scene(gen) is scene:
+                    raise UserError(f"Scene {position}'s clip is being made now.")
+            old = getattr(scene, f"{kind}_path")
+            if old:
+                Path(old).unlink(missing_ok=True)
+            dest = None
+            if data is not None:
+                dest = self._scene_dir(gen) / f"scene-{position}-{kind}.{ext}"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+            setattr(scene, f"{kind}_path", str(dest) if dest else None)
+        log.info("generation %s scene %d %s %s", gen_id, position, kind, "saved" if data is not None else "removed")
+
+    def scene_media_file(self, gen_id: int, user_id: int, position: int, kind: str) -> Path | None:
+        """A scene's own start picture or sound effect, if it has one."""
+        with self.db.session() as s:
+            gen = self._get(s, gen_id, user_id)
+            scene = next((sc for sc in gen.scenes if sc.position == position), None)
+            path = getattr(scene, f"{kind}_path", None) if scene and kind in ("start", "sound") else None
+        return Path(path) if path and Path(path).exists() else None
 
     def _submit_check(self, gen: Generation, scene: Scene, library: list[dict]) -> bool:
         """Ask Gemini to watch the new clip, sound included, and check it against the characters' pictures, the
@@ -857,8 +901,10 @@ class GenerationService:
                 return
             dest = self.settings.generated_dir / f"{gen.id}-{uuid.uuid4().hex}.mp4"
             music = Path(gen.music_path) if gen.music_path and Path(gen.music_path).exists() else None
+            sounds = [Path(sc.sound_path) if sc.sound_path and Path(sc.sound_path).exists() else None
+                      for sc in gen.scenes]
         try:  # outside the session: a long ffmpeg run mustn't hold a database transaction
-            size = join_clips(paths, dest, music=music)
+            size = join_clips(paths, dest, music=music, sounds=sounds)
         except JoinError as e:
             with self.db.session() as s:
                 gen = s.get(Generation, gen_id)
@@ -1018,6 +1064,11 @@ class GenerationService:
         shutil.rmtree(self._scene_dir(gen), ignore_errors=True)
         for scene in gen.scenes:
             scene.clip_path = None
+
+
+def _own_start(scene: Scene) -> Path | None:
+    """The start picture the user gave this scene (drawn in Flow, like the PDF's first-frame stills), if it's there."""
+    return Path(scene.start_path) if scene.start_path and Path(scene.start_path).exists() else None
 
 
 def _prompt_options(gen: Generation, scene_count: int | None = None) -> dict:

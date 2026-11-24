@@ -15,7 +15,7 @@ from app import script as sc
 from app.genres import GENRE_LABELS
 from app.timeline import missing_lines
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
-from app.models import Character, Generation, User
+from app.models import Character, Generation, Series, User
 from app.routes.views import cards_for, settings_context
 
 router = APIRouter()
@@ -32,14 +32,21 @@ def studio(request: Request, prompt_from: int | None = None, user=Depends(requir
 
 
 @router.get("/flow", response_class=HTMLResponse)
-def flow_studio(request: Request, prompt_from: int | None = None, user=Depends(require_page_user)):
-    """The same Studio, with every clip made in Google Flow (Veo 3.1 - Lite, Flow credits, 8-second scenes)."""
-    return _studio(request, user, prompt_from, Provider.FLOW)
+def flow_studio(request: Request, prompt_from: int | None = None, series: int | None = None,
+                user=Depends(require_page_user)):
+    """The same Studio, with every clip made in Google Flow (Veo 3.1 - Lite, Flow credits, 8-second scenes).
+    `series`: refill the form from a saved series, for its next episode."""
+    return _studio(request, user, prompt_from, Provider.FLOW, series)
 
 
-def _studio(request: Request, user, prompt_from: int | None, provider: Provider) -> HTMLResponse:
+def _studio(request: Request, user, prompt_from: int | None, provider: Provider,
+            series_id: int | None = None) -> HTMLResponse:
     st = request.app.state
-    prefill = None
+    prefill, series, all_series = None, None, []
+    if provider == Provider.FLOW:
+        with st.db.session() as s:
+            all_series = s.scalars(select(Series).where(Series.user_id == user.id).order_by(Series.name)).all()
+        series = next((x for x in all_series if x.id == series_id), None)
     if prompt_from is not None:  # "Use prompt again" from History
         with st.db.session() as s:
             prefill = s.get(Generation, prompt_from)
@@ -52,8 +59,17 @@ def _studio(request: Request, user, prompt_from: int | None, provider: Provider)
                   can_generate=st.providers.generator() is not None,
                   drive_connected=st.providers.connection(user.id) is not None,
                   characters=characters, styles=sc.STYLES, max_cast=sc.MAX_CAST, genres=GENRE_LABELS,
-                  **_prefill(prefill),
-                  prefill_aspect=prefill.aspect if prefill else "9:16")
+                  **(_series_prefill(series) if series else _prefill(prefill)), series=series, all_series=all_series,
+                  prefill_aspect=(series or prefill).aspect if series or prefill else "9:16")
+
+
+def _series_prefill(series: Series) -> dict:
+    """Flow form values from a saved series: its prompt to adapt for the next episode, length, cast and ticks."""
+    return {"prefill_prompt": series.prompt, "prefill_duration": series.scenes * SCENE_SECONDS[Provider.FLOW],
+            "prefill_scenes": [""], "prefill_manual": False, "prefill_cast": series.cast_ids or [],
+            "prefill_style": series.style, "prefill_language": series.language, "prefill_review": series.review,
+            "prefill_genre": series.genre, "prefill_lock": series.lock_frames, "prefill_check": series.check_clips,
+            "prefill_by_hand": series.by_hand}
 
 
 def _prefill(gen: Generation | None) -> dict:
@@ -91,12 +107,38 @@ def script_page(gen_id: int, request: Request, user=Depends(require_page_user)):
                   next_hand=(sum(1 for s in gen.scenes if s.clip_path) + 1) if gen.status == GenStatus.HAND else None,
                   clips=[bool(s.clip_path and Path(s.clip_path).exists()) for s in gen.scenes],
                   can_redo=gen.status in (GenStatus.READY, GenStatus.FAILED),
-                  prompts=[s.prompt for s in gen.scenes],
+                  prompts=[s.prompt for s in gen.scenes], media=_scene_media(gen, library),
                   options={"framing": sc.FRAMINGS, "angle": sc.ANGLES, "movement": sc.MOVEMENTS, "lens": sc.LENSES,
                            "position": sc.POSITIONS, "time_of_day": sc.TIMES_OF_DAY, "style": sc.STYLES},
                   max_words=sc.words_per_clip(SCENE_SECONDS.get(gen.provider, 10)),
                   max_words_more=sc.words_per_clip(SCENE_SECONDS.get(gen.provider, 10), 2), max_prompt=sc.prompt_limit(gen.provider),
                   seconds=SCENE_SECONDS.get(gen.provider, 10))
+
+
+# A video at these can't take a new start picture or sound: it's joined (a remake opens it again)
+JOINED = (GenStatus.CANCELLED, GenStatus.READY, GenStatus.SAVING, GenStatus.SAVE_FAILED)
+
+
+def _scene_media(gen: Generation, library: list[dict]) -> list[dict]:
+    """A Flow video's per-scene first picture and sound effect, for the script and by-hand pages: whether each has
+    its own, what its clip starts from, whether they can change now, and its picture prompt to draw in Flow."""
+    if gen.provider != Provider.FLOW:
+        return []
+    out = []
+    for scene in gen.scenes:
+        start = bool(scene.start_path and Path(scene.start_path).exists())
+        making = bool(gen.worker_job_id) and next((x for x in gen.scenes if not x.clip_path), None) is scene
+        out.append({
+            "start": start, "sound": bool(scene.sound_path and Path(scene.sound_path).exists()),
+            "from": "its own start picture" if start
+            else "the locked still" if scene.position == 1 and gen.lock_frames and not gen.by_hand
+            else "the previous scene's last frame" if scene.position > 1 else "the character pictures",
+            "can_start": gen.status not in JOINED and not scene.clip_path and not making,
+            "can_sound": gen.status not in JOINED,
+            "picture": sc.picture_prompt(scene.script(), library, gen.style, gen.bible, gen.aspect, gen.genre)
+            if scene.action or scene.characters else "",
+        })
+    return out
 
 
 @router.get("/generations/{gen_id}/by-hand", response_class=HTMLResponse)
@@ -105,7 +147,10 @@ def by_hand_page(gen_id: int, request: Request, user=Depends(require_page_user))
     hand = request.app.state.service.hand_scene(gen_id, user.id)
     gen = hand["gen"]
     svc, settings = request.app.state.service, request.app.state.settings
+    library = svc.script(gen_id, user.id)[1] if hand["scene"] is not None else []
+    media = _scene_media(gen, library)[hand["scene"].position - 1] if hand["scene"] is not None else None
     return render(request, "by_hand.html", g=gen, scene=hand["scene"], prompt=hand["prompt"], images=hand["images"],
+                  media=media,
                   mode=hand["mode"], done=sum(1 for s in gen.scenes if s.clip_path), seconds=SCENE_SECONDS.get(gen.provider, 8),
                   bot_ready=settings.bot_configured,bot_online=svc.bot_online())
 

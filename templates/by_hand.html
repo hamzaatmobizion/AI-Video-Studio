@@ -53,14 +53,37 @@
   {% if scene.check_note.startswith("Remade once: ") %}
     <p class="warn small">Gemini's check found a problem with your last clip for this scene ({{ scene.check_note[13:] }}). Make it once more; the prompt below says what to fix.</p>
   {% endif %}
+  {% if media %}
+  <div class="scene-media">
+    <h3 class="sub">First picture{% if media.start %} · its own{% endif %}</h3>
+    {% if media.start %}
+      <img class="start-pic" src="/generations/{{ g.id }}/scenes/{{ scene.position }}/start" alt="Scene {{ scene.position }}'s start picture">
+    {% endif %}
+    <p class="muted small">This clip starts from {{ media.from }}.{% if media.picture %} To give it its own (a new shot, as a story map's first-frame stills), draw the picture prompt in Flow's image mode with the character pictures attached, download it, and upload it here.{% endif %}</p>
+    {% if media.picture %}
+      <details class="compiled"><summary>Picture prompt</summary>
+        <pre class="prompt-text" id="picture-prompt" dir="auto">{{ media.picture }}</pre>
+        <button type="button" class="secondary" data-copy="#picture-prompt">Copy picture prompt</button>
+      </details>
+    {% endif %}
+    {% if media.can_start %}
+    <form class="media-upload" data-url="/generations/{{ g.id }}/scenes/{{ scene.position }}/start">
+      <label class="button secondary small">{{ 'Replace start picture' if media.start else 'Upload start picture' }}
+        <input type="file" name="image" accept="image/jpeg,image/png,image/webp" hidden></label>
+      {% if media.start %}<button type="button" class="link" data-post="/generations/{{ g.id }}/scenes/{{ scene.position }}/start/delete" data-reload>Remove</button>{% endif %}
+      <p class="error" hidden></p>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
   <ol class="hand-steps">
     <li>Open <a href="https://flow.google.com" target="_blank" rel="noopener">Google Flow</a> in your normal browser{% if scene.position > 1 %}, in the project you used for scene 1{% endif %}. Choose <strong>Video</strong>, <strong>{{ g.aspect }}</strong>, <strong>{{ seconds }} s</strong>.</li>
     {% if images and mode == "frames" %}
-    <li>Choose <strong>Frames</strong> (not Ingredients) and put this picture in <strong>Start</strong>: the clip starts exactly from the last frame of scene {{ scene.position - 1 }}, so the scenes join without a jump. Everyone in this scene is already in it.
+    <li>Choose <strong>Frames</strong> (not Ingredients) and put this picture in <strong>Start</strong>: {% if media and media.start %}the clip starts exactly from this scene's own start picture. Everyone in this scene is already in it.{% else %}the clip starts exactly from the last frame of scene {{ scene.position - 1 }}, so the scenes join without a jump. Everyone in this scene is already in it.{% endif %}
       <ul class="hand-images">
         <li>
-          <a href="/generations/{{ g.id }}/by-hand/images/1" target="_blank" rel="noopener"><img src="/generations/{{ g.id }}/by-hand/images/1" alt="Start frame: the previous scene's last frame"></a>
-          <span><strong>Start</strong> · Previous scene's last frame</span>
+          <a href="/generations/{{ g.id }}/by-hand/images/1" target="_blank" rel="noopener"><img src="/generations/{{ g.id }}/by-hand/images/1" alt="Start frame: {{ images[0].label }}"></a>
+          <span><strong>Start</strong> · {{ images[0].label }}</span>
           <a class="small" href="/generations/{{ g.id }}/by-hand/images/1?download=1">Download</a>
         </li>
       </ul>

@@ -79,6 +79,8 @@ class Scene(Base):
     dialogue: Mapped[list] = mapped_column(JSON, default=list)  # [{id, name, line}]
     props: Mapped[list] = mapped_column(JSON, default=list)  # [{name, state}]: where each object is, who holds it
     still_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # its locked first frame
+    start_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # the user's own first picture
+    sound_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # a sound effect at its start
     check_note: Mapped[str] = mapped_column(Text, default="")  # what Gemini's clip check said
     redos: Mapped[int] = mapped_column(Integer, default=0)  # automatic remakes after a failed check
 
@@ -116,6 +118,29 @@ class Character(Base):
         return {"id": self.id, "name": self.name, "appearance": self.appearance, "outfit": self.outfit,
                 "voice": self.voice, "personality": self.personality, "locked": self.locked, "never": self.never,
                 "image_path": self.image_path}
+
+
+class Series(Base):
+    """A Flow form saved under a name (Alphabet Adventures): refilled for the next episode with the same cast, style,
+    music, length and ticks."""
+
+    __tablename__ = "series"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    aspect: Mapped[str] = mapped_column(String(8))
+    scenes: Mapped[int] = mapped_column(Integer)  # how many clips: the length
+    cast_ids: Mapped[list] = mapped_column(JSON, default=list)
+    style: Mapped[str] = mapped_column(Text, default="")
+    language: Mapped[str] = mapped_column(String(40), default="")
+    genre: Mapped[str] = mapped_column(String(30), default="")
+    review: Mapped[bool] = mapped_column(Boolean, default=False)
+    lock_frames: Mapped[bool] = mapped_column(Boolean, default=False)
+    check_clips: Mapped[bool] = mapped_column(Boolean, default=False)
+    by_hand: Mapped[bool] = mapped_column(Boolean, default=False)
+    music_path: Mapped[str | None] = mapped_column(String(500), nullable=True)  # a copy, under var/series
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Portrait(Base):

@@ -271,17 +271,15 @@ class ScriptRuns:
                 log.info("user %s: script run finished", user_id)
                 return None
             try:
+                # given to the bot now: it takes the video once its clips are ready (status HAND)
                 gen_id = self.service.create(user_id, [nxt["text"]], aspect_from_prompt(nxt["text"]) or "9:16", [],
-                                             plan=nxt["clips"], provider=Provider.FLOW, by_hand=True)
+                                             plan=nxt["clips"], provider=Provider.FLOW, by_hand=True,
+                                             script_file=nxt["name"], bot=True)
             except UserError as e:
                 state = self._load()
                 state[str(user_id)] = {"started": None, "error": f"{nxt['name']}: {e.message}"}
                 self._save(state)
                 log.info("user %s: script run stopped at %s: %s", user_id, nxt["name"], e.message)
                 return None
-            with self.service.db.session() as s:
-                gen = s.get(Generation, gen_id)
-                # given to the bot now: it takes the video once Gemini has written its clips (status HAND)
-                gen.script_file, gen.bot_at, gen.bot_note = nxt["name"], utcnow(), None
         log.info("user %s: script %s is generation %s, given to the hand bot", user_id, nxt["name"], gen_id)
         return gen_id

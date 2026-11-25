@@ -29,13 +29,14 @@ from sqlalchemy import func, select
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.factories import Providers
 from app.genres import plan_rules, valid_genre
-from app.timeline import bible_from_prompt, brief_clips, keep_prompt, missing_lines, script_from_timeline
+from app.timeline import (bible_from_prompt, brief_clips, keep_prompt, layout_clips, missing_lines,
+                          script_from_timeline)
 from app.interfaces import GeneratorError, StorageError
 from app.models import Character, Generation, GoogleConnection, Scene, utcnow
 from app.script import (AS_WRITTEN_MIN, BRIEF_MIN, CONTINUE_FROM, ENTER_SHOT, FLOW_INPUT_LIMIT, FRAME_START, KEEP_IN_FRAME,
                         LEAVE_BY_END, LEAVE_SHOT, OWN_START,
                         MAX_SCENE_IMAGES,
-                        STARTS_FROM,
+                        STARTS_FROM, TEXT_LIMITS,
                         cast_sheet, is_structured, merged_sheet,
                         still_prompt, compile_prompt, as_written_prompt, ensure_cast, include_cast, normalize_bible, normalize_scene,
                         scene_images, scene_warnings, clean_text, style_from_prompt, prompt_limit,
@@ -95,14 +96,16 @@ class GenerationService:
                plan: int | None = None, cast_ids: list[int] | None = None, style: str = "", language: str = "",
                review: bool = False, genre: str = "", music: tuple[str, bytes] | None = None,
                lock_frames: bool = False, check_clips: bool = False, provider: str = Provider.GEMINI,
-               by_hand: bool = False) -> int:
+               by_hand: bool = False, script_file: str | None = None, bot: bool = False) -> int:
         """`scenes`: one prompt per ~10 s clip, already validated. With `plan` = N, `scenes` is the user's
         one prompt and Gemini first writes an N-scene script from it. `images` validated by content: [(ext, bytes)].
         `cast_ids`: the user's characters to use; `review`: wait for the user to approve the script;
         `genre`: the video type (app/genres.py), read from the prompt when it isn't one. `music`: (ext, bytes) of
         one track laid under the whole video; `lock_frames`, `check_clips`: the slower consistency options.
         `provider`: where the clips are made (gemini | flow), so how long each scene is. `by_hand` (Flow only): the
-        user makes each clip in Google Flow and uploads it; no first frame is drawn, since that's made in Flow too."""
+        user makes each clip in Google Flow and uploads it; no first frame is drawn, since that's made in Flow too.
+        `script_file` (AutoFlow): the script file it's made from; one laid out in clips goes to Flow as written, with
+        no Gemini script. `bot` (by hand): given to the hand bot at once, as "Create Video" does."""
         by_hand = by_hand and provider == Provider.FLOW
         lock_frames = lock_frames and not by_hand
         if self.p.generator() is None:
@@ -135,7 +138,8 @@ class GenerationService:
                              poll_errors=0, upload_attempts=0, dismissed=False, planned=bool(plan),
                              review=review, cast_ids=cast_ids, style=style, language=language, genre=genre,
                              bible={}, scenes=rows, lock_frames=lock_frames, check_clips=check_clips,
-                             provider=Provider(provider), by_hand=by_hand)
+                             provider=Provider(provider), by_hand=by_hand, script_file=script_file,
+                             bot_at=utcnow() if bot and by_hand else None)
             s.add(gen)
             s.flush()
             paths = []
@@ -236,7 +240,9 @@ class GenerationService:
         prompt = scene.prompt
         brief = _brief(gen)
         written = brief is not None and scene.position <= len(brief)
-        if written:  # a full brief goes to Flow as the user wrote it: whole for one clip, else split by time
+        if written and _layout(gen) is not None:  # AutoFlow: the script's clip alone, none of the app's rules
+            prompt = brief[scene.position - 1]
+        elif written:  # a full brief goes to Flow as the user wrote it: whole for one clip, else split by time
             prompt = as_written_prompt(brief[scene.position - 1], [] if frames else _pictured_names(scene, library),
                                        scene.script(), gen.style, _prompt_options(gen)["music"])
         extra = []  # lines added now; the scene's action is shortened to make room, never these
@@ -451,6 +457,20 @@ class GenerationService:
 
     def _submit_plan(self, gen_id: int) -> None:
         client = self.p.generator()
+        with self.db.session() as s:
+            gen = s.get(Generation, gen_id)
+            clips = _layout(gen)
+            if clips is not None:  # an AutoFlow script in clips is its own script: Gemini isn't asked
+                for scene, clip in zip(gen.scenes, clips):
+                    # the prompt sent is the clip as written (_brief), with the app's essentials; this is what the
+                    # by-hand and script pages show
+                    scene.prompt, scene.action = clip, clean_text(clip, TEXT_LIMITS["action"], multiline=True)
+                gen.bible, gen.status, gen.worker_job_id, gen.submitted_at = normalize_bible({}), \
+                    GenStatus.GENERATING, None, None
+                log.info("generation %s: its script's %d clips go to Flow as written", gen_id, len(clips))
+        if clips is not None:
+            self._continue(gen_id)
+            return
         with self.db.session() as s:
             gen = s.get(Generation, gen_id)
             try:
@@ -1114,9 +1134,20 @@ def _brief(gen: Generation) -> list[str] | None:
     count = len(gen.scenes)
     if gen.provider != Provider.FLOW or not gen.planned or gen.review or not count:
         return None
+    clips = _layout(gen)
+    if clips is not None:
+        return clips
     if len(gen.prompt or "") < (AS_WRITTEN_MIN if count == 1 else BRIEF_MIN):
         return None
     return brief_clips(gen.prompt, count, scene_seconds(gen))
+
+
+def _layout(gen: Generation) -> list[str] | None:
+    """An AutoFlow video's clips when its script is laid out in clips (CLIP 1, CLIP 2, …): each sent to Flow as
+    written (layout_clips), with no Gemini script. None for any other video or layout."""
+    if not gen.script_file or gen.provider != Provider.FLOW or not gen.scenes:
+        return None
+    return layout_clips(gen.prompt, len(gen.scenes), scene_seconds(gen))
 
 
 def _as_written(gen: Generation) -> bool:

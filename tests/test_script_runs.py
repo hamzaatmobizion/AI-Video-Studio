@@ -251,3 +251,125 @@ def test_no_autostart_leaves_the_bot_alone(app, authed, folder, bot, monkeypatch
     FakeProc.last = None
     assert authed.post("/autoflow/bot").status_code == 400
     assert FakeProc.last is None and "BOT_AUTOSTART is off" in authed.get("/autoflow").text
+
+
+# ---- a script laid out in clips goes to Flow as written --------------------------
+LAID_OUT = """COMPLETE AI VIDEO SCRIPT
+THE KITE
+
+Total Duration: 16 Seconds
+Total Clips: 2
+Style: Ultra-realistic cinematic storytelling
+Genre: Emotional
+
+CHARACTER DESCRIPTION AND CONSISTENCY
+Main Character: Boy
+Age: 10 years old
+Red cap
+
+CLIP 1: THE WIND
+
+Time: 00:00–00:08
+
+SCENE 1
+
+Timestamp: 00:00–00:02
+
+IMAGE PROMPT:
+
+A boy in a red cap on a windy beach.
+
+DIALOGUE:
+
+Boy: "Look how high it flies!"
+
+SOUND: Wind.
+
+CLIP 2: THE FALL
+
+Time: 00:08–00:16
+
+SCENE 4
+
+Timestamp: 00:08–00:11
+
+IMAGE PROMPT:
+
+The kite falls into the sea.
+
+DIALOGUE:
+
+Boy: "Oh no, my kite!"
+
+ON-SCREEN TEXT:
+
+NEVER GIVE UP.
+
+COMPLETE VOICEOVER / DIALOGUE SCRIPT
+
+Boy: "Look how high it flies!"
+Boy: "Oh no, my kite!"
+
+VIDEO EDITING INSTRUCTIONS
+Add English subtitles.
+
+FINAL TIMELINE
+Clip	Scenes	Duration
+Clip 1: The Wind	1, 2, 3	8 seconds
+Clip 2: The Fall	4, 5, 6	8 seconds
+
+END OF PRODUCTION SCRIPT
+"""
+
+
+def test_layout_clips_keeps_each_clip_and_leaves_the_editor_out():
+    from app.timeline import layout_clips
+    one, two = layout_clips(LAID_OUT, 2, 8)
+    for clip in (one, two):
+        assert clip.startswith("Style: Ultra-realistic cinematic storytelling\nGenre: Emotional")
+        assert "CHARACTER DESCRIPTION AND CONSISTENCY" in clip and "Red cap" in clip
+        assert "Total Duration" not in clip and "subtitles" not in clip and "FINAL TIMELINE" not in clip
+        assert "COMPLETE VOICEOVER" not in clip and "END OF" not in clip
+    assert "part 1 of 2, story seconds 0–8" in one and "Look how high" in one and "Oh no" not in one
+    assert "part 2 of 2, story seconds 8–16" in two and "Oh no" in two and "Look how high" not in two
+    assert "NEVER GIVE UP." in two and "NEVER GIVE UP." not in one
+    assert layout_clips(LAID_OUT, 3, 8) is None  # its clips don't match the length
+    assert layout_clips("A boy flies a kite. Total Duration: 16 Seconds", 2, 8) is None
+
+
+def test_layout_first_style_final_screen_text_goes_in_the_last_clip():
+    from app.timeline import layout_clips
+    text = ("VIDEO PRODUCTION SCRIPT\nTitle: THE BOY\n\nMAIN CHARACTER CONSISTENCY\nCharacter: a boy\n\n"
+            "CLIP 1 — THE STRUGGLE\nHe sits by the road.\n\nCLIP 2 — THE WORK\nHe studies.\n\n"
+            "FINAL VIDEO EDITING INSTRUCTIONS\nUse cinematic transitions.\n\nFINAL SCREEN TEXT\n\n\"NEVER GIVE UP!\"\n\n"
+            "END OF SCRIPT")
+    one, two = layout_clips(text, 2, 8)
+    assert "MAIN CHARACTER CONSISTENCY" in one and "He sits by the road." in one and "NEVER GIVE UP" not in one
+    assert "He studies." in two and "FINAL SCREEN TEXT" in two and "NEVER GIVE UP!" in two
+    assert "transitions" not in two
+
+
+def test_a_laid_out_script_skips_gemini_and_goes_to_the_bot_as_written(app, authed, drive_connected, net, folder,
+                                                                       bot):
+    (folder / "01-kite-16s.md").write_text(LAID_OUT)
+    headers = {"Authorization": f"Bearer {BOT_KEY}"}
+    authed.post("/autoflow/start")
+    g = gens(app)[0]
+    assert not [x for x in net.worker.submits if x["path"] == "/plans"]  # Gemini wasn't asked
+    assert g.status == GenStatus.HAND and g.bot_at is not None and len(g.scenes) == 2
+    job = authed.get("/bot/next", headers=headers).json()
+    assert job["gen_id"] == g.id and job["position"] == 1
+    assert "CLIP 1: THE WIND" in job["prompt"] and "Look how high it flies!" in job["prompt"]
+    assert "Red cap" in job["prompt"] and "Oh no, my kite!" not in job["prompt"]
+    assert "English subtitles" not in job["prompt"]
+    for rule in ("Start: the first frame", "Shot: one continuous take", "People:", "Look:", "no music"):
+        assert rule not in job["prompt"]  # the script decides: none of the app's rules
+    assert job["prompt"].rstrip().endswith('SOUND: Wind.')
+    from tests.test_app import MP4
+    r = authed.post(f"/bot/generations/{g.id}/scenes/1/clip", headers=headers, files={"clip": ("x.mp4", MP4, "video/mp4")})
+    assert r.status_code == 200, r.text
+    job = authed.get("/bot/next", headers=headers).json()
+    assert job["position"] == 2 and "CLIP 2: THE FALL" in job["prompt"] and "NEVER GIVE UP." in job["prompt"]
+    assert "Look how high it flies!" not in job["prompt"] and "Look:" not in job["prompt"]
+    # (the test clip has no real last frame; with one, only the line saying to start from it is added)
+    assert job["prompt"].rstrip().endswith("NEVER GIVE UP.")

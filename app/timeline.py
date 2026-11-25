@@ -154,6 +154,54 @@ def brief_clips(prompt: str, clips: int, clip_seconds: int) -> list[str] | None:
             f"below, nothing from before or after them.\n\n{part}" for i, part in enumerate(parts, 1)]
 
 
+# A production script in clips (the AutoFlow scripts): "CHARACTER DESCRIPTION AND CONSISTENCY", then "CLIP 1: …",
+# "CLIP 2: …", each with its own scenes, then sections for the editor, not for Flow
+CLIP_HEAD = re.compile(r"^\W*clip\s+(\d+)\b", re.I)
+CAST_HEAD = re.compile(r"^\W*(?:main\s+)?characters?\b", re.I)
+EDITOR_HEAD = re.compile(r"^\W*(?:complete\s+(?:ai\s+)?(?:voiceover|dialogue)|(?:final\s+)?video\s+editing\b|"
+                         r"final\s+timeline\b|end\s+of\s+(?:production\s+)?script\b)", re.I)
+SCREEN_HEAD = re.compile(r"^\W*final\s+screen\s+text\b", re.I)
+LOOK_LINE = re.compile(r"^\W*(?:visual\s+)?(?:style|genre|language)\s*:", re.I)
+
+
+def layout_clips(prompt: str, clips: int, clip_seconds: int) -> list[str] | None:
+    """Each clip's prompt from a production script laid out in clips (CLIP 1, CLIP 2, …), as written: the script's
+    style and genre lines and its character section, which clip this is, and that clip's own block (its scenes, image
+    and animation prompts, lines and sound). The last clip also gets a closing "FINAL SCREEN TEXT". What's for the
+    editor (the complete voiceover script, editing instructions, the final timeline) is left out: Flow would speak
+    every line of the video, or burn in subtitles. None unless the script has exactly CLIP 1 to CLIP `clips`."""
+    lines = (prompt or "").splitlines()
+    heads = [i for i, ln in enumerate(lines) if CLIP_HEAD.match(ln)]
+    if not heads:
+        return None
+    # the editor's sections come after the last clip (its own timeline also lists "Clip 1: …")
+    editor = next((i for i in range(heads[0], len(lines)) if EDITOR_HEAD.match(lines[i]) or SCREEN_HEAD.match(lines[i])),
+                  len(lines))
+    heads = [i for i in heads if i < editor]
+    if [int(CLIP_HEAD.match(lines[i]).group(1)) for i in heads] != list(range(1, clips + 1)):
+        return None
+    tidy = lambda part: re.sub(r"\n{3,}", "\n\n", "\n".join(part)).strip()  # noqa: E731
+    before = lines[:heads[0]]
+    cast_at = next((i for i, ln in enumerate(before) if CAST_HEAD.match(ln)), None)
+    look = [ln.strip() for ln in before[:cast_at] if LOOK_LINE.match(ln)]
+    cast = tidy(before[cast_at:]) if cast_at is not None else ""
+    blocks = [tidy(lines[a:b]) for a, b in zip(heads, [*heads[1:], editor])]
+    screen = ""
+    at = next((i for i in range(editor, len(lines)) if SCREEN_HEAD.match(lines[i])), None)
+    if at is not None:  # "FINAL SCREEN TEXT" after the editing instructions (the first layout)
+        end = next((i for i in range(at + 1, len(lines)) if EDITOR_HEAD.match(lines[i])), len(lines))
+        screen = tidy(lines[at:end])
+    if any(not b for b in blocks):
+        return None
+    out = []
+    for n, block in enumerate(blocks, 1):
+        note = (f"THIS CLIP: part {n} of {clips}, story seconds {(n - 1) * clip_seconds}–{n * clip_seconds} (this "
+                f"clip's 0–{clip_seconds}). The characters above are the whole video's; show only this clip's "
+                f"scenes below, nothing from before or after them.") if clips > 1 else ""
+        out.append(tidy([*look, "", cast, "", note, "", block, *(["", screen] if n == clips and screen else [])]))
+    return out
+
+
 def _joined(texts: list[str]) -> str:
     return " Then ".join(t.rstrip(" .") + "." for t in texts)
 

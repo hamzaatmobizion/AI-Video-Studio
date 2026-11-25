@@ -1,14 +1,107 @@
-# Title (N seconds, N/8 scenes)
+COMPLETE AI VIDEO SCRIPT
+(TITLE)
 
-<!-- Copy this file to start a new script, e.g. 06-my-story-24s.md.
-     Each scene is 8 seconds; keep the spoken lines short enough to say in 8 seconds. -->
+Total Duration: __ Seconds
+Total Clips: __
+Duration Per Clip: 8 Seconds
+Total Scenes: __ (3 per clip)
+Aspect Ratio: 9:16 Vertical
+Resolution: 1080 × 1920
+Style: Ultra-realistic cinematic storytelling
+Genre:
 
-## Scene 1 (0–8s)
-- **Visual:**
-- **Character:** ""
-- **Sound:**
+CHARACTER DESCRIPTION AND CONSISTENCY
+Main Character: (name)
+Age:
+Hair
+Eyes
+Build
+Clothing
 
-## Scene 2 (8–16s)
-- **Visual:**
-- **Character:** ""
-- **Sound:**
+IMPORTANT CHARACTER RULE: Keep the same face, hairstyle, skin tone, and physical features in every scene.
+
+CLIP 1: (NAME)
+
+Time: 00:00–00:08
+Theme:
+
+SCENE 1
+
+Timestamp: 00:00–00:02
+
+IMAGE PROMPT:
+
+(Repeat the full character description and clothing.) ... Ultra-realistic cinematic photography, vertical 9:16.
+
+VIDEO ANIMATION PROMPT:
+
+
+
+VOICEOVER / DIALOGUE:
+
+""
+
+SOUND:
+
+SCENE 2
+
+Timestamp: 00:02–00:05
+
+IMAGE PROMPT:
+
+
+
+VIDEO ANIMATION PROMPT:
+
+
+
+VOICEOVER / DIALOGUE:
+
+""
+
+SOUND:
+
+SCENE 3
+
+Timestamp: 00:05–00:08
+
+IMAGE PROMPT:
+
+
+
+VIDEO ANIMATION PROMPT:
+
+
+
+VOICEOVER / DIALOGUE:
+
+""
+
+ON-SCREEN TEXT: (last scene of the video only)
+
+SOUND:
+
+(Copy the CLIP block for each 8 seconds. Scene times inside each clip: +0–2s, +2–5s, +5–8s.)
+
+COMPLETE VOICEOVER / DIALOGUE SCRIPT
+
+""
+
+VIDEO EDITING INSTRUCTIONS
+Generate all __ scene images separately.
+Use the image prompts to maintain visual consistency.
+Animate each image using its corresponding video animation prompt.
+Arrange the scenes in the exact timestamp order.
+Combine the __ clips into one __-second video.
+Add voiceover synchronized with each scene.
+Add background music and sound effects.
+Add English subtitles.
+Use smooth cinematic transitions.
+Export in 1080 × 1920, 9:16 format.
+
+FINAL TIMELINE
+Clip	Scenes	Duration
+Clip 1:	1, 2, 3	8 seconds
+TOTAL	__ scenes	__ seconds
+
+END OF PRODUCTION SCRIPT

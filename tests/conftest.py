@@ -25,6 +25,7 @@ def settings(tmp_path):
         TOKEN_ENCRYPTION_KEY=FERNET,
         VAR_DIR=tmp_path / "var",
         SCHEDULER_ENABLED=False,
+        BOT_AUTOSTART=False,  # never the real hand bot (it moves the mouse); test_script_runs fakes it
     )
 
 

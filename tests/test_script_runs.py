@@ -173,3 +173,81 @@ def test_word_and_pdf_scripts_are_read(app, authed, drive_connected, folder, bot
     set_gen(app, first.id, status=GenStatus.READY)
     app.state.script_runs.step(first.user_id)
     assert gens(app)[1].script_file == "02-boat.pdf" and "THE BOAT" in gens(app)[1].prompt
+
+
+# ---- review is approved, the bot is started ------------------------------------
+def test_a_script_stopped_for_review_is_approved(app, authed, drive_connected, folder, bot):
+    (folder / "01-kite-16s.md").write_text(script(16, "THE KITE"))
+    (folder / "02-boat-8s.md").write_text(script(8, "THE BOAT"))
+    authed.post("/autoflow/start")
+    first = gens(app)[0]
+    with app.state.db.session() as s:  # Gemini wrote the script but left out a line: it stops for review
+        g = s.get(Generation, first.id)
+        g.status, g.review, g.planned = GenStatus.REVIEW, True, True
+        for sc in g.scenes:
+            sc.action, sc.prompt = "A boy flies a kite on a beach.", ""
+    assert "Approving its script" in authed.get("/autoflow").text
+    runs = app.state.script_runs
+    assert runs.step(first.user_id) is None  # approved: its clips are made, the next script waits
+    g = gens(app)[0]
+    assert g.status == GenStatus.HAND and all(sc.prompt for sc in g.scenes) and g.bot_at is not None
+    assert len(gens(app)) == 1
+
+
+def test_a_script_that_cant_be_approved_is_skipped(app, authed, drive_connected, folder, bot):
+    (folder / "01-kite-16s.md").write_text(script(16, "THE KITE"))
+    (folder / "02-boat-8s.md").write_text(script(8, "THE BOAT"))
+    authed.post("/autoflow/start")
+    first = gens(app)[0]
+    set_gen(app, first.id, status=GenStatus.REVIEW, review=True)  # its scenes are empty: Approve refuses
+    runs = app.state.script_runs
+    runs.step(first.user_id)
+    assert gens(app)[1].script_file == "02-boat-8s.md"
+    page = authed.get("/autoflow").text
+    assert "Skipped:" in page and "couldn&#39;t be approved" in page and "Scene 1 is empty" in page
+
+
+class FakeProc:
+    pid, returncode = 4321, None
+
+    def __init__(self, cmd, **kw):
+        FakeProc.cmd, FakeProc.kw, self.stopped = cmd, kw, False
+        FakeProc.last = self
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.stopped, self.returncode = True, -15
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+
+def test_start_starts_the_bot_once(app, authed, drive_connected, folder, bot, monkeypatch):
+    import app.bot_process as bp
+    monkeypatch.setattr(bp.subprocess, "Popen", FakeProc)
+    app.state.settings.BOT_AUTOSTART = True
+    (folder / "01-kite.md").write_text(script(8, "THE KITE"))
+    assert "Start the bot" in authed.get("/autoflow").text
+    authed.post("/autoflow/start")
+    assert FakeProc.cmd[-3:] == ["-m", "handbot", "run"] and Path(FakeProc.kw["cwd"]) == ROOT
+    first = FakeProc.last
+    assert "The bot is running" in authed.get("/autoflow").text
+    assert app.state.bot.ensure() is False and FakeProc.last is first  # running: not started twice
+    first.returncode = 1  # it exited: its last words show
+    (app.state.settings.VAR_DIR / "logs" / "handbot.log").write_text("✗ Screen Recording isn't allowed")
+    page = authed.get("/autoflow").text
+    assert "The bot exited" in page and "Screen Recording isn" in page
+    assert app.state.bot.ensure() is False  # not again within 5 minutes on its own
+    assert authed.post("/autoflow/bot").status_code == 200 and FakeProc.last is not first  # the button does
+    app.state.bot.stop()
+    assert FakeProc.last.stopped
+
+
+def test_no_autostart_leaves_the_bot_alone(app, authed, folder, bot, monkeypatch):
+    import app.bot_process as bp
+    monkeypatch.setattr(bp.subprocess, "Popen", FakeProc)
+    FakeProc.last = None
+    assert authed.post("/autoflow/bot").status_code == 400
+    assert FakeProc.last is None and "BOT_AUTOSTART is off" in authed.get("/autoflow").text

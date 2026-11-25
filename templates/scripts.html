@@ -19,9 +19,23 @@
   </div>
   {% if not bot_ready %}
     <p class="warn small">The hand bot isn't set up: set <code>BOT_API_KEY</code> and <code>BOT_USER_EMAIL</code> in .env.</p>
-  {% elif running %}
-    <p class="hand-wait"><span class="spinner"></span> Making the scripts one at a time… This page updates by itself.</p>
-    {% if not bot_online %}<p class="warn small">The bot isn't running. Start it with <code>python -m handbot run</code>: it picks the video up within 30 seconds.</p>{% endif %}
+  {% else %}
+    {% if running %}<p class="hand-wait"><span class="spinner"></span> Making the scripts one at a time… This page updates by itself.</p>{% endif %}
+    {% if bot_online %}
+      <p class="ok-text small">● The bot is running.</p>
+    {% elif autostart %}
+      <div class="actions">
+        <p class="warn small">The bot isn't running.{% if not running %} Start starts it too.{% endif %}</p>
+        <button type="button" class="secondary" data-post="/autoflow/bot" data-reload>Start the bot</button>
+      </div>
+      {% if bot_exited %}
+        <p class="bot-stopped" role="alert"><strong>⚠ The bot exited.</strong> Its last words:</p>
+        <pre class="small">{{ bot_exited }}</pre>
+        <p class="muted small">A black screenshot or no clicks means macOS hasn't allowed the app that runs <code>./run.sh</code> (Terminal, or VS Code) to control the Mac: turn it on in System Settings → Privacy &amp; Security → Accessibility and Screen Recording, restart it, and start the app again.</p>
+      {% endif %}
+    {% else %}
+      <p class="warn small">The bot isn't running. Start it on its Mac with <code>python -m handbot run</code> (BOT_AUTOSTART is off).</p>
+    {% endif %}
   {% endif %}
   {% if error %}<p class="bot-stopped" role="alert"><strong>⚠ The run stopped:</strong> {{ error }}</p>{% endif %}
 </section>
@@ -42,11 +56,11 @@
             <span class="ok-text">✓ Made</span> · <a href="/generations/{{ s.gen.id }}/script">video #{{ s.gen.id }}</a>
           {% elif s.state == "making" %}
             <span class="spinner"></span>
-            {% if s.gen.status == "PLANNING" %}Gemini is writing its clips{% elif s.gen.status == "HAND" %}The bot is making it{% else %}Joining and saving{% endif %}
+            {% if s.gen.status == "PLANNING" %}Gemini is writing its clips{% elif s.gen.status == "REVIEW" %}Approving its script{% elif s.gen.status == "HAND" %}The bot is making it{% else %}Joining and saving{% endif %}
             · <a href="/generations/{{ s.gen.id }}/by-hand">video #{{ s.gen.id }}</a>
           {% elif s.state == "stopped" %}
             <span class="warn">Skipped:</span>
-            {% if s.gen.bot_note %}the bot stopped ({{ s.gen.bot_note }}){% elif s.gen.status == "REVIEW" %}its script waits for review{% elif s.gen.status == "FAILED" %}it failed{% if s.gen.error %} ({{ s.gen.error }}){% endif %}{% else %}{{ s.gen.status | lower }}{% endif %}
+            {% if s.note %}{{ s.note }}{% elif s.gen.bot_note %}the bot stopped ({{ s.gen.bot_note }}){% elif s.gen.status == "FAILED" %}it failed{% if s.gen.error %} ({{ s.gen.error }}){% endif %}{% else %}{{ s.gen.status | lower }}{% endif %}
             · <a href="/generations/{{ s.gen.id }}/{{ 'script' if s.gen.status == 'REVIEW' else 'by-hand' if s.gen.status == 'HAND' else 'script' }}">video #{{ s.gen.id }}</a>
           {% elif s.state == "problem" %}
             <span class="warn">Can't make it:</span> {{ s.problem }}

@@ -15,6 +15,7 @@ from app.auth import LoginRequired
 from app.config import Settings, get_settings
 from app.db import Database, upgrade
 from app.factories import Providers
+from app.bot_process import BotProcess
 from app.script_runs import ScriptRuns
 from app.services.generation import GenerationService, UserError
 
@@ -52,7 +53,8 @@ def create_app(settings: Settings | None = None, transport: httpx.BaseTransport 
     db = Database(settings.DATABASE_URL)
     providers = Providers(settings, db, transport)
     service = GenerationService(providers)
-    script_runs = ScriptRuns(service, settings)
+    hand_bot = BotProcess(service, settings)
+    script_runs = ScriptRuns(service, settings, hand_bot)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -60,6 +62,7 @@ def create_app(settings: Settings | None = None, transport: httpx.BaseTransport 
         yield
         if sched:
             sched.shutdown(wait=False)
+        hand_bot.stop()  # a hand bot AutoFlow started stops with the app
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
@@ -67,6 +70,7 @@ def create_app(settings: Settings | None = None, transport: httpx.BaseTransport 
     app.state.providers = providers
     app.state.service = service
     app.state.script_runs = script_runs
+    app.state.bot = hand_bot
     app.state.templates = Jinja2Templates(directory=str(ROOT / "templates"))
     app.state.templates.env.globals["asset"] = _asset_url
     app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY, session_cookie="vs_session",

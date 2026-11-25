@@ -103,8 +103,8 @@ def title_of(text: str, name: str) -> str:
 
 
 class ScriptRuns:
-    def __init__(self, service, settings):
-        self.service, self.settings = service, settings
+    def __init__(self, service, settings, bot=None):
+        self.service, self.settings, self.bot = service, settings, bot  # bot: app.bot_process.BotProcess
         self.lock = threading.Lock()
 
     # ---- the folder ------------------------------------------------------
@@ -168,6 +168,8 @@ class ScriptRuns:
             state[str(user_id)] = {"started": utcnow().isoformat(), "error": ""}
             self._save(state)
         log.info("user %s: script run started", user_id)
+        if self.bot:
+            self.bot.ensure(force=True)  # no terminal needed: the app starts the hand bot
         self.step(user_id)
 
     def stop(self, user_id: int, error: str = "") -> None:
@@ -197,6 +199,7 @@ class ScriptRuns:
         """Every script with where it is: made, making (now), stopped (skipped this run), waiting or a problem."""
         run = self.run_of(user_id) or {}
         started = datetime.fromisoformat(run["started"]) if run.get("started") else None
+        unapproved = run.get("unapproved") or {}
         videos = self._videos(user_id)
         out = []
         for path in self.files():
@@ -204,10 +207,15 @@ class ScriptRuns:
             gens = videos.get(path.name, [])
             made = next((g for g in gens if g.status in MADE), None)
             latest = gens[0] if gens else None
+            # a script stopped for review is approved by the run (step), unless that failed
+            review = latest is not None and latest.status == GenStatus.REVIEW and started is not None
             if made:
                 sc.update(state="made", gen=made)
-            elif latest and in_progress(latest):
+            elif latest and (in_progress(latest) or (review and str(latest.id) not in unapproved)):
                 sc.update(state="making", gen=latest)
+            elif review and str(latest.id) in unapproved:
+                sc.update(state="stopped", gen=latest, note=f"its script couldn't be approved: "
+                                                            f"{unapproved[str(latest.id)]}")
             elif latest and started and latest.created_at >= started:
                 sc.update(state="stopped", gen=latest)  # tried in this run: skipped
             elif sc["problem"]:
@@ -217,11 +225,27 @@ class ScriptRuns:
             out.append(sc)
         return out
 
+    def _approve(self, user_id: int, gen: Generation) -> None:
+        """Approves the script Gemini wrote, as it is, the way Approve on its script page does (a Flow video stops for
+        review when the script left out a line the prompt wrote). If it can't be (a scene left empty, a clip prompt
+        too long), the video is skipped with why."""
+        try:
+            self.service.save_script(gen.id, user_id, [sc.script() for sc in gen.scenes], gen.style or "",
+                                     gen.language or "", approve=True)
+            log.info("user %s: generation %s's script approved by the script run", user_id, gen.id)
+        except UserError as e:
+            state = self._load()
+            state.setdefault(str(user_id), {}).setdefault("unapproved", {})[str(gen.id)] = e.message
+            self._save(state)
+            log.info("user %s: generation %s's script couldn't be approved: %s", user_id, gen.id, e.message)
+
     # ---- the scheduler ---------------------------------------------------
     def tick(self) -> None:
         for uid, run in list(self._load().items()):
             if run.get("started"):
                 try:
+                    if self.bot:
+                        self.bot.ensure()  # started again if it exited (at most every 5 minutes)
                     self.step(int(uid))
                 except Exception:  # noqa: BLE001 — one user's run must not stop the scheduler
                     log.exception("user %s: script run step failed", uid)
@@ -234,7 +258,10 @@ class ScriptRuns:
             if not run or not run.get("started"):
                 return None
             scripts = self.scripts(user_id)
-            if any(s["state"] == "making" for s in scripts):
+            for sc in scripts:
+                if sc["state"] == "making" and sc["gen"].status == GenStatus.REVIEW:
+                    self._approve(user_id, sc["gen"])
+            if any(s["state"] == "making" for s in self.scripts(user_id)):
                 return None
             nxt = next((s for s in scripts if s["state"] == "waiting"), None)
             if nxt is None:

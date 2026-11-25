@@ -17,6 +17,7 @@ from app.timeline import missing_lines
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.models import Character, Generation, Series, User
 from app.routes.views import cards_for, settings_context
+from app.services.generation import UserError
 
 router = APIRouter()
 
@@ -163,7 +164,19 @@ def scripts_page(request: Request, user=Depends(require_page_user)):
     run = runs.run_of(user.id) or {}
     return render(request, "scripts.html", scripts=runs.scripts(user.id), running=bool(run.get("started")),
                   error=run.get("error") or "", folder=runs.folder.resolve(), bot_ready=st.settings.bot_configured,
-                  bot_online=st.service.bot_online())
+                  bot_online=st.bot.running(), bot_exited=st.bot.exited(), autostart=st.settings.BOT_AUTOSTART)
+
+
+@router.post("/autoflow/bot")
+def start_bot(request: Request, user=Depends(require_post)):
+    """AutoFlow's "Start the bot": runs the hand bot on this Mac, so no terminal is needed."""
+    st = request.app.state
+    if not st.settings.bot_configured:
+        raise UserError("The hand bot isn't set up: BOT_API_KEY and BOT_USER_EMAIL aren't set.")
+    if not st.settings.BOT_AUTOSTART:
+        raise UserError("BOT_AUTOSTART is off in .env: start the bot on its own Mac.")
+    st.bot.ensure(force=True)
+    return {"ok": True}
 
 
 @router.post("/autoflow/start")

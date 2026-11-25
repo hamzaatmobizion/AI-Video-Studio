@@ -155,6 +155,29 @@ def by_hand_page(gen_id: int, request: Request, user=Depends(require_page_user))
                   bot_ready=settings.bot_configured,bot_online=svc.bot_online())
 
 
+@router.get("/autoflow", response_class=HTMLResponse)
+def scripts_page(request: Request, user=Depends(require_page_user)):
+    """The scripts in the scripts folder, and the run that has the hand bot make them one after another."""
+    st = request.app.state
+    runs = st.script_runs
+    run = runs.run_of(user.id) or {}
+    return render(request, "scripts.html", scripts=runs.scripts(user.id), running=bool(run.get("started")),
+                  error=run.get("error") or "", folder=runs.folder.resolve(), bot_ready=st.settings.bot_configured,
+                  bot_online=st.service.bot_online())
+
+
+@router.post("/autoflow/start")
+def start_scripts(request: Request, user=Depends(require_post)):
+    request.app.state.script_runs.start(user.id)
+    return {"ok": True}
+
+
+@router.post("/autoflow/stop")
+def stop_scripts(request: Request, user=Depends(require_post)):
+    request.app.state.script_runs.stop(user.id)
+    return {"ok": True}
+
+
 @router.get("/frames", response_class=HTMLResponse)
 def frames_tool(request: Request, user=Depends(require_page_user)):
     """Upload any video and get its first and last frame (nothing is kept)."""

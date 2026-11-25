@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}AutoFlow · VideoGeneration{% endblock %}
+{% block content %}
+{% if running %}<meta http-equiv="refresh" content="15">{% endif %}
+<section class="panel">
+  <div class="script-top">
+    <div>
+      <h1>AutoFlow</h1>
+      <p class="muted small">Every script in <code>{{ folder }}</code> is made into a Google Flow video by the hand bot, one after another, until none is left. Each gets the Flow form's defaults: by hand, no review, Check each clip off, Auto style, language and genre, 9:16 unless the script says 16:9. A made script is skipped next time. To add one, put a <strong>.md, .txt, PDF or Word (.docx)</strong> file in the folder; files starting with "_" (the template) are left out.</p>
+    </div>
+    <div class="actions">
+      {% if running %}
+        <button type="button" class="secondary" data-post="/autoflow/stop" data-reload
+                data-confirm="Stop after the video the bot is making now?">Stop</button>
+      {% else %}
+        <button type="button" data-post="/autoflow/start" data-reload {% if not bot_ready %}disabled{% endif %}>Start</button>
+      {% endif %}
+    </div>
+  </div>
+  {% if not bot_ready %}
+    <p class="warn small">The hand bot isn't set up: set <code>BOT_API_KEY</code> and <code>BOT_USER_EMAIL</code> in .env.</p>
+  {% elif running %}
+    <p class="hand-wait"><span class="spinner"></span> Making the scripts one at a time… This page updates by itself.</p>
+    {% if not bot_online %}<p class="warn small">The bot isn't running. Start it with <code>python -m handbot run</code>: it picks the video up within 30 seconds.</p>{% endif %}
+  {% endif %}
+  {% if error %}<p class="bot-stopped" role="alert"><strong>⚠ The run stopped:</strong> {{ error }}</p>{% endif %}
+</section>
+
+<section class="panel">
+  {% if not scripts %}
+    <p class="muted">No scripts yet. Paste one into a new file in <code>{{ folder }}</code>, such as <code>06-my-story-24s.md</code>.</p>
+  {% else %}
+  <table class="rules-table">
+    <thead><tr><th>Script</th><th>Length</th><th>Where it is</th></tr></thead>
+    <tbody>
+    {% for s in scripts %}
+      <tr>
+        <td><strong>{{ s.title }}</strong><br><span class="muted small">{{ s.name }}</span></td>
+        <td>{% if s.seconds %}{{ s.seconds }} s · {{ s.clips }} clip{{ '' if s.clips == 1 else 's' }}{% else %}–{% endif %}</td>
+        <td>
+          {% if s.state == "made" %}
+            <span class="ok-text">✓ Made</span> · <a href="/generations/{{ s.gen.id }}/script">video #{{ s.gen.id }}</a>
+          {% elif s.state == "making" %}
+            <span class="spinner"></span>
+            {% if s.gen.status == "PLANNING" %}Gemini is writing its clips{% elif s.gen.status == "HAND" %}The bot is making it{% else %}Joining and saving{% endif %}
+            · <a href="/generations/{{ s.gen.id }}/by-hand">video #{{ s.gen.id }}</a>
+          {% elif s.state == "stopped" %}
+            <span class="warn">Skipped:</span>
+            {% if s.gen.bot_note %}the bot stopped ({{ s.gen.bot_note }}){% elif s.gen.status == "REVIEW" %}its script waits for review{% elif s.gen.status == "FAILED" %}it failed{% if s.gen.error %} ({{ s.gen.error }}){% endif %}{% else %}{{ s.gen.status | lower }}{% endif %}
+            · <a href="/generations/{{ s.gen.id }}/{{ 'script' if s.gen.status == 'REVIEW' else 'by-hand' if s.gen.status == 'HAND' else 'script' }}">video #{{ s.gen.id }}</a>
+          {% elif s.state == "problem" %}
+            <span class="warn">Can't make it:</span> {{ s.problem }}
+          {% else %}
+            <span class="muted">Waiting{% if s.gen %} (video #{{ s.gen.id }} wasn't finished: it's made again){% endif %}</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+{% endblock %}

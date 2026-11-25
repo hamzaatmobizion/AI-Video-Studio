@@ -10,4 +10,5 @@ bcrypt>=4.1
 cryptography>=43
 itsdangerous>=2.2
 python-multipart>=0.0.9
+pypdf>=4
 pytest>=8

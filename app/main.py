@@ -15,6 +15,7 @@ from app.auth import LoginRequired
 from app.config import Settings, get_settings
 from app.db import Database, upgrade
 from app.factories import Providers
+from app.script_runs import ScriptRuns
 from app.services.generation import GenerationService, UserError
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -51,10 +52,11 @@ def create_app(settings: Settings | None = None, transport: httpx.BaseTransport 
     db = Database(settings.DATABASE_URL)
     providers = Providers(settings, db, transport)
     service = GenerationService(providers)
+    script_runs = ScriptRuns(service, settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        sched = scheduler.start(service) if settings.SCHEDULER_ENABLED else None
+        sched = scheduler.start(service, script_runs) if settings.SCHEDULER_ENABLED else None
         yield
         if sched:
             sched.shutdown(wait=False)
@@ -64,6 +66,7 @@ def create_app(settings: Settings | None = None, transport: httpx.BaseTransport 
     app.state.db = db
     app.state.providers = providers
     app.state.service = service
+    app.state.script_runs = script_runs
     app.state.templates = Jinja2Templates(directory=str(ROOT / "templates"))
     app.state.templates.env.globals["asset"] = _asset_url
     app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY, session_cookie="vs_session",

@@ -16,6 +16,7 @@
       {% set here = request.url.path %}
       <a href="/" {% if here == '/' %}class="active" aria-current="page"{% endif %}>Studio</a>
       <a href="/flow" {% if here == '/flow' %}class="active" aria-current="page"{% endif %}>Flow</a>
+      <a href="/autoflow" {% if here == '/autoflow' %}class="active" aria-current="page"{% endif %}>AutoFlow</a>
       <a href="/characters" {% if here == '/characters' %}class="active" aria-current="page"{% endif %}>Characters</a>
       <a href="/rules" {% if here == '/rules' %}class="active" aria-current="page"{% endif %}>Prompt rules</a>
       <a href="/frames" {% if here == '/frames' %}class="active" aria-current="page"{% endif %}>Frames</a>

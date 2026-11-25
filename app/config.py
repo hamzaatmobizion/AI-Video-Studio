@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     PUBLIC_BASE_URL: str = "http://localhost:8000"
     TOKEN_ENCRYPTION_KEY: str = ""
     VAR_DIR: Path = Path("./var")
+    SCRIPTS_DIR: Path = Path("./scripts")  # the AutoFlow tab: each script here is made into a Flow video by the bot
     SCHEDULER_ENABLED: bool = True
 
     # ---- derived -------------------------------------------------------

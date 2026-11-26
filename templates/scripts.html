@@ -85,9 +85,26 @@
 </section>
 
 <section class="panel">
+  <h2>Add a script</h2>
+  <form id="script-add" class="af-add" data-url="/autoflow/add">
+    <label class="af-drop">
+      <span><strong>Script</strong> · .md, .txt, PDF or Word</span>
+      <input type="file" name="script" accept=".md,.txt,.pdf,.docx" required>
+    </label>
+    <label class="af-drop">
+      <span><strong>Character pictures</strong> · optional, up to 3</span>
+      <input type="file" name="pictures" accept="image/jpeg,image/png,image/webp" multiple>
+    </label>
+    <div class="af-add-go"><button type="submit">Add script</button></div>
+  </form>
+  <p class="muted small">From this device, saved in <code>{{ folder }}</code>. With pictures it's saved as a folder, and they're used for this video only.</p>
+  <p class="error" id="script-add-error" role="alert" hidden></p>
+</section>
+
+<section class="panel">
   <h2>Scripts</h2>
   {% if not scripts %}
-    <p class="muted">No scripts yet. Add one below, or put a file in <code>{{ folder }}</code>, such as <code>06-my-story-24s.md</code>.</p>
+    <p class="muted">No scripts yet. Add one above, or put a file in <code>{{ folder }}</code>, such as <code>06-my-story-24s.md</code>.</p>
   {% else %}
   <ul class="af-list">
     {% for s in scripts %}
@@ -132,22 +149,5 @@
     {% endfor %}
   </ul>
   {% endif %}
-</section>
-
-<section class="panel">
-  <h2>Add a script</h2>
-  <form id="script-add" class="af-add" data-url="/autoflow/add">
-    <label class="af-drop">
-      <span><strong>Script</strong> · .md, .txt, PDF or Word</span>
-      <input type="file" name="script" accept=".md,.txt,.pdf,.docx" required>
-    </label>
-    <label class="af-drop">
-      <span><strong>Character pictures</strong> · optional, up to 3</span>
-      <input type="file" name="pictures" accept="image/jpeg,image/png,image/webp" multiple>
-    </label>
-    <div class="af-add-go"><button type="submit">Add script</button></div>
-  </form>
-  <p class="muted small">From this device, saved in <code>{{ folder }}</code>. With pictures it's saved as a folder, and they're used for this video only.</p>
-  <p class="error" id="script-add-error" role="alert" hidden></p>
 </section>
 {% endblock %}

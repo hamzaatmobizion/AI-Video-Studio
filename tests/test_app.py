@@ -987,9 +987,9 @@ def test_bot_stop_shows_in_the_app_until_tried_again(app, authed, drive_connecte
     r = authed.post(f"/bot/generations/{gid}/stopped", headers=bot, json={"message": "Google is showing a CAPTCHA."})
     assert r.status_code == 200
     page = authed.get(f"/generations/{gid}/by-hand").text
-    assert "The bot stopped:" in page and "Google is showing a CAPTCHA." in page and "Try again" in page
+    assert "The bot stopped making this video:" in page and "Google is showing a CAPTCHA." in page and "Try again" in page
     assert "Or make it yourself" in page  # the by-hand steps show again
-    assert "The bot stopped: Google is showing a CAPTCHA." in authed.get("/flow").text  # on its card too
+    assert "The bot stopped making this video: Google is showing a CAPTCHA." in authed.get("/flow").text  # on its card too
     assert authed.get("/bot/next", headers=bot).status_code == 204  # left alone until "Try again"
     authed.post(f"/generations/{gid}/bot")  # Try again
     assert authed.get("/bot/next", headers=bot).json()["gen_id"] == gid

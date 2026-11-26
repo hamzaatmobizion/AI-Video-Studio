@@ -17,6 +17,7 @@ from app.timeline import missing_lines
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.models import Character, Generation, Series, User
 from app.routes.views import cards_for, settings_context
+from app.script_runs import NO_CREDITS
 from app.services.generation import UserError
 
 router = APIRouter()
@@ -162,9 +163,13 @@ def scripts_page(request: Request, user=Depends(require_page_user)):
     st = request.app.state
     runs = st.script_runs
     run = runs.run_of(user.id) or {}
+    error = run.get("error") or ""
+    # the run stopped for Flow's credits: AutoFlow stopped the bot itself, so it didn't exit on its own
+    no_credits = not run.get("started") and bool(NO_CREDITS.search(error))
     return render(request, "scripts.html", scripts=runs.scripts(user.id), running=bool(run.get("started")),
-                  error=run.get("error") or "", folder=runs.folder.resolve(), bot_ready=st.settings.bot_configured,
-                  bot_online=st.bot.running(), bot_exited=st.bot.exited(), autostart=st.settings.BOT_AUTOSTART)
+                  error=error, folder=runs.folder.resolve(), bot_ready=st.settings.bot_configured,
+                  bot_online=st.bot.running(), bot_exited="" if no_credits else st.bot.exited(),
+                  no_credits=no_credits, autostart=st.settings.BOT_AUTOSTART)
 
 
 @router.post("/autoflow/bot")

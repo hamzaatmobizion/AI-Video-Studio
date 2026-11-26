@@ -416,6 +416,11 @@ def test_out_of_credits_on_a_tried_again_video_stops_the_run_and_the_bot(app, au
     run = runs.run_of(first.user_id)
     assert not run["started"] and "out of credits" in run["error"]
     assert bot_proc.stopped  # nothing more can be made: the bot is stopped too
+    (app.state.settings.VAR_DIR / "logs").mkdir(parents=True, exist_ok=True)
+    (app.state.settings.VAR_DIR / "logs" / "handbot.log").write_text("ERROR stopped: Flow is out of credits")
+    page = authed.get("/autoflow").text
+    assert "The bot was stopped because Flow is out of credits" in page
+    assert "The bot exited" not in page and "Accessibility" not in page  # it didn't exit by itself
 
 
 def test_a_stuck_video_stops_the_run(app, authed, drive_connected, folder, bot):

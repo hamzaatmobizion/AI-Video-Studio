@@ -19,7 +19,7 @@
 {% if scene and bot_ready %}
 <section class="panel">
   {% if g.bot_note %}
-    <p class="bot-stopped" role="alert"><strong>⚠ The bot stopped:</strong> {{ g.bot_note }}</p>
+    <p class="bot-stopped" role="alert"><strong>⚠ The bot stopped making this video:</strong> {{ g.bot_note }}</p>
     <p class="muted small">Sort it out in Chrome if it needs you (a CAPTCHA, signing in), then try again, or make the clip yourself below.</p>
     <div class="actions">
       <button type="button" data-post="/generations/{{ g.id }}/bot" data-reload>Try again</button>

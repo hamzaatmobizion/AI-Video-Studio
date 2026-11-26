@@ -25,7 +25,7 @@
       <p class="ok-text small">● The bot is running.</p>
     {% elif autostart %}
       <div class="actions">
-        <p class="warn small">The bot isn't running.{% if not running %} Start starts it too.{% endif %}</p>
+        <p class="warn small">{% if no_credits %}The bot was stopped because Flow is out of credits. Start starts it again.{% else %}The bot isn't running.{% if not running %} Start starts it too.{% endif %}{% endif %}</p>
         <button type="button" class="secondary" data-post="/autoflow/bot" data-reload>Start the bot</button>
       </div>
       {% if bot_exited %}

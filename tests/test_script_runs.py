@@ -490,6 +490,56 @@ def test_a_long_script_is_fine_unless_one_clip_is_too_long_for_flow(folder):
     assert "Clip 2 would be" in got["big.md"]["problem"] and not got["big.md"]["as_written"]
 
 
+def test_scene_headings_are_the_clips_without_clip_headings(folder):
+    from app.script_runs import ScriptRuns
+    from app.timeline import layout_clips
+    story = ("# STORY MAP\n\n| Total Runtime | 40 seconds (4 scenes × 10s) |\n\n## How the scenes connect\n"
+             "- **Scene 1 → 2:** the apple drops.\n- **Scene 2:** she counts.\n\n## Look\nLocked character: Fiona.\n"
+             "     ┃ SCENE 2 — COUNT ONE\n\n## Images\n"
+             "### SCENE 1 IMAGE — Apple\nFiona under the tree.\n### SCENE 2 IMAGE — Count\nFiona holds it.\n\n"
+             "## Videos\n### SCENE 1 — APPLE · `0:00–0:10`\nThe apple drops.\n"
+             "### SCENE 2 — COUNT · `0:10–0:20`\nShe says \"One!\"\n")
+    (folder / "story.md").write_text(story)
+    (folder / "plain.txt").write_text("A girl and her cat.\n\nScene 1: She wakes up.\nScene 2: The cat jumps.\n"
+                                      "Scene 3: They play.")
+    got = ScriptRuns.read(folder / "story.md")
+    assert got["as_written"] and got["clips"] == 2 and got["seconds"] == 16 and not got["problem"]
+    one, two = layout_clips(got["text"], 2, 8)
+    assert "Locked character: Fiona." in one and "Fiona under the tree." in one and "The apple drops." in one
+    assert "Fiona holds it." not in one and "She says" not in one
+    assert "Fiona holds it." in two and "She says" in two and "Fiona under the tree." not in two
+    plain = ScriptRuns.read(folder / "plain.txt")
+    assert plain["as_written"] and plain["clips"] == 3 and plain["seconds"] == 24
+
+
+def test_a_folder_is_one_video_with_its_script_and_its_character(app, authed, drive_connected, folder, bot):
+    from pathlib import Path as P
+    from tests.fakes import PNG
+    one = folder / "One"
+    (one / "Characters").mkdir(parents=True)
+    (one / "Characters" / "Fiona.png").write_bytes(PNG)
+    (one / "Scene Scripts").mkdir()
+    (one / "Scene Scripts" / "Number_1.md").write_text(script(8, "FIONA AND THE APPLE"))
+    (one / "Scene Scripts" / "Number_1.txt").write_text(script(8, "THE OTHER COPY"))  # the .md is used
+    two = folder / "Two" / "Script"
+    two.mkdir(parents=True)
+    (two / "a.md").write_text(script(8, "A"))
+    (two / "b.md").write_text(script(8, "B"))
+    (folder / "Three").mkdir()  # no script in it
+    page = authed.get("/autoflow").text
+    assert "FIONA AND THE APPLE" in page and "One/Scene Scripts/Number_1.md" in page and "Character: Fiona.png" in page
+    assert "It has 2 .md scripts" in page and "No script in it" in page
+    authed.post("/autoflow/start")
+    g = gens(app)[0]
+    assert g.script_file == "One/" and "FIONA AND THE APPLE" in g.prompt
+    assert len(g.ref_images) == 1 and P(g.ref_images[0]).read_bytes() == PNG  # its own character picture
+    set_gen(app, g.id, status=GenStatus.READY)
+    runs = app.state.script_runs
+    runs.step(g.user_id)
+    assert len(gens(app)) == 1 and not runs.run_of(g.user_id)  # Two and Three can't be made: the run ends
+    assert "✓ Made" in authed.get("/autoflow").text
+
+
 def test_autoflow_clip_two_starts_from_the_last_frame(app, authed, drive_connected, folder, bot, tmp_path):
     from tests.fakes import PNG
     (folder / "01-kite-16s.md").write_text(LAID_OUT)

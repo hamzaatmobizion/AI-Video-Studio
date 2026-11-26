@@ -165,15 +165,27 @@ SCREEN_HEAD = re.compile(r"^\W*final\s+screen\s+text\b", re.I)
 LOOK_LINE = re.compile(r"^\W*(?:visual\s+)?(?:style|genre|language|music)\s*:", re.I)  # said in every clip
 
 
+# Without CLIP headings, each SCENE heading is a clip (a story map: "### 🖼 SCENE 1 IMAGE — …", then "### ▶️ SCENE 1 —
+# …"; both parts of scene 1 are its clip). A heading line only: never "Scene 1 → 2: …" or a sentence about a scene.
+SCENE_HEAD = re.compile(rf"^\s*(?:#{{1,6}}\s*)?[^\w\s]*\s*(?:\*\*)?scene\s+(\d+|{'|'.join(NUMBER_WORDS)})\b"
+                        r"(?=\s*(?:$|[:—–\-|`*(]|image\b|video\b|[A-Z]))", re.I)
+MD_HEAD = re.compile(r"^(#{1,6})\s")
+
+
 def _clip_number(line: str) -> int:
-    n = CLIP_HEAD.match(line).group(1).lower()
+    n = (CLIP_HEAD.match(line) or SCENE_HEAD.match(line)).group(1).lower()
     return int(n) if n.isdigit() else NUMBER_WORDS.index(n) + 1
 
 
 def _clip_heads(lines: list[str]) -> tuple[list[int], int]:
-    """The lines that start a clip ("CLIP 1: …"), and the line where the editor's sections begin (after the last
-    clip; its own timeline also lists "Clip 1: …")."""
+    """The lines that start a clip ("CLIP 1: …", else "SCENE 1 …" when there's no CLIP heading), and the line where
+    the editor's sections begin (after the last clip; its own timeline also lists "Clip 1: …")."""
     heads = [i for i, ln in enumerate(lines) if CLIP_HEAD.match(ln)]
+    if not heads:
+        heads = [i for i, ln in enumerate(lines) if SCENE_HEAD.match(ln) and len(ln) <= 120
+                 and not re.match(r"^\s*[-*•]\s", ln)]  # never a bullet ("- **Scene 4:** Goal achieved…")
+        if any(MD_HEAD.match(lines[i]) for i in heads):  # a markdown script: only its headings ("### SCENE 1 …"),
+            heads = [i for i in heads if MD_HEAD.match(lines[i])]  # not a timeline drawing ("┃ SCENE 2 — …")
     if not heads:
         return [], len(lines)
     editor = next((i for i in range(heads[0], len(lines)) if EDITOR_HEAD.match(lines[i]) or SCREEN_HEAD.match(lines[i])),
@@ -181,10 +193,33 @@ def _clip_heads(lines: list[str]) -> tuple[list[int], int]:
     return [i for i in heads if i < editor], editor
 
 
+def by_scenes(prompt: str) -> bool:
+    """Whether the script's clips are its SCENE headings (no CLIP heading in it)."""
+    return not any(CLIP_HEAD.match(ln) for ln in (prompt or "").splitlines()) and bool(clip_numbers(prompt))
+
+
 def clip_numbers(prompt: str) -> list[int]:
-    """The numbers of the script's CLIP headings, in order ([1, 2, 3]); [] when it isn't laid out in clips."""
+    """The numbers of the script's clips, in order ([1, 2, 3]): its CLIP headings, else its SCENE headings (a scene
+    listed twice, as a story map's picture and then its video, is one clip); [] when it isn't laid out in either."""
     lines = (prompt or "").splitlines()
-    return [_clip_number(lines[i]) for i in _clip_heads(lines)[0]]
+    return list(dict.fromkeys(_clip_number(lines[i]) for i in _clip_heads(lines)[0]))
+
+
+def _scene_blocks(lines: list[str], heads: list[int], editor: int) -> dict[int, list[str]]:
+    """Each scene's lines, by its number: every part headed with it (a story map's picture, then its video), each
+    up to the next scene heading, a markdown heading at its level or above ("## 9. …" after "### SCENE 4 …"), or the
+    editor's sections."""
+    out: dict[int, list[str]] = {}
+    for k, a in enumerate(heads):
+        level = MD_HEAD.match(lines[a])
+        end = heads[k + 1] if k + 1 < len(heads) else editor
+        for i in range(a + 1, end):
+            m = MD_HEAD.match(lines[i])
+            if level and m and len(m.group(1)) <= len(level.group(1)):
+                end = i
+                break
+        out.setdefault(_clip_number(lines[a]), []).extend([*lines[a:end], ""])
+    return out
 
 
 def layout_clips(prompt: str, clips: int, clip_seconds: int) -> list[str] | None:
@@ -195,14 +230,20 @@ def layout_clips(prompt: str, clips: int, clip_seconds: int) -> list[str] | None
     every line of the video, or burn in subtitles. None unless the script has exactly CLIP 1 to CLIP `clips`."""
     lines = (prompt or "").splitlines()
     heads, editor = _clip_heads(lines)
-    if not heads or [_clip_number(lines[i]) for i in heads] != list(range(1, clips + 1)):
+    if not heads or clip_numbers(prompt) != list(range(1, clips + 1)):
         return None
     tidy = lambda part: re.sub(r"\n{3,}", "\n\n", "\n".join(part)).strip()  # noqa: E731
     before = lines[:heads[0]]
-    cast_at = next((i for i, ln in enumerate(before) if CAST_HEAD.match(ln)), None)
-    look = [ln.strip() for ln in before[:cast_at] if LOOK_LINE.match(ln)]
-    cast = tidy(before[cast_at:]) if cast_at is not None else ""
-    blocks = [tidy(lines[a:b]) for a, b in zip(heads, [*heads[1:], editor])]
+    if by_scenes(prompt):  # its scenes are the clips: all that comes before them (a story map's locked character,
+        # look and sound, wherever in it they are) goes with every clip
+        look, cast = [], tidy(before)
+        parts = _scene_blocks(lines, heads, editor)
+        blocks = [tidy(parts[n]) for n in range(1, clips + 1)]
+    else:
+        cast_at = next((i for i, ln in enumerate(before) if CAST_HEAD.match(ln)), None)
+        look = [ln.strip() for ln in before[:cast_at] if LOOK_LINE.match(ln)]
+        cast = tidy(before[cast_at:]) if cast_at is not None else ""
+        blocks = [tidy(lines[a:b]) for a, b in zip(heads, [*heads[1:], editor])]
     screen = ""
     at = next((i for i in range(editor, len(lines)) if SCREEN_HEAD.match(lines[i])), None)
     if at is not None:  # "FINAL SCREEN TEXT" after the editing instructions (the first layout)

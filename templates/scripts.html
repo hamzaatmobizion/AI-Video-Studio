@@ -6,7 +6,7 @@
   <div class="script-top">
     <div>
       <h1>AutoFlow</h1>
-      <p class="muted small">Every script in <code>{{ folder }}</code> is made into a Google Flow video by the hand bot, one after another, until none is left. Each gets the Flow form's defaults: by hand, no review, Check each clip off, Auto style, language and genre, 9:16 unless the script says 16:9. A made script is skipped next time. To add one, put a <strong>.md, .txt, PDF or Word (.docx)</strong> file in the folder; files starting with "_" (the template) are left out.</p>
+      <p class="muted small">Every script in <code>{{ folder }}</code> is made into a Google Flow video by the hand bot, one after another, until none is left. Each gets the Flow form's defaults: by hand, no review, Check each clip off, Auto style, language and genre, 9:16 unless the script says 16:9. A made script is skipped next time. To add one, put a <strong>.md, .txt, PDF or Word (.docx)</strong> file in the folder; files starting with "_" (the template) are left out. A <strong>folder</strong> is one video: its script from a "Scripts" folder inside it (the .md first, when it's there as a PDF too), and the pictures in its "Character" folder, used for that video only.</p>
     </div>
     <div class="actions">
       {% if running %}
@@ -49,7 +49,8 @@
     <tbody>
     {% for s in scripts %}
       <tr>
-        <td><strong>{{ s.title }}</strong><br><span class="muted small">{{ s.name }}</span></td>
+        <td><strong>{{ s.title }}</strong><br><span class="muted small">{{ s.name }}{{ s.source }}</span>
+          {% if s.pictures %}<br><span class="muted small">Character: {{ s.pictures | join(", ") }}</span>{% endif %}</td>
         <td>{% if s.seconds %}{{ s.seconds }} s · {{ s.clips }} clip{{ '' if s.clips == 1 else 's' }}{% else %}–{% endif %}
           {% if not s.problem %}<br><span class="muted small">{% if s.as_written %}Sent as written{% else %}Gemini splits it into clips (no CLIP 1, CLIP 2… layout){% endif %}</span>{% endif %}</td>
         <td>

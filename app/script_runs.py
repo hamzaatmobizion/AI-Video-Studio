@@ -19,16 +19,19 @@ from xml.etree import ElementTree
 from sqlalchemy import select
 
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
+from app.media import MAX_IMAGE_BYTES, MAX_IMAGES, image_kind
 from app.models import Generation, utcnow
 from app.routes.api import _CLOCK, _LENGTH, _WORDS, MAX_SCENES, duration_from_prompt
 from app.script import AS_WRITTEN_MIN, BRIEF_MIN, FLOW_INPUT_LIMIT, aspect_from_prompt
-from app.timeline import brief_clips, clip_numbers, layout_clips
+from app.timeline import brief_clips, by_scenes, clip_numbers, layout_clips
 from app.services.generation import UserError
 
 log = logging.getLogger("app.script_runs")
 logging.getLogger("pypdf").setLevel(logging.ERROR)  # "Ignoring wrong pointing object…": harmless, read every 15 s
 STEP = SCENE_SECONDS[Provider.FLOW]
 SUFFIXES = (".md", ".txt", ".pdf", ".docx")
+FIRST = (".md", ".txt", ".docx", ".pdf")  # a folder's script when it's there in more than one format: the .md first
+PICTURES = (".png", ".jpg", ".jpeg", ".webp")  # a folder's character pictures
 MADE = {GenStatus.READY, GenStatus.SAVE_FAILED}  # SAVE_FAILED: the video is made, only its Drive upload failed
 # A whole script file: Flow never gets it whole (each clip is pasted alone, or Gemini writes the clips), so this only
 # keeps out a wrong file. What Flow's prompt box takes (FLOW_INPUT_LIMIT) is checked on each clip (_clip_problem).
@@ -140,6 +143,22 @@ def _clip_problem(text: str, clips: int, laid_out: bool) -> str:
             f"at most (it refused 28,800 in a test). Shorten {'it' if clips == 1 else 'that clip, or the sections every clip repeats'}.")
 
 
+def _pictures(sc: dict) -> list[tuple[str, bytes]]:
+    """A folder's character pictures as the video's own pictures, [(kind, bytes)]: clip 1 is made with them in Flow
+    (Ingredients), and the clips after it start from the last frame, where they already are."""
+    out = []
+    for p in sc.get("picture_paths") or []:
+        try:
+            data = p.read_bytes()
+        except OSError as e:
+            raise UserError(f"Can't read {p.name}: {e}") from e
+        kind = image_kind(data[:16])
+        if kind is None:
+            raise UserError(f"{p.name} isn't a JPG, PNG or WebP picture.")
+        out.append((kind, data))
+    return out
+
+
 class ScriptRuns:
     def __init__(self, service, settings, bot=None):
         self.service, self.settings, self.bot = service, settings, bot  # bot: app.bot_process.BotProcess
@@ -161,16 +180,59 @@ class ScriptRuns:
         return Path(self.settings.SCRIPTS_DIR)
 
     def files(self) -> list[Path]:
-        """The scripts, by name (01-…, 02-…); a name starting with "_" or "." (the template), or "~" (the lock file
-        Word keeps beside an open document), isn't one."""
+        """The scripts, by name (01-…, 02-…): each script file, and each folder (one video: its script and its
+        character pictures, read_folder). A name starting with "_" or "." (the template), or "~" (the lock file Word
+        keeps beside an open document), isn't one."""
         if not self.folder.is_dir():
             return []
-        return sorted(p for p in self.folder.iterdir()
-                      if p.is_file() and p.suffix.lower() in SUFFIXES and not p.name.startswith(("_", ".", "~")))
+        return sorted(p for p in self.folder.iterdir() if not p.name.startswith(("_", ".", "~"))
+                      and (p.is_dir() or p.is_file() and p.suffix.lower() in SUFFIXES))
 
     @staticmethod
     def read(path: Path) -> dict:
-        """One script: its text, title, length and clips, or the problem that stops it being made."""
+        """One script (a file, or a folder: read_folder): its text, title, length and clips, its character pictures,
+        or the problem that stops it being made."""
+        if path.is_dir():
+            return ScriptRuns.read_folder(path)
+        return {**ScriptRuns._read_file(path), "pictures": [], "source": ""}
+
+    @staticmethod
+    def read_folder(folder: Path) -> dict:
+        """A folder is one video: its script from a subfolder named like "Scripts" or "Scene Scripts" (else the
+        folder itself), the .md first when the same script is there as a PDF or Word file too, and its character
+        pictures from a subfolder named like "Character" or "Characters", attached to this video only."""
+        name = folder.name + "/"
+        subs = [p for p in folder.iterdir() if p.is_dir() and not p.name.startswith((".", "_", "~"))]
+        where = next((p for p in sorted(subs) if "script" in p.name.lower()), folder)
+        found = [p for p in where.iterdir() if p.is_file() and p.suffix.lower() in SUFFIXES
+                 and not p.name.startswith(("_", ".", "~"))]
+        cast_dir = next((p for p in sorted(subs) if "character" in p.name.lower()), None)
+        pictures = sorted(p for p in cast_dir.iterdir() if p.is_file() and p.suffix.lower() in PICTURES
+                          and not p.name.startswith((".", "~"))) if cast_dir else []
+        none = {"name": name, "title": folder.name, "text": "", "seconds": 0, "clips": 0, "as_written": False,
+                "pictures": [p.name for p in pictures], "source": ""}
+        if not found:
+            return {**none, "problem": f"No script in it: put a .md (or .txt, PDF or Word) file in "
+                                       f"{where.relative_to(folder.parent)}/."}
+        kind = min(found, key=lambda p: FIRST.index(p.suffix.lower())).suffix.lower()
+        same = sorted(p for p in found if p.suffix.lower() == kind)
+        if len(same) > 1:
+            return {**none, "problem": f"It has {len(same)} {kind} scripts ({', '.join(p.name for p in same)}): "
+                                       f"keep one, since a folder is one video."}
+        sc = {**ScriptRuns._read_file(same[0]), "name": name, "pictures": [p.name for p in pictures],
+              "picture_paths": pictures, "source": str(same[0].relative_to(folder))}
+        if sc["title"] == same[0].name:
+            sc["title"] = folder.name
+        bad = (f"It has {len(pictures)} character pictures: Flow takes at most {MAX_IMAGES}." if len(pictures) > MAX_IMAGES
+               else next((f"{p.name} is larger than {MAX_IMAGE_BYTES // 2**20} MB." for p in pictures
+                          if p.stat().st_size > MAX_IMAGE_BYTES), ""))
+        if bad and not sc["problem"]:
+            sc.update(problem=bad, as_written=False)
+        return sc
+
+    @staticmethod
+    def _read_file(path: Path) -> dict:
+        """One script file: its text, title, length and clips, or the problem that stops it being made."""
         try:
             stat = path.stat()
             text = _text_of(path, stat.st_mtime_ns, stat.st_size)
@@ -183,9 +245,13 @@ class ScriptRuns:
         total = TOTAL.search(text)
         said = total.group(1) if total else text
         seconds = duration_from_prompt(said, STEP) or 0
-        clips, numbers, most = seconds // STEP, clip_numbers(text), MAX_SCENES * STEP
+        numbers, most = clip_numbers(text), MAX_SCENES * STEP
         longest = max([*(_length(n, u) for n, u in _LENGTH.findall(said)),
                        *(int(m) * 60 + int(s) for m, s in _CLOCK.findall(said))], default=0)
+        scenes = by_scenes(text)  # its SCENE headings are the clips
+        if scenes and not total and numbers:  # one 8-second Flow clip per scene, whatever length it says
+            seconds = longest = len(numbers) * STEP
+        clips, block = seconds // STEP, "SCENE" if scenes else "CLIP"
         empty = ("No text found in the PDF: a scanned PDF is a picture of the page, with no words to read. Copy its "
                  "text into a .md file instead." if path.suffix.lower() == ".pdf" else "The file is empty.")
         problem = (empty if not text
@@ -193,10 +259,10 @@ class ScriptRuns:
                    else 'Write its length, such as "Total Duration: 24 Seconds".' if not seconds
                    else f"It's {longest:g} seconds long: a video is at most {MAX_SCENES} clips "
                         f"({most // 60}:{most % 60:02d})." if longest > most
-                   else f"Its clips are numbered {', '.join(map(str, numbers))}: number them CLIP 1, CLIP 2, … with "
-                        f"none missing." if numbers and numbers != list(range(1, len(numbers) + 1))
+                   else f"Its {block.lower()}s are numbered {', '.join(map(str, numbers))}: number them {block} 1, "
+                        f"{block} 2, … with none missing." if numbers and numbers != list(range(1, len(numbers) + 1))
                    else f"It says {seconds} seconds ({clips} clip{'' if clips == 1 else 's'}) but has {len(numbers)} "
-                        f"CLIP block{'' if len(numbers) == 1 else 's'}: add or remove a clip, or make its Total "
+                        f"{block} block{'' if len(numbers) == 1 else 's'}: add or remove one, or make its Total "
                         f"Duration {len(numbers) * STEP} seconds." if numbers and len(numbers) != clips
                    else _clip_problem(text, clips, bool(numbers)))
         # laid out in clips that match its length: each clip goes to Flow as written, with no Gemini and no app rules
@@ -267,7 +333,7 @@ class ScriptRuns:
         out = []
         for path in self.files():
             sc = self.read(path)
-            gens = videos.get(path.name, [])
+            gens = videos.get(sc["name"], [])
             made = next((g for g in gens if g.status in MADE), None)
             latest = gens[0] if gens else None
             # a script stopped for review is approved by the run (step), unless that failed
@@ -360,7 +426,8 @@ class ScriptRuns:
                 return None
             try:
                 # given to the bot now: it takes the video once its clips are ready (status HAND)
-                gen_id = self.service.create(user_id, [nxt["text"]], aspect_from_prompt(nxt["text"]) or "9:16", [],
+                gen_id = self.service.create(user_id, [nxt["text"]], aspect_from_prompt(nxt["text"]) or "9:16",
+                                             _pictures(nxt),
                                              plan=nxt["clips"], provider=Provider.FLOW, by_hand=True,
                                              script_file=nxt["name"], bot=True)
             except UserError as e:

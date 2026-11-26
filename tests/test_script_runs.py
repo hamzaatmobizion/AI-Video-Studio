@@ -395,6 +395,29 @@ def test_a_captcha_stops_the_whole_run(app, authed, drive_connected, folder, bot
     assert gens(app)[1].script_file == "02-boat.md"
 
 
+def test_out_of_credits_on_a_tried_again_video_stops_the_run_and_the_bot(app, authed, drive_connected, folder, bot,
+                                                                         monkeypatch):
+    import app.bot_process as bp
+    monkeypatch.setattr(bp.subprocess, "Popen", FakeProc)
+    app.state.settings.BOT_AUTOSTART = True
+    (folder / "01-kite.md").write_text(script(8, "THE KITE"))
+    (folder / "02-boat.md").write_text(script(8, "THE BOAT"))
+    authed.post("/autoflow/start")
+    first = gens(app)[0]
+    runs = app.state.script_runs
+    set_gen(app, first.id, status=GenStatus.HAND, bot_note="Google is showing a CAPTCHA.")
+    runs.step(first.user_id)
+    authed.post(f"/generations/{first.id}/bot")  # Try again, then Start: a new run, the video from before it
+    authed.post("/autoflow/start")
+    bot_proc = FakeProc.last
+    set_gen(app, first.id, bot_note="Flow is out of credits (\"You're out of Google Flow credits\"): the → is an "
+                                    "orange ⓘ. Wait for Flow's credits to refresh or add credits, then press Try again.")
+    assert runs.step(first.user_id) is None and len(gens(app)) == 1  # not made again as a new video
+    run = runs.run_of(first.user_id)
+    assert not run["started"] and "out of credits" in run["error"]
+    assert bot_proc.stopped  # nothing more can be made: the bot is stopped too
+
+
 def test_a_stuck_video_stops_the_run(app, authed, drive_connected, folder, bot):
     from datetime import timedelta
     from app.models import utcnow

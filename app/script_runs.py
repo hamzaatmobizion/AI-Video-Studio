@@ -36,6 +36,7 @@ STUCK = timedelta(minutes=60)  # a clip takes the bot up to 15 minutes, 3 tries 
 # The bot's stop that's about this script's own clip (Flow refused it every time); any other stop (a CAPTCHA, a flag,
 # signed out, payment, a button it can't see) would stop it again on the next script, so the run stops
 CONTENT_STOP = re.compile(r"^Flow failed the clip \d+ times", re.I)
+NO_CREDITS = re.compile(r"out of credits", re.I)  # the bot's stop when Flow has no credits left (handbot/flow.py)
 HEADERS = re.compile(r"^(?:complete ai video script|video production script|ai video script)$", re.I)
 LIGATURES = str.maketrans({"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st"})
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"  # Word's XML namespace
@@ -255,8 +256,11 @@ class ScriptRuns:
             elif review and str(latest.id) in unapproved:
                 sc.update(state="stopped", gen=latest, note=f"its script couldn't be approved: "
                                                             f"{unapproved[str(latest.id)]}")
-            elif latest and started and latest.created_at >= started:
-                sc.update(state="stopped", gen=latest)  # tried in this run: skipped
+            elif latest and started and (latest.created_at >= started
+                                         or (latest.bot_note and latest.updated_at >= started)):
+                # tried in this run: skipped. Also a video made before the run that stopped again during it (Try
+                # again, then Start): never made afresh as a new video
+                sc.update(state="stopped", gen=latest)
             elif sc["problem"]:
                 sc.update(state="problem", gen=latest)
             else:
@@ -314,9 +318,11 @@ class ScriptRuns:
                             "then press Try again.")
                     self.service.bot_stopped(g.id, user_id, note)
                     return self._halt(user_id, f"{sc['name']} (video #{g.id}): {note}")
-                elif (sc["state"] == "stopped" and g.bot_note and g.created_at >= started
+                elif (sc["state"] == "stopped" and g.bot_note and g.updated_at >= started
                       and not CONTENT_STOP.match(g.bot_note)):
-                    # a CAPTCHA, a flag, signed out…: the next script would only stop the same way
+                    # a CAPTCHA, a flag, signed out, out of credits…: the next script would only stop the same way
+                    if NO_CREDITS.search(g.bot_note) and self.bot:
+                        self.bot.stop()  # nothing more can be made until Flow has credits: Start starts it again
                     return self._halt(user_id, f"The bot stopped on {sc['name']} (video #{g.id}): {g.bot_note} Sort "
                                                "it out in Chrome, press Try again on that video, then Start to carry "
                                                "on with the rest.")

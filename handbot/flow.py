@@ -99,6 +99,10 @@ REFUNDED = re.compile(r"be refunded", re.I)  # one line a failed clip ("You will
 UNUSUAL = re.compile(r"unusual activity", re.I)
 EMPTY_PROMPT = re.compile(r"what do you want to create", re.I)  # the prompt box's hint, shown only while it's empty
 LOAD_FAILED = re.compile(r"failed to load", re.I)  # "The video failed to load.": made again with its tile's ↻
+# Flow out of credits: the banner "You're out of Google Flow credits…", and the "Not enough credits to perform this
+# action." pop-up on the orange ⓘ that then stands where the → was. Only read when the → can't be found: the banner
+# can show while the last affordable clip is still being made, and that clip still finishes.
+NO_CREDITS = re.compile(r"out of (google )?flow credits|not enough credits", re.I)
 
 
 def _plain(s: str) -> str:
@@ -501,7 +505,14 @@ class FlowHand:
                              "create?\"). Check Chrome.", "prompt_empty")
 
     def generate(self) -> None:
-        self._click("generate")
+        try:
+            self._click("generate")
+        except Stop:
+            if any(NO_CREDITS.search(x.text) for x in self.sc.texts()):
+                raise self._stop("Flow is out of credits (\"You're out of Google Flow credits\"): the → is an orange "
+                                 "ⓘ. Wait for Flow's credits to refresh or add credits, then press Try again.",
+                                 "no_credits")
+            raise
         self.sc.save(self.s.logs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-sent.jpg")
 
     def wait_and_download(self, dest: Path, failed_before: tuple[int, int, int]) -> Path:

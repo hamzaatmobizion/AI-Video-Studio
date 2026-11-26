@@ -36,6 +36,7 @@ MADE = {GenStatus.READY, GenStatus.SAVE_FAILED}  # SAVE_FAILED: the video is mad
 # A whole script file: Flow never gets it whole (each clip is pasted alone, or Gemini writes the clips), so this only
 # keeps out a wrong file. What Flow's prompt box takes (FLOW_INPUT_LIMIT) is checked on each clip (_clip_problem).
 MAX_FILE = 200_000
+MAX_SCRIPT_BYTES = 20 * 1024 * 1024  # a script added on the page (a PDF or Word file with pictures in it is bigger)
 # "Total Duration: 24 Seconds", "Video Duration: 24 Seconds": the video's length (other lengths in the story don't count)
 TOTAL = re.compile(r"^\W*(?:total|video)\s+duration\s*:\s*(.+)$", re.I | re.M)
 STUCK = timedelta(minutes=60)  # a clip takes the bot up to 15 minutes, 3 tries at most: no upload in this long is stuck
@@ -141,6 +142,13 @@ def _clip_problem(text: str, clips: int, laid_out: bool) -> str:
     which = "It" if clips == 1 else f"Clip {n}"
     return (f"{which} would be {longest:,} characters in Flow's prompt box, over the {FLOW_INPUT_LIMIT:,} Flow is sent "
             f"at most (it refused 28,800 in a test). Shorten {'it' if clips == 1 else 'that clip, or the sections every clip repeats'}.")
+
+
+def _safe_name(filename: str) -> str:
+    """A file name from the device that's safe in the scripts folder: no folders in it, no characters a path could use,
+    and not one AutoFlow leaves out ("_…", ".…", "~…")."""
+    name = re.sub(r"[^\w .()\-]", "", Path(filename or "").name).strip(" .")
+    return name.lstrip("_.~ ")
 
 
 def _pictures(sc: dict) -> list[tuple[str, bytes]]:
@@ -268,6 +276,47 @@ class ScriptRuns:
         # laid out in clips that match its length: each clip goes to Flow as written, with no Gemini and no app rules
         return {"name": path.name, "title": title_of(text, path.name), "text": text, "seconds": seconds,
                 "clips": clips, "problem": problem, "as_written": bool(numbers) and not problem}
+
+    # ---- adding a script from the device --------------------------------
+    def add(self, script: tuple[str, bytes], pictures: list[tuple[str, bytes]]) -> str:
+        """Saves a script chosen on the AutoFlow page into the folder: on its own, or with its character pictures as a
+        folder named after it (Name/Scripts/the file, Name/Character/the pictures), the layout read_folder reads.
+        Never over a script that's already there. Its name in the list."""
+        filename, data = script
+        name = _safe_name(filename)
+        if not name or Path(name).suffix.lower() not in SUFFIXES:
+            raise UserError("Choose a script file: .md, .txt, PDF or Word (.docx).")
+        if len(data) > MAX_SCRIPT_BYTES:
+            raise UserError(f"{name} is larger than {MAX_SCRIPT_BYTES // 2**20} MB.")
+        if not data.strip():
+            raise UserError(f"{name} is empty.")
+        if len(pictures) > MAX_IMAGES:
+            raise UserError(f"Choose at most {MAX_IMAGES} character pictures.")
+        checked = []
+        for pic_name, pic in pictures:
+            if len(pic) > MAX_IMAGE_BYTES:
+                raise UserError(f"{pic_name} is larger than {MAX_IMAGE_BYTES // 2**20} MB.")
+            kind = image_kind(pic[:16])
+            if kind is None:
+                raise UserError(f"{pic_name} isn't a JPG, PNG or WebP picture.")
+            checked.append((f"{Path(_safe_name(pic_name) or 'character').stem}.{kind}", pic))
+        self.folder.mkdir(parents=True, exist_ok=True)
+        dest = self.folder / (Path(name).stem if checked else name)
+        if dest.exists():
+            raise UserError(f"There's already a script called {dest.name} in the folder: rename the file and add it "
+                            f"again.")
+        if checked:
+            (dest / "Scripts").mkdir(parents=True)
+            (dest / "Character").mkdir()
+            (dest / "Scripts" / name).write_bytes(data)
+            for i, (pic_name, pic) in enumerate(checked, 1):
+                target = dest / "Character" / pic_name
+                (target if not target.exists() else target.with_stem(f"{target.stem}-{i}")).write_bytes(pic)
+            log.info("script %s added with %d character picture(s)", dest.name, len(checked))
+            return dest.name + "/"
+        dest.write_bytes(data)
+        log.info("script %s added", name)
+        return name
 
     # ---- the run's state (var/script_runs.json: {user id: {"started": iso time, "error": ""}}) ---------------
     @property

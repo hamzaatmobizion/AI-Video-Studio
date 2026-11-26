@@ -41,6 +41,17 @@
 </section>
 
 <section class="panel">
+  <h2>Add a script</h2>
+  <form id="script-add" data-url="/autoflow/add">
+    <p class="muted small">From this device: a <strong>.md, .txt, PDF or Word (.docx)</strong> script, and if you like up to 3 pictures of its characters (JPG, PNG or WebP), used for this video only. It's saved in <code>{{ folder }}</code> and joins the list below.</p>
+    <label>Script <input type="file" name="script" accept=".md,.txt,.pdf,.docx" required></label>
+    <label>Character pictures (optional) <input type="file" name="pictures" accept="image/jpeg,image/png,image/webp" multiple></label>
+    <div class="actions"><button type="submit">Add script</button></div>
+    <p class="error" id="script-add-error" role="alert" hidden></p>
+  </form>
+</section>
+
+<section class="panel">
   {% if not scripts %}
     <p class="muted">No scripts yet. Paste one into a new file in <code>{{ folder }}</code>, such as <code>06-my-story-24s.md</code>.</p>
   {% else %}

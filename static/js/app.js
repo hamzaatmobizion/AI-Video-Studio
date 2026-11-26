@@ -348,6 +348,19 @@
     try { await post(handUpload.dataset.url, new FormData(handUpload)); location.reload(); }
     catch (ex) { showError(err, ex.message); btn.disabled = false; btn.textContent = "Upload again"; }
   });
+  // AutoFlow: "Add a script" from this device (with its character pictures), then the list shows it
+  const scriptAdd = document.getElementById("script-add");
+  if (scriptAdd) scriptAdd.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("script-add-error");
+    showError(err, "");
+    if (!scriptAdd.script.files[0]) return showError(err, "Choose a script file.");
+    if (scriptAdd.pictures.files.length > 3) return showError(err, "Choose at most 3 character pictures.");
+    const btn = scriptAdd.querySelector("button[type=submit]");
+    btn.disabled = true; btn.textContent = "Adding…";
+    try { await post(scriptAdd.dataset.url, new FormData(scriptAdd)); location.reload(); }
+    catch (ex) { showError(err, ex.message); btn.disabled = false; btn.textContent = "Add script"; }
+  });
   // By hand: the waiting scene's own start picture, uploaded or removed, then the page shows its Frames-mode prompt
   document.querySelectorAll("form.media-upload").forEach((form) => form.addEventListener("change", async () => {
     const err = form.querySelector(".error");

@@ -545,6 +545,30 @@ def test_a_folder_is_one_video_with_its_script_and_its_character(app, authed, dr
     assert "✓ Made" in authed.get("/autoflow").text
 
 
+def test_a_script_is_added_from_the_device(app, authed, folder):
+    from tests.fakes import PNG
+    text = script(8, "THE KITE").encode()
+    r = authed.post("/autoflow/add", files=[("script", ("06-kite.md", text, "text/markdown"))])
+    assert r.status_code == 200 and (folder / "06-kite.md").read_bytes() == text  # on its own: a file
+    r = authed.post("/autoflow/add", files=[("script", ("06-kite.md", text, "text/markdown"))])
+    assert r.status_code == 400 and "already a script called 06-kite.md" in r.json()["detail"]  # never over one
+    r = authed.post("/autoflow/add", files=[("script", ("fiona.md", text, "text/markdown")),
+                                            ("pictures", ("Fiona Master.png", PNG, "image/png"))])
+    assert r.status_code == 200 and r.json()["name"] == "fiona/"  # with pictures: a folder, read like One and Two
+    assert (folder / "fiona" / "Scripts" / "fiona.md").exists()
+    assert (folder / "fiona" / "Character" / "Fiona Master.png").read_bytes() == PNG
+    page = authed.get("/autoflow").text
+    assert "fiona/Scripts/fiona.md" in page and "Character: Fiona Master.png" in page
+    for name, data, said in [("notes.exe", text, "Choose a script file"), ("empty.md", b"  ", "empty")]:
+        r = authed.post("/autoflow/add", files=[("script", (name, data, "text/plain"))])
+        assert r.status_code == 400 and said in r.json()["detail"]
+    r = authed.post("/autoflow/add", files=[("script", ("../../evil.md", text, "text/markdown"))])
+    assert r.status_code == 200 and (folder / "evil.md").exists()  # kept in the folder, never outside it
+    r = authed.post("/autoflow/add", files=[("script", ("dog.md", text, "text/markdown")),
+                                            ("pictures", ("x.png", b"not a picture", "image/png"))])
+    assert r.status_code == 400 and "isn't a JPG, PNG or WebP" in r.json()["detail"] and not (folder / "dog").exists()
+
+
 def test_autoflow_clip_two_starts_from_the_last_frame(app, authed, drive_connected, folder, bot, tmp_path):
     from tests.fakes import PNG
     (folder / "01-kite-16s.md").write_text(LAID_OUT)

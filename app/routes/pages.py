@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -182,6 +182,19 @@ def start_bot(request: Request, user=Depends(require_post)):
         raise UserError("BOT_AUTOSTART is off in .env: start the bot on its own Mac.")
     st.bot.ensure(force=True)
     return {"ok": True}
+
+
+@router.post("/autoflow/add")
+async def add_script(request: Request, user=Depends(require_post), script: UploadFile = File(...),
+                     pictures: list[UploadFile] = File(default=[])):
+    """AutoFlow's "Add a script": a script file from the device, with its character pictures if any, saved into the
+    scripts folder (read at most a little over the limits, so a wrong file isn't read whole)."""
+    from app.media import MAX_IMAGE_BYTES
+    from app.script_runs import MAX_SCRIPT_BYTES
+    data = await script.read(MAX_SCRIPT_BYTES + 1)
+    pics = [(f.filename, await f.read(MAX_IMAGE_BYTES + 1)) for f in pictures if f.filename]
+    name = request.app.state.script_runs.add((script.filename or "", data), pics)
+    return {"ok": True, "name": name}
 
 
 @router.post("/autoflow/start")

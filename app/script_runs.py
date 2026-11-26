@@ -11,7 +11,7 @@ import logging
 import re
 import threading
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from xml.etree import ElementTree
@@ -20,8 +20,9 @@ from sqlalchemy import select
 
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.models import Generation, utcnow
-from app.routes.api import MAX_IDEA_FLOW, duration_from_prompt
+from app.routes.api import _CLOCK, _LENGTH, _WORDS, MAX_IDEA_FLOW, MAX_SCENES, duration_from_prompt
 from app.script import aspect_from_prompt
+from app.timeline import clip_numbers
 from app.services.generation import UserError
 
 log = logging.getLogger("app.script_runs")
@@ -29,6 +30,12 @@ logging.getLogger("pypdf").setLevel(logging.ERROR)  # "Ignoring wrong pointing o
 STEP = SCENE_SECONDS[Provider.FLOW]
 SUFFIXES = (".md", ".txt", ".pdf", ".docx")
 MADE = {GenStatus.READY, GenStatus.SAVE_FAILED}  # SAVE_FAILED: the video is made, only its Drive upload failed
+# "Total Duration: 24 Seconds", "Video Duration: 24 Seconds": the video's length (other lengths in the story don't count)
+TOTAL = re.compile(r"^\W*(?:total|video)\s+duration\s*:\s*(.+)$", re.I | re.M)
+STUCK = timedelta(minutes=60)  # a clip takes the bot up to 15 minutes, 3 tries at most: no upload in this long is stuck
+# The bot's stop that's about this script's own clip (Flow refused it every time); any other stop (a CAPTCHA, a flag,
+# signed out, payment, a button it can't see) would stop it again on the next script, so the run stops
+CONTENT_STOP = re.compile(r"^Flow failed the clip \d+ times", re.I)
 HEADERS = re.compile(r"^(?:complete ai video script|video production script|ai video script)$", re.I)
 LIGATURES = str.maketrans({"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st"})
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"  # Word's XML namespace
@@ -92,6 +99,13 @@ def in_progress(gen: Generation) -> bool:
     return gen.status in ACTIVE or (gen.status == GenStatus.HAND and gen.bot_at is not None and not gen.bot_note)
 
 
+def _length(num: str, unit: str) -> float:
+    """Seconds in "24 Seconds", "1.5 minutes", "two min" (as duration_from_prompt reads them)."""
+    n = _WORDS.get(" ".join(num.lower().split()))
+    n = float(num) if n is None else n
+    return n * 60 if unit.lower().startswith("m") else n
+
+
 def title_of(text: str, name: str) -> str:
     """The script's title: its "Title: …" line, else its first line that isn't a "… SCRIPT" header."""
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
@@ -106,6 +120,16 @@ class ScriptRuns:
     def __init__(self, service, settings, bot=None):
         self.service, self.settings, self.bot = service, settings, bot  # bot: app.bot_process.BotProcess
         self.lock = threading.Lock()
+        self._stop_after_restart()
+
+    def _stop_after_restart(self) -> None:
+        """A run going when the app quit doesn't carry on by itself (the bot would start moving the mouse as soon as
+        the app starts): it waits for Start."""
+        state = self._load()
+        stopped = {uid: {"started": None, "error": "The app was restarted during the run, so it stopped. Press Start "
+                                                   "to carry on."} for uid, run in state.items() if run.get("started")}
+        if stopped:
+            self._save({**state, **stopped})
 
     # ---- the folder ------------------------------------------------------
     @property
@@ -130,15 +154,30 @@ class ScriptRuns:
             text = re.sub(r"\n{3,}", "\n\n", "\n".join(ln.rstrip() for ln in text.splitlines())).strip()
         except (OSError, ValueError) as e:
             return {"name": path.name, "title": path.name, "text": "", "seconds": 0, "clips": 0,
-                    "problem": f"Can't read the file: {e}"}
-        seconds = duration_from_prompt(text, STEP) or 0
+                    "problem": f"Can't read the file: {e}", "as_written": False}
+        # the length its "Total Duration" line gives; only without one, the longest length the script mentions
+        total = TOTAL.search(text)
+        said = total.group(1) if total else text
+        seconds = duration_from_prompt(said, STEP) or 0
+        clips, numbers, most = seconds // STEP, clip_numbers(text), MAX_SCENES * STEP
+        longest = max([*(_length(n, u) for n, u in _LENGTH.findall(said)),
+                       *(int(m) * 60 + int(s) for m, s in _CLOCK.findall(said))], default=0)
         empty = ("No text found in the PDF: a scanned PDF is a picture of the page, with no words to read. Copy its "
                  "text into a .md file instead." if path.suffix.lower() == ".pdf" else "The file is empty.")
         problem = (empty if not text
                    else f"It's longer than {MAX_IDEA_FLOW:,} characters." if len(text) > MAX_IDEA_FLOW
-                   else 'Write its length, such as "Total Duration: 24 Seconds".' if not seconds else "")
+                   else 'Write its length, such as "Total Duration: 24 Seconds".' if not seconds
+                   else f"It's {longest:g} seconds long: a video is at most {MAX_SCENES} clips "
+                        f"({most // 60}:{most % 60:02d})." if longest > most
+                   else f"Its clips are numbered {', '.join(map(str, numbers))}: number them CLIP 1, CLIP 2, … with "
+                        f"none missing." if numbers and numbers != list(range(1, len(numbers) + 1))
+                   else f"It says {seconds} seconds ({clips} clip{'' if clips == 1 else 's'}) but has {len(numbers)} "
+                        f"CLIP block{'' if len(numbers) == 1 else 's'}: add or remove a clip, or make its Total "
+                        f"Duration {len(numbers) * STEP} seconds." if numbers and len(numbers) != clips
+                   else "")
+        # laid out in clips that match its length: each clip goes to Flow as written, with no Gemini and no app rules
         return {"name": path.name, "title": title_of(text, path.name), "text": text, "seconds": seconds,
-                "clips": seconds // STEP, "problem": problem}
+                "clips": clips, "problem": problem, "as_written": bool(numbers) and not problem}
 
     # ---- the run's state (var/script_runs.json: {user id: {"started": iso time, "error": ""}}) ---------------
     @property
@@ -225,6 +264,13 @@ class ScriptRuns:
             out.append(sc)
         return out
 
+    def _halt(self, user_id: int, error: str) -> None:
+        """Stops the run, saying why on the page (the caller holds the lock)."""
+        state = self._load()
+        state[str(user_id)] = {"started": None, "error": error}
+        self._save(state)
+        log.info("user %s: script run stopped: %s", user_id, error)
+
     def _approve(self, user_id: int, gen: Generation) -> None:
         """Approves the script Gemini wrote, as it is, the way Approve on its script page does (a Flow video stops for
         review when the script left out a line the prompt wrote). If it can't be (a scene left empty, a clip prompt
@@ -258,9 +304,22 @@ class ScriptRuns:
             if not run or not run.get("started"):
                 return None
             scripts = self.scripts(user_id)
+            started = datetime.fromisoformat(run["started"])
             for sc in scripts:
-                if sc["state"] == "making" and sc["gen"].status == GenStatus.REVIEW:
-                    self._approve(user_id, sc["gen"])
+                g = sc.get("gen")
+                if sc["state"] == "making" and g.status == GenStatus.REVIEW:
+                    self._approve(user_id, g)
+                elif sc["state"] == "making" and g.status == GenStatus.HAND and utcnow() - g.updated_at > STUCK:
+                    note = (f"No clip from the bot in {STUCK.seconds // 60} minutes: it may be stuck. Check Chrome, "
+                            "then press Try again.")
+                    self.service.bot_stopped(g.id, user_id, note)
+                    return self._halt(user_id, f"{sc['name']} (video #{g.id}): {note}")
+                elif (sc["state"] == "stopped" and g.bot_note and g.created_at >= started
+                      and not CONTENT_STOP.match(g.bot_note)):
+                    # a CAPTCHA, a flag, signed out…: the next script would only stop the same way
+                    return self._halt(user_id, f"The bot stopped on {sc['name']} (video #{g.id}): {g.bot_note} Sort "
+                                               "it out in Chrome, press Try again on that video, then Start to carry "
+                                               "on with the rest.")
             if any(s["state"] == "making" for s in self.scripts(user_id)):
                 return None
             nxt = next((s for s in scripts if s["state"] == "waiting"), None)
@@ -276,10 +335,6 @@ class ScriptRuns:
                                              plan=nxt["clips"], provider=Provider.FLOW, by_hand=True,
                                              script_file=nxt["name"], bot=True)
             except UserError as e:
-                state = self._load()
-                state[str(user_id)] = {"started": None, "error": f"{nxt['name']}: {e.message}"}
-                self._save(state)
-                log.info("user %s: script run stopped at %s: %s", user_id, nxt["name"], e.message)
-                return None
+                return self._halt(user_id, f"{nxt['name']}: {e.message}")
         log.info("user %s: script %s is generation %s, given to the hand bot", user_id, nxt["name"], gen_id)
         return gen_id

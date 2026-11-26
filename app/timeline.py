@@ -156,12 +156,35 @@ def brief_clips(prompt: str, clips: int, clip_seconds: int) -> list[str] | None:
 
 # A production script in clips (the AutoFlow scripts): "CHARACTER DESCRIPTION AND CONSISTENCY", then "CLIP 1: …",
 # "CLIP 2: …", each with its own scenes, then sections for the editor, not for Flow
-CLIP_HEAD = re.compile(r"^\W*clip\s+(\d+)\b", re.I)
+NUMBER_WORDS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+CLIP_HEAD = re.compile(rf"^\W*clip\s+(\d+|{'|'.join(NUMBER_WORDS)})\b", re.I)  # "CLIP 2: …", "Clip Two — …"
 CAST_HEAD = re.compile(r"^\W*(?:main\s+)?characters?\b", re.I)
 EDITOR_HEAD = re.compile(r"^\W*(?:complete\s+(?:ai\s+)?(?:voiceover|dialogue)|(?:final\s+)?video\s+editing\b|"
                          r"final\s+timeline\b|end\s+of\s+(?:production\s+)?script\b)", re.I)
 SCREEN_HEAD = re.compile(r"^\W*final\s+screen\s+text\b", re.I)
-LOOK_LINE = re.compile(r"^\W*(?:visual\s+)?(?:style|genre|language)\s*:", re.I)
+LOOK_LINE = re.compile(r"^\W*(?:visual\s+)?(?:style|genre|language|music)\s*:", re.I)  # said in every clip
+
+
+def _clip_number(line: str) -> int:
+    n = CLIP_HEAD.match(line).group(1).lower()
+    return int(n) if n.isdigit() else NUMBER_WORDS.index(n) + 1
+
+
+def _clip_heads(lines: list[str]) -> tuple[list[int], int]:
+    """The lines that start a clip ("CLIP 1: …"), and the line where the editor's sections begin (after the last
+    clip; its own timeline also lists "Clip 1: …")."""
+    heads = [i for i, ln in enumerate(lines) if CLIP_HEAD.match(ln)]
+    if not heads:
+        return [], len(lines)
+    editor = next((i for i in range(heads[0], len(lines)) if EDITOR_HEAD.match(lines[i]) or SCREEN_HEAD.match(lines[i])),
+                  len(lines))
+    return [i for i in heads if i < editor], editor
+
+
+def clip_numbers(prompt: str) -> list[int]:
+    """The numbers of the script's CLIP headings, in order ([1, 2, 3]); [] when it isn't laid out in clips."""
+    lines = (prompt or "").splitlines()
+    return [_clip_number(lines[i]) for i in _clip_heads(lines)[0]]
 
 
 def layout_clips(prompt: str, clips: int, clip_seconds: int) -> list[str] | None:
@@ -171,14 +194,8 @@ def layout_clips(prompt: str, clips: int, clip_seconds: int) -> list[str] | None
     editor (the complete voiceover script, editing instructions, the final timeline) is left out: Flow would speak
     every line of the video, or burn in subtitles. None unless the script has exactly CLIP 1 to CLIP `clips`."""
     lines = (prompt or "").splitlines()
-    heads = [i for i, ln in enumerate(lines) if CLIP_HEAD.match(ln)]
-    if not heads:
-        return None
-    # the editor's sections come after the last clip (its own timeline also lists "Clip 1: …")
-    editor = next((i for i in range(heads[0], len(lines)) if EDITOR_HEAD.match(lines[i]) or SCREEN_HEAD.match(lines[i])),
-                  len(lines))
-    heads = [i for i in heads if i < editor]
-    if [int(CLIP_HEAD.match(lines[i]).group(1)) for i in heads] != list(range(1, clips + 1)):
+    heads, editor = _clip_heads(lines)
+    if not heads or [_clip_number(lines[i]) for i in heads] != list(range(1, clips + 1)):
         return None
     tidy = lambda part: re.sub(r"\n{3,}", "\n\n", "\n".join(part)).strip()  # noqa: E731
     before = lines[:heads[0]]

@@ -5,6 +5,7 @@ Total Duration: __ Seconds
 Total Clips: __
 Duration Per Clip: 8 Seconds
 Total Scenes: __ (3 per clip)
+Music: (one style for the whole video, written the same in every clip's SOUND, e.g. "soft piano, slow")
 Aspect Ratio: 9:16 Vertical
 Resolution: 1080 × 1920
 Style: Ultra-realistic cinematic storytelling
@@ -17,6 +18,7 @@ Hair
 Eyes
 Build
 Clothing
+Voice: (gender, age, tone, accent — say it here so it sounds the same in every clip)
 
 IMPORTANT CHARACTER RULE: Keep the same face, hairstyle, skin tone, and physical features in every scene.
 

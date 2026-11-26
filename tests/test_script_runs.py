@@ -81,12 +81,13 @@ def test_run_makes_one_script_at_a_time_and_skips_a_stopped_one(app, authed, dri
     assert runs.step(first.user_id) is None and len(gens(app)) == 1  # still being made: the next one waits
     assert "Gemini is writing its clips" in authed.get("/autoflow").text
 
-    set_gen(app, first.id, status=GenStatus.HAND, bot_note="A CAPTCHA appeared.")  # the bot stopped: skipped
+    # Flow refused this script's clip every time: only this script is skipped
+    set_gen(app, first.id, status=GenStatus.HAND, bot_note="Flow failed the clip 3 times (refunded).")
     second_id = runs.step(first.user_id)
     second = gens(app)[1]
     assert second.id == second_id and second.script_file == "02-boat-8s.md" and len(second.scenes) == 1
     page = authed.get("/autoflow").text
-    assert "Skipped:" in page and "A CAPTCHA appeared." in page
+    assert "Skipped:" in page and "Flow failed the clip 3 times" in page
 
     set_gen(app, second.id, status=GenStatus.READY)
     runs.step(first.user_id)
@@ -373,3 +374,92 @@ def test_a_laid_out_script_skips_gemini_and_goes_to_the_bot_as_written(app, auth
     assert "Look how high it flies!" not in job["prompt"] and "Look:" not in job["prompt"]
     # (the test clip has no real last frame; with one, only the line saying to start from it is added)
     assert job["prompt"].rstrip().endswith("NEVER GIVE UP.")
+
+
+# ---- a stop that would happen again, a stuck video, a restart --------------------
+def test_a_captcha_stops_the_whole_run(app, authed, drive_connected, folder, bot):
+    (folder / "01-kite.md").write_text(script(8, "THE KITE"))
+    (folder / "02-boat.md").write_text(script(8, "THE BOAT"))
+    authed.post("/autoflow/start")
+    first = gens(app)[0]
+    set_gen(app, first.id, status=GenStatus.HAND, bot_note="Google is showing a CAPTCHA.")
+    runs = app.state.script_runs
+    assert runs.step(first.user_id) is None and len(gens(app)) == 1  # the next script isn't tried
+    run = runs.run_of(first.user_id)
+    assert not run["started"] and "CAPTCHA" in run["error"] and "Try again" in run["error"]
+    authed.post(f"/generations/{first.id}/bot")  # Try again, then Start: the run waits for it, then goes on
+    authed.post("/autoflow/start")
+    assert len(gens(app)) == 1
+    set_gen(app, first.id, status=GenStatus.READY)
+    runs.step(first.user_id)
+    assert gens(app)[1].script_file == "02-boat.md"
+
+
+def test_a_stuck_video_stops_the_run(app, authed, drive_connected, folder, bot):
+    from datetime import timedelta
+    from app.models import utcnow
+    (folder / "01-kite.md").write_text(script(8, "THE KITE"))
+    authed.post("/autoflow/start")
+    first = gens(app)[0]
+    set_gen(app, first.id, status=GenStatus.HAND)
+    runs = app.state.script_runs
+    assert runs.step(first.user_id) is None and runs.run_of(first.user_id)["started"]  # not stuck yet
+    with app.state.db.session() as s:  # no clip for over an hour
+        s.execute(Generation.__table__.update().where(Generation.id == first.id)
+                  .values(updated_at=utcnow() - timedelta(minutes=61)))
+    runs.step(first.user_id)
+    assert "No clip from the bot in 60 minutes" in gens(app)[0].bot_note
+    assert "No clip from the bot" in runs.run_of(first.user_id)["error"]
+
+
+def test_a_run_doesnt_carry_on_after_the_app_restarts(app, authed, drive_connected, folder, bot):
+    from app.script_runs import ScriptRuns
+    (folder / "01-kite.md").write_text(script(8, "THE KITE"))
+    authed.post("/autoflow/start")
+    uid = gens(app)[0].user_id
+    again = ScriptRuns(app.state.service, app.state.settings)  # what the app does when it starts
+    run = again.run_of(uid)
+    assert not run["started"] and "restarted" in run["error"]
+
+
+# ---- what makes a script go as written -----------------------------------------
+def test_total_duration_is_the_length_and_clips_must_match(folder):
+    from app.script_runs import ScriptRuns
+    clips = lambda n: "".join(f"CLIP {i}: PART\nScene text {i}.\n\n" for i in range(1, n + 1))  # noqa: E731
+    cases = {
+        "a.md": "Total Duration: 16 Seconds\nHe waited for 2 minutes.\n" + clips(2),
+        "b.md": "Total Duration: 24 Seconds\n" + clips(2),
+        "c.md": "Total Duration: 16 Seconds\nCLIP 1: A\nx\nCLIP 3: B\ny\n",
+        "d.md": "Total Duration: 2 minutes\n" + clips(15),
+        "e.md": "Total Duration: 16 Seconds\nCLIP ONE: A\nx\n\nClip Two — B\ny\n",
+        "f.md": "A boy flies a kite for 16 seconds.",
+    }
+    for name, text in cases.items():
+        (folder / name).write_text(text)
+    got = {n: ScriptRuns.read(folder / n) for n in cases}
+    assert got["a.md"]["seconds"] == 16 and got["a.md"]["as_written"] and not got["a.md"]["problem"]
+    assert "says 24 seconds (3 clips) but has 2 CLIP blocks" in got["b.md"]["problem"]
+    assert "make its Total Duration 16 seconds" in got["b.md"]["problem"] and not got["b.md"]["as_written"]
+    assert "numbered 1, 3" in got["c.md"]["problem"]
+    assert "120 seconds long: a video is at most 12 clips (1:36)" in got["d.md"]["problem"]
+    assert got["e.md"]["as_written"] and got["e.md"]["clips"] == 2
+    assert got["f.md"]["seconds"] == 16 and not got["f.md"]["as_written"] and not got["f.md"]["problem"]
+
+
+def test_autoflow_clip_two_starts_from_the_last_frame(app, authed, drive_connected, folder, bot, tmp_path):
+    from tests.fakes import PNG
+    (folder / "01-kite-16s.md").write_text(LAID_OUT)
+    authed.post("/autoflow/start")
+    g = gens(app)[0]
+    frame = tmp_path / "last.png"
+    frame.write_bytes(PNG)
+    svc = app.state.service
+    svc._previous_frame = lambda gen, scene: frame if scene.position > 1 else None
+    with app.state.db.session() as s:  # clip 1 is in
+        s.get(Generation, g.id).scenes[0].clip_path = str(frame)
+    hand = svc.hand_scene(g.id, g.user_id)
+    assert hand["scene"].position == 2
+    assert hand["mode"] == "frames" and [im["path"] for im in hand["images"]] == [frame]  # Flow's Start frame
+    assert "CLIP 2: THE FALL" in hand["prompt"]
+    assert hand["prompt"].rstrip().endswith("the action begins naturally from where everyone stands in it.")
+    assert "Look:" not in hand["prompt"]  # still none of the app's rules

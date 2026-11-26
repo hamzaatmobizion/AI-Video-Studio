@@ -60,7 +60,7 @@
     <tbody>
     {% for s in scripts %}
       <tr>
-        <td><strong>{{ s.title }}</strong><br><span class="muted small">{{ s.name }}{{ s.source }}</span>
+        <td><a href="/autoflow/script?name={{ s.name | urlencode }}"><strong>{{ s.title }}</strong></a><br><span class="muted small">{{ s.name }}{{ s.source }}</span>
           {% if s.pictures %}<br><span class="muted small">Character: {{ s.pictures | join(", ") }}</span>{% endif %}</td>
         <td>{% if s.seconds %}{{ s.seconds }} s · {{ s.clips }} clip{{ '' if s.clips == 1 else 's' }}{% else %}–{% endif %}
           {% if not s.problem %}<br><span class="muted small">{% if s.as_written %}Sent as written{% else %}Gemini splits it into clips (no CLIP 1, CLIP 2… layout){% endif %}</span>{% endif %}</td>

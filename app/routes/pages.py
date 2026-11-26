@@ -3,8 +3,8 @@ import re
 from pathlib import Path
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -170,6 +170,24 @@ def scripts_page(request: Request, user=Depends(require_page_user)):
                   error=error, folder=runs.folder.resolve(), bot_ready=st.settings.bot_configured,
                   bot_online=st.bot.running(), bot_exited="" if no_credits else st.bot.exited(),
                   no_credits=no_credits, autostart=st.settings.BOT_AUTOSTART)
+
+
+@router.get("/autoflow/script", response_class=HTMLResponse)
+def script_preview(request: Request, name: str, user=Depends(require_page_user)):
+    """One script of the AutoFlow list: its character pictures, what Flow gets for each clip, and the whole script."""
+    sc = request.app.state.script_runs.preview(name)
+    if sc is None:
+        raise HTTPException(404, "That script isn't in the scripts folder any more.")
+    return render(request, "script_preview.html", sc=sc)
+
+
+@router.get("/autoflow/picture")
+def script_picture(request: Request, name: str, n: int, user=Depends(require_page_user)):
+    """A folder script's character picture, for its preview."""
+    path = request.app.state.script_runs.picture(name, n)
+    if path is None:
+        raise HTTPException(404, "No such picture.")
+    return FileResponse(path, headers={"Cache-Control": "private, no-cache"})
 
 
 @router.post("/autoflow/bot")

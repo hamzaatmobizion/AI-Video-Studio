@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ sc.title }} · AutoFlow · VideoGeneration{% endblock %}
+{% block content %}
+<section class="panel">
+  <p class="small"><a href="/autoflow">← AutoFlow</a></p>
+  <h1>{{ sc.title }}</h1>
+  <p class="muted small">{{ sc.name }}{{ sc.source }}</p>
+  <p>{% if sc.seconds %}{{ sc.seconds }} s · {{ sc.clips }} clip{{ '' if sc.clips == 1 else 's' }}{% endif %}
+    {% if sc.problem %}<br><span class="warn">Can't make it:</span> {{ sc.problem }}
+    {% elif sc.as_written %}<br><span class="muted small">Sent as written: each clip below is what the bot pastes into Flow.</span>
+    {% else %}<br><span class="muted small">Gemini splits it into clips (no CLIP 1, CLIP 2… or SCENE 1, SCENE 2… layout).</span>{% endif %}</p>
+</section>
+
+<section class="panel">
+  <h2>Characters</h2>
+  {% if sc.pictures %}
+    <p class="muted small">Attached to clip 1 in Flow (Ingredients); the clips after it start from the last frame, where they already are.</p>
+    <ul class="hand-images">
+      {% for pic in sc.pictures %}
+      <li>
+        <a href="/autoflow/picture?name={{ sc.name | urlencode }}&n={{ loop.index }}" target="_blank" rel="noopener"><img src="/autoflow/picture?name={{ sc.name | urlencode }}&n={{ loop.index }}" alt="Character picture {{ loop.index }}: {{ pic }}"></a>
+        <span>{{ pic }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted small">No character pictures: the characters come from the script's own description. To add some, put the script in a folder with a "Character" folder beside its "Scripts" folder, or add it again on AutoFlow with its pictures.</p>
+  {% endif %}
+</section>
+
+{% if sc.sent %}
+<section class="panel">
+  <h2>What Flow gets</h2>
+  {% for clip in sc.sent %}
+  <details{% if loop.first %} open{% endif %}>
+    <summary><strong>Clip {{ loop.index }}</strong> · {{ clip | length }} characters</summary>
+    <pre class="hand-prompt" dir="auto">{{ clip }}</pre>
+  </details>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <details{% if not sc.sent %} open{% endif %}>
+    <summary><h2 style="display:inline">The whole script</h2> <span class="muted small">· {{ sc.text | length }} characters</span></summary>
+    <pre class="hand-prompt" dir="auto">{{ sc.text }}</pre>
+  </details>
+</section>
+{% endblock %}

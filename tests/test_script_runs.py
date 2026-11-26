@@ -569,6 +569,29 @@ def test_a_script_is_added_from_the_device(app, authed, folder):
     assert r.status_code == 400 and "isn't a JPG, PNG or WebP" in r.json()["detail"] and not (folder / "dog").exists()
 
 
+def test_a_script_preview_shows_its_pictures_and_each_clip(app, authed, folder):
+    from tests.fakes import PNG
+    one = folder / "One"
+    (one / "Character").mkdir(parents=True)
+    (one / "Character" / "Fiona.png").write_bytes(PNG)
+    (one / "Scripts").mkdir()
+    (one / "Scripts" / "n1.md").write_text("Total Duration: 16 Seconds\nCHARACTERS\nFiona, a bunny.\n\n"
+                                           "CLIP 1: APPLE\nShe finds an apple.\n\nCLIP 2: BITE\nShe bites it.\n")
+    (folder / "plain.md").write_text(script(8, "THE KITE"))
+    page = authed.get("/autoflow").text
+    assert 'href="/autoflow/script?name=One/"' in page
+    page = authed.get("/autoflow/script", params={"name": "One/"}).text
+    assert "Fiona.png" in page and "/autoflow/picture?name=One/&n=1" in page
+    assert "Clip 1" in page and "Clip 2" in page and "She finds an apple." in page
+    pic = authed.get("/autoflow/picture", params={"name": "One/", "n": 1})
+    assert pic.status_code == 200 and pic.content == PNG
+    page = authed.get("/autoflow/script", params={"name": "plain.md"}).text
+    assert "No character pictures" in page and "A boy flies a kite" in page and "Gemini splits it" in page
+    # only scripts in the list: nothing else on the Mac
+    assert authed.get("/autoflow/script", params={"name": "../app/config.py"}).status_code == 404
+    assert authed.get("/autoflow/picture", params={"name": "One/", "n": 2}).status_code == 404
+
+
 def test_autoflow_clip_two_starts_from_the_last_frame(app, authed, drive_connected, folder, bot, tmp_path):
     from tests.fakes import PNG
     (folder / "01-kite-16s.md").write_text(LAID_OUT)

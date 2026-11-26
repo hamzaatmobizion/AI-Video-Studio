@@ -277,6 +277,22 @@ class ScriptRuns:
         return {"name": path.name, "title": title_of(text, path.name), "text": text, "seconds": seconds,
                 "clips": clips, "problem": problem, "as_written": bool(numbers) and not problem}
 
+    def preview(self, name: str) -> dict | None:
+        """One script of the list by its name ("06-kite.md", "One/"), read, with what Flow gets for each clip when
+        it goes as written (layout_clips). None when the list has no such script: only those can be opened."""
+        path = next((p for p in self.files() if (p.name + "/" if p.is_dir() else p.name) == name), None)
+        if path is None:
+            return None
+        sc = self.read(path)
+        sc["sent"] = layout_clips(sc["text"], sc["clips"], STEP) if sc["as_written"] else None
+        return sc
+
+    def picture(self, name: str, index: int) -> Path | None:
+        """The `index`-th (1-based) character picture of a listed folder script."""
+        sc = self.preview(name)
+        pics = (sc or {}).get("picture_paths") or []
+        return pics[index - 1] if 1 <= index <= len(pics) else None
+
     # ---- adding a script from the device --------------------------------
     def add(self, script: tuple[str, bytes], pictures: list[tuple[str, bytes]]) -> str:
         """Saves a script chosen on the AutoFlow page into the folder: on its own, or with its character pictures as a

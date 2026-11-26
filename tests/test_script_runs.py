@@ -469,6 +469,27 @@ def test_total_duration_is_the_length_and_clips_must_match(folder):
     assert got["f.md"]["seconds"] == 16 and not got["f.md"]["as_written"] and not got["f.md"]["problem"]
 
 
+def test_a_long_script_is_fine_unless_one_clip_is_too_long_for_flow(folder):
+    from app.script_runs import ScriptRuns
+    long_clip = "Scene text. " * 3000  # 36,000 characters
+    cases = {
+        # 45,000 characters, but Gemini writes its clips (no clip layout, no timed beats): Flow gets short ones
+        "story.md": "Total Duration: 40 Seconds\nA bunny counts apples.\n" + "The bunny is soft and fluffy. " * 1500,
+        # 5 short clips with a long editor's part at the end, left out of every clip: fine too
+        "laid.md": "Total Duration: 40 Seconds\n"
+                   + "".join(f"CLIP {i}: PART\nScene text {i}.\n\n" for i in range(1, 6))
+                   + "VIDEO EDITING INSTRUCTIONS\n" + "Notes. " * 6000,
+        # one clip alone longer than Flow's prompt box
+        "big.md": f"Total Duration: 16 Seconds\nCLIP 1: A\nshort\n\nCLIP 2: B\n{long_clip}\n",
+    }
+    for name, text in cases.items():
+        (folder / name).write_text(text)
+    got = {n: ScriptRuns.read(folder / n) for n in cases}
+    assert len(got["story.md"]["text"]) > 30000 and not got["story.md"]["problem"]
+    assert len(got["laid.md"]["text"]) > 30000 and not got["laid.md"]["problem"] and got["laid.md"]["as_written"]
+    assert "Clip 2 would be" in got["big.md"]["problem"] and not got["big.md"]["as_written"]
+
+
 def test_autoflow_clip_two_starts_from_the_last_frame(app, authed, drive_connected, folder, bot, tmp_path):
     from tests.fakes import PNG
     (folder / "01-kite-16s.md").write_text(LAID_OUT)

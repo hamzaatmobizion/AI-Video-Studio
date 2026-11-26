@@ -20,9 +20,9 @@ from sqlalchemy import select
 
 from app.enums import ACTIVE, SCENE_SECONDS, GenStatus, Provider
 from app.models import Generation, utcnow
-from app.routes.api import _CLOCK, _LENGTH, _WORDS, MAX_IDEA_FLOW, MAX_SCENES, duration_from_prompt
-from app.script import aspect_from_prompt
-from app.timeline import clip_numbers
+from app.routes.api import _CLOCK, _LENGTH, _WORDS, MAX_SCENES, duration_from_prompt
+from app.script import AS_WRITTEN_MIN, BRIEF_MIN, FLOW_INPUT_LIMIT, aspect_from_prompt
+from app.timeline import brief_clips, clip_numbers, layout_clips
 from app.services.generation import UserError
 
 log = logging.getLogger("app.script_runs")
@@ -30,6 +30,9 @@ logging.getLogger("pypdf").setLevel(logging.ERROR)  # "Ignoring wrong pointing o
 STEP = SCENE_SECONDS[Provider.FLOW]
 SUFFIXES = (".md", ".txt", ".pdf", ".docx")
 MADE = {GenStatus.READY, GenStatus.SAVE_FAILED}  # SAVE_FAILED: the video is made, only its Drive upload failed
+# A whole script file: Flow never gets it whole (each clip is pasted alone, or Gemini writes the clips), so this only
+# keeps out a wrong file. What Flow's prompt box takes (FLOW_INPUT_LIMIT) is checked on each clip (_clip_problem).
+MAX_FILE = 200_000
 # "Total Duration: 24 Seconds", "Video Duration: 24 Seconds": the video's length (other lengths in the story don't count)
 TOTAL = re.compile(r"^\W*(?:total|video)\s+duration\s*:\s*(.+)$", re.I | re.M)
 STUCK = timedelta(minutes=60)  # a clip takes the bot up to 15 minutes, 3 tries at most: no upload in this long is stuck
@@ -117,6 +120,26 @@ def title_of(text: str, name: str) -> str:
     return first.lstrip("# ").strip()[:120] or name
 
 
+def _clip_problem(text: str, clips: int, laid_out: bool) -> str:
+    """Too long for Flow's prompt box, when a clip of it is pasted into Flow as written: a laid-out script's clips
+    (layout_clips), a one-clip script of AS_WRITTEN_MIN or more, or a longer script's clips split by time (brief_clips,
+    whose shared sections go in every clip). Gemini writes the clips of any other script, short ones."""
+    if laid_out:
+        sent = layout_clips(text, clips, STEP)
+    elif clips == 1:
+        sent = [text] if len(text) >= AS_WRITTEN_MIN else None
+    else:
+        sent = brief_clips(text, clips, STEP) if len(text) >= BRIEF_MIN else None
+    if not sent:
+        return ""
+    n, longest = max(enumerate(map(len, sent), 1), key=lambda x: x[1])
+    if longest <= FLOW_INPUT_LIMIT:
+        return ""
+    which = "It" if clips == 1 else f"Clip {n}"
+    return (f"{which} would be {longest:,} characters in Flow's prompt box, over the {FLOW_INPUT_LIMIT:,} Flow is sent "
+            f"at most (it refused 28,800 in a test). Shorten {'it' if clips == 1 else 'that clip, or the sections every clip repeats'}.")
+
+
 class ScriptRuns:
     def __init__(self, service, settings, bot=None):
         self.service, self.settings, self.bot = service, settings, bot  # bot: app.bot_process.BotProcess
@@ -166,7 +189,7 @@ class ScriptRuns:
         empty = ("No text found in the PDF: a scanned PDF is a picture of the page, with no words to read. Copy its "
                  "text into a .md file instead." if path.suffix.lower() == ".pdf" else "The file is empty.")
         problem = (empty if not text
-                   else f"It's longer than {MAX_IDEA_FLOW:,} characters." if len(text) > MAX_IDEA_FLOW
+                   else f"It's longer than {MAX_FILE:,} characters." if len(text) > MAX_FILE
                    else 'Write its length, such as "Total Duration: 24 Seconds".' if not seconds
                    else f"It's {longest:g} seconds long: a video is at most {MAX_SCENES} clips "
                         f"({most // 60}:{most % 60:02d})." if longest > most
@@ -175,7 +198,7 @@ class ScriptRuns:
                    else f"It says {seconds} seconds ({clips} clip{'' if clips == 1 else 's'}) but has {len(numbers)} "
                         f"CLIP block{'' if len(numbers) == 1 else 's'}: add or remove a clip, or make its Total "
                         f"Duration {len(numbers) * STEP} seconds." if numbers and len(numbers) != clips
-                   else "")
+                   else _clip_problem(text, clips, bool(numbers)))
         # laid out in clips that match its length: each clip goes to Flow as written, with no Gemini and no app rules
         return {"name": path.name, "title": title_of(text, path.name), "text": text, "seconds": seconds,
                 "clips": clips, "problem": problem, "as_written": bool(numbers) and not problem}

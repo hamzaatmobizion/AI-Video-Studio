@@ -2,89 +2,152 @@
 {% block title %}AutoFlow · VideoGeneration{% endblock %}
 {% block content %}
 {% if running %}<meta http-equiv="refresh" content="15">{% endif %}
-<section class="panel">
-  <div class="script-top">
+{% set made = scripts | selectattr("state", "equalto", "made") | list | length %}
+{% set making = scripts | selectattr("state", "equalto", "making") | list | length %}
+{% set blocked = scripts | selectattr("state", "equalto", "problem") | list | length %}
+{% set left = scripts | length - made - blocked %}
+
+<section class="panel af-head">
+  <div class="af-top">
     <div>
       <h1>AutoFlow</h1>
-      <p class="muted small">Every script in <code>{{ folder }}</code> is made into a Google Flow video by the hand bot, one after another, until none is left. Each gets the Flow form's defaults: by hand, no review, Check each clip off, Auto style, language and genre, 9:16 unless the script says 16:9. A made script is skipped next time. To add one, put a <strong>.md, .txt, PDF or Word (.docx)</strong> file in the folder; files starting with "_" (the template) are left out. A <strong>folder</strong> is one video: its script from a "Scripts" folder inside it (the .md first, when it's there as a PDF too), and the pictures in its "Character" folder, used for that video only.</p>
+      <p class="muted small">Your scripts, made into Google Flow videos by the hand bot, one after another.</p>
     </div>
-    <div class="actions">
+    <div class="af-controls">
       {% if running %}
         <button type="button" class="secondary" data-post="/autoflow/stop" data-reload
                 data-confirm="Stop after the video the bot is making now?">Stop</button>
       {% else %}
-        <button type="button" data-post="/autoflow/start" data-reload {% if not bot_ready %}disabled{% endif %}>Start</button>
+        <button type="button" data-post="/autoflow/start" data-reload {% if not bot_ready or not left %}disabled{% endif %}>▶ Start</button>
       {% endif %}
     </div>
   </div>
-  {% if not bot_ready %}
-    <p class="warn small">The hand bot isn't set up: set <code>BOT_API_KEY</code> and <code>BOT_USER_EMAIL</code> in .env.</p>
-  {% else %}
-    {% if running %}<p class="hand-wait"><span class="spinner"></span> Making the scripts one at a time… This page updates by itself.</p>{% endif %}
-    {% if bot_online %}
-      <p class="ok-text small">● The bot is running.</p>
+
+  <div class="af-status">
+    <span class="af-chip {{ 'on' if running else '' }}">
+      {% if running %}<span class="spinner"></span> Running · this page updates by itself{% else %}Run: stopped{% endif %}
+    </span>
+    {% if not bot_ready %}
+      <span class="af-chip bad">The hand bot isn't set up: set <code>BOT_API_KEY</code> and <code>BOT_USER_EMAIL</code> in .env.</span>
+    {% elif bot_online %}
+      <span class="af-chip ok">● The bot is running.</span>
     {% elif autostart %}
-      <div class="actions">
-        <p class="warn small">{% if no_credits %}The bot was stopped because Flow is out of credits. Start starts it again.{% else %}The bot isn't running.{% if not running %} Start starts it too.{% endif %}{% endif %}</p>
-        <button type="button" class="secondary" data-post="/autoflow/bot" data-reload>Start the bot</button>
-      </div>
-      {% if bot_exited %}
-        <p class="bot-stopped" role="alert"><strong>⚠ The bot exited.</strong> Its last words:</p>
-        <pre class="small">{{ bot_exited }}</pre>
-        <p class="muted small">A black screenshot or no clicks means macOS hasn't allowed the app that runs <code>./run.sh</code> (Terminal, or VS Code) to control the Mac: turn it on in System Settings → Privacy &amp; Security → Accessibility and Screen Recording, restart it, and start the app again.</p>
-      {% endif %}
+      <span class="af-chip warn">{% if no_credits %}○ The bot was stopped because Flow is out of credits. Start starts it again.{% else %}○ The bot isn't running.{% if not running %} Start starts it too.{% endif %}{% endif %}</span>
+      <button type="button" class="secondary af-small" data-post="/autoflow/bot" data-reload>Start the bot</button>
     {% else %}
-      <p class="warn small">The bot isn't running. Start it on its Mac with <code>python -m handbot run</code> (BOT_AUTOSTART is off).</p>
+      <span class="af-chip warn">○ The bot isn't running. Start it on its Mac with <code>python -m handbot run</code> (BOT_AUTOSTART is off).</span>
     {% endif %}
+  </div>
+
+  {% if scripts %}
+  {% set skipped = scripts | selectattr("state", "equalto", "stopped") | list | length %}
+  {% set waiting = scripts | selectattr("state", "equalto", "waiting") | list | length %}
+  <div class="af-progress">
+    <div class="af-progress-head">
+      <span><strong>{{ made }}</strong> of {{ scripts | length }} made</span>
+      <span class="muted">{{ (made * 100 / scripts | length) | round | int }}%</span>
+    </div>
+    <div class="af-segments" role="img" aria-label="{{ made }} of {{ scripts | length }} made">
+      {% for s in scripts %}<span class="seg {{ s.state }}" title="{{ s.title }}"></span>{% endfor %}
+    </div>
+    <ul class="af-counts">
+      <li class="made"><span class="dot"></span><strong>{{ made }}</strong> made</li>
+      {% if making %}<li class="making"><span class="dot"></span><strong>{{ making }}</strong> being made</li>{% endif %}
+      <li class="waiting"><span class="dot"></span><strong>{{ waiting }}</strong> waiting</li>
+      {% if skipped %}<li class="stopped"><span class="dot"></span><strong>{{ skipped }}</strong> skipped</li>{% endif %}
+      {% if blocked %}<li class="problem"><span class="dot"></span><strong>{{ blocked }}</strong> can't be made</li>{% endif %}
+    </ul>
+  </div>
   {% endif %}
-  {% if error %}<p class="bot-stopped" role="alert"><strong>⚠ The run stopped:</strong> {{ error }}</p>{% endif %}
+
+  {% if error %}
+    <div class="af-alert" role="alert"><strong>⚠ The run stopped:</strong> {{ error }}</div>
+  {% endif %}
+  {% if bot_ready and not bot_online and autostart and bot_exited %}
+    <details class="af-alert">
+      <summary><strong>⚠ The bot exited.</strong> Its last words</summary>
+      <pre class="small">{{ bot_exited }}</pre>
+      <p class="muted small">A black screenshot or no clicks means macOS hasn't allowed the app that runs <code>./run.sh</code> (Terminal, or VS Code) to control the Mac: turn it on in System Settings → Privacy &amp; Security → Accessibility and Screen Recording, restart it, and start the app again.</p>
+    </details>
+  {% endif %}
+
+  <details class="af-how">
+    <summary>How AutoFlow works</summary>
+    <ul class="small">
+      <li>Every script in <code>{{ folder }}</code> becomes one video, in name order. A made script is skipped next time.</li>
+      <li>A script is a <strong>.md, .txt, PDF or Word (.docx)</strong> file. Names starting with "_" (the template) are left out.</li>
+      <li>A <strong>folder</strong> is one video: its script from a "Scripts" folder inside it (the .md first, when it's there as a PDF too), and the pictures in its "Character" folder, used for that video only.</li>
+      <li>A script laid out in <strong>CLIP 1, CLIP 2…</strong> (or SCENE 1, SCENE 2…) goes to Flow as written, one 8-second clip each; any other is split into clips by Gemini.</li>
+      <li>Each video gets the Flow form's defaults: by hand, no review, Check each clip off, Auto style, language and genre, 9:16 unless the script says 16:9.</li>
+      <li>After a stop, press Try again on that video, then Start: Start alone makes the script again as a new video.</li>
+    </ul>
+  </details>
+</section>
+
+<section class="panel">
+  <h2>Scripts</h2>
+  {% if not scripts %}
+    <p class="muted">No scripts yet. Add one below, or put a file in <code>{{ folder }}</code>, such as <code>06-my-story-24s.md</code>.</p>
+  {% else %}
+  <ul class="af-list">
+    {% for s in scripts %}
+    <li class="af-item state-{{ s.state }}">
+      <div class="af-thumbs">
+        {% for pic in s.pictures[:3] %}
+          <img src="/autoflow/picture?name={{ s.name | urlencode }}&n={{ loop.index }}" alt="{{ pic }}" title="{{ pic }}" loading="lazy">
+        {% else %}
+          <span class="af-noimg" aria-hidden="true">📝</span>
+        {% endfor %}
+      </div>
+      <div class="af-main">
+        <a class="af-title" href="/autoflow/script?name={{ s.name | urlencode }}">{{ s.title }}</a>
+        <p class="muted small af-path">{{ s.name }}{{ s.source }}</p>
+        {% if s.pictures %}<p class="muted small">Character: {{ s.pictures | join(", ") }}</p>{% endif %}
+        <p class="af-tags">
+          <span class="af-tag">{% if s.seconds %}{{ s.seconds }} s · {{ s.clips }} clip{{ '' if s.clips == 1 else 's' }}{% else %}–{% endif %}</span>
+          {% if not s.problem %}<span class="af-tag {{ 'written' if s.as_written else '' }}">{% if s.as_written %}Sent as written{% else %}Gemini splits it into clips (no CLIP 1, CLIP 2… layout){% endif %}</span>{% endif %}
+        </p>
+      </div>
+      <div class="af-state">
+        {% if s.state == "made" %}
+          <span class="af-pill ok">✓ Made</span>
+          <a class="small" href="/generations/{{ s.gen.id }}/script">video #{{ s.gen.id }}</a>
+        {% elif s.state == "making" %}
+          <span class="af-pill busy"><span class="spinner"></span>
+          {% if s.gen.status == "PLANNING" %}Gemini is writing its clips{% elif s.gen.status == "REVIEW" %}Approving its script{% elif s.gen.status == "HAND" %}The bot is making it{% else %}Joining and saving{% endif %}</span>
+          <a class="small" href="/generations/{{ s.gen.id }}/by-hand">video #{{ s.gen.id }}</a>
+        {% elif s.state == "stopped" %}
+          <span class="af-pill warn">Skipped:</span>
+          <span class="small">{% if s.note %}{{ s.note }}{% elif s.gen.bot_note %}the bot stopped ({{ s.gen.bot_note }}){% elif s.gen.status == "FAILED" %}it failed{% if s.gen.error %} ({{ s.gen.error }}){% endif %}{% else %}{{ s.gen.status | lower }}{% endif %}</span>
+          <a class="small" href="/generations/{{ s.gen.id }}/{{ 'by-hand' if s.gen.status == 'HAND' else 'script' }}">video #{{ s.gen.id }}</a>
+        {% elif s.state == "problem" %}
+          <span class="af-pill bad">Can't make it:</span>
+          <span class="small">{{ s.problem }}</span>
+        {% else %}
+          <span class="af-pill">Waiting</span>
+          {% if s.gen %}<span class="small muted">video #{{ s.gen.id }} wasn't finished: it's made again</span>{% endif %}
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
 </section>
 
 <section class="panel">
   <h2>Add a script</h2>
-  <form id="script-add" data-url="/autoflow/add">
-    <p class="muted small">From this device: a <strong>.md, .txt, PDF or Word (.docx)</strong> script, and if you like up to 3 pictures of its characters (JPG, PNG or WebP), used for this video only. It's saved in <code>{{ folder }}</code> and joins the list below.</p>
-    <label>Script <input type="file" name="script" accept=".md,.txt,.pdf,.docx" required></label>
-    <label>Character pictures (optional) <input type="file" name="pictures" accept="image/jpeg,image/png,image/webp" multiple></label>
-    <div class="actions"><button type="submit">Add script</button></div>
-    <p class="error" id="script-add-error" role="alert" hidden></p>
+  <form id="script-add" class="af-add" data-url="/autoflow/add">
+    <label class="af-drop">
+      <span><strong>Script</strong> · .md, .txt, PDF or Word</span>
+      <input type="file" name="script" accept=".md,.txt,.pdf,.docx" required>
+    </label>
+    <label class="af-drop">
+      <span><strong>Character pictures</strong> · optional, up to 3</span>
+      <input type="file" name="pictures" accept="image/jpeg,image/png,image/webp" multiple>
+    </label>
+    <div class="af-add-go"><button type="submit">Add script</button></div>
   </form>
-</section>
-
-<section class="panel">
-  {% if not scripts %}
-    <p class="muted">No scripts yet. Paste one into a new file in <code>{{ folder }}</code>, such as <code>06-my-story-24s.md</code>.</p>
-  {% else %}
-  <table class="rules-table">
-    <thead><tr><th>Script</th><th>Length</th><th>Where it is</th></tr></thead>
-    <tbody>
-    {% for s in scripts %}
-      <tr>
-        <td><a href="/autoflow/script?name={{ s.name | urlencode }}"><strong>{{ s.title }}</strong></a><br><span class="muted small">{{ s.name }}{{ s.source }}</span>
-          {% if s.pictures %}<br><span class="muted small">Character: {{ s.pictures | join(", ") }}</span>{% endif %}</td>
-        <td>{% if s.seconds %}{{ s.seconds }} s · {{ s.clips }} clip{{ '' if s.clips == 1 else 's' }}{% else %}–{% endif %}
-          {% if not s.problem %}<br><span class="muted small">{% if s.as_written %}Sent as written{% else %}Gemini splits it into clips (no CLIP 1, CLIP 2… layout){% endif %}</span>{% endif %}</td>
-        <td>
-          {% if s.state == "made" %}
-            <span class="ok-text">✓ Made</span> · <a href="/generations/{{ s.gen.id }}/script">video #{{ s.gen.id }}</a>
-          {% elif s.state == "making" %}
-            <span class="spinner"></span>
-            {% if s.gen.status == "PLANNING" %}Gemini is writing its clips{% elif s.gen.status == "REVIEW" %}Approving its script{% elif s.gen.status == "HAND" %}The bot is making it{% else %}Joining and saving{% endif %}
-            · <a href="/generations/{{ s.gen.id }}/by-hand">video #{{ s.gen.id }}</a>
-          {% elif s.state == "stopped" %}
-            <span class="warn">Skipped:</span>
-            {% if s.note %}{{ s.note }}{% elif s.gen.bot_note %}the bot stopped ({{ s.gen.bot_note }}){% elif s.gen.status == "FAILED" %}it failed{% if s.gen.error %} ({{ s.gen.error }}){% endif %}{% else %}{{ s.gen.status | lower }}{% endif %}
-            · <a href="/generations/{{ s.gen.id }}/{{ 'script' if s.gen.status == 'REVIEW' else 'by-hand' if s.gen.status == 'HAND' else 'script' }}">video #{{ s.gen.id }}</a>
-          {% elif s.state == "problem" %}
-            <span class="warn">Can't make it:</span> {{ s.problem }}
-          {% else %}
-            <span class="muted">Waiting{% if s.gen %} (video #{{ s.gen.id }} wasn't finished: it's made again){% endif %}</span>
-          {% endif %}
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% endif %}
+  <p class="muted small">From this device, saved in <code>{{ folder }}</code>. With pictures it's saved as a folder, and they're used for this video only.</p>
+  <p class="error" id="script-add-error" role="alert" hidden></p>
 </section>
 {% endblock %}

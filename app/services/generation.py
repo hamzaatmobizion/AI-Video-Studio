@@ -108,7 +108,13 @@ class GenerationService:
         no Gemini script. `bot` (by hand): given to the hand bot at once, as "Create Video" does."""
         by_hand = by_hand and provider == Provider.FLOW
         lock_frames = lock_frames and not by_hand
-        if self.p.generator() is None:
+        # an AutoFlow script written in clips goes to the hand bot as written: the worker is never asked (_layout)
+        as_written = (by_hand and bool(script_file) and bool(plan) and not check_clips and bool(scenes)
+                      and layout_clips(scenes[0], plan, SCENE_SECONDS[Provider.FLOW]) is not None)
+        if self.p.generator() is None and not as_written:
+            if by_hand and script_file:
+                raise UserError("Write this script in CLIP 1, CLIP 2… blocks, or set WORKER_URL and WORKER_API_KEY "
+                                "in .env so Gemini can split it.", 503)
             raise UserError("Video generation is off: set WORKER_URL and WORKER_API_KEY in .env.", 503)
         if self.p.storage(user_id) is None:
             raise UserError("Connect Google Drive in Settings first, so the video has somewhere to go.", 503)
@@ -785,10 +791,11 @@ class GenerationService:
         client = self.p.generator()
         with self.db.session() as s:
             gen = s.get(Generation, gen_id)
-            if client is None:
+            no_job = not gen.worker_job_id
+            # a by-hand video with no worker job carries on without one: its clips come from the hand bot
+            if client is None and not (gen.by_hand and no_job):
                 gen.status, gen.error = GenStatus.FAILED, "Video generation is off: WORKER_URL/WORKER_API_KEY not set."
                 return
-            no_job = not gen.worker_job_id
         if no_job:  # between scenes, or a crash mid-submit/mid-join: carry on from the database state
             self._continue(gen_id)
             return

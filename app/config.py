@@ -82,7 +82,9 @@ class Settings(BaseSettings):
         """Everything worth telling the owner about (shown by `doctor`)."""
         out = self.fatal_problems()
         if not self.worker_configured:
-            out.append("WORKER_URL / WORKER_API_KEY not set: video generation is disabled.")
+            out.append("WORKER_URL / WORKER_API_KEY not set: only AutoFlow scripts written in CLIP blocks can be made "
+                       "(by the hand bot). Studio, the Flow page, clip checks, character drawings and other AutoFlow "
+                       "scripts are off.")
         if self.BOT_API_KEY and not self.bot_configured:
             out.append("BOT_API_KEY must be at least 24 characters and BOT_USER_EMAIL set: the hand bot is off.")
         if not self.encryption_configured:

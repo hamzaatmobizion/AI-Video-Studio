@@ -376,6 +376,47 @@ def test_a_laid_out_script_skips_gemini_and_goes_to_the_bot_as_written(app, auth
     assert job["prompt"].rstrip().endswith("NEVER GIVE UP.")
 
 
+# ---- no worker set: a script written in clips still goes to the hand bot ----------
+def test_a_laid_out_script_is_made_without_the_worker(app, authed, drive_connected, net, folder, bot, tmp_path):
+    from tests.test_app import clip_bytes, tick
+    app.state.settings.WORKER_API_KEY = ""
+    (folder / "01-kite-16s.md").write_text(LAID_OUT)
+    headers = {"Authorization": f"Bearer {BOT_KEY}"}
+    assert authed.post("/autoflow/start").status_code == 200
+    [g] = gens(app)
+    assert g.status == GenStatus.HAND and len(g.scenes) == 2
+    for position in (1, 2):
+        job = authed.get("/bot/next", headers=headers).json()
+        assert job["gen_id"] == g.id and job["position"] == position
+        tick(app)  # the scheduler leaves a by-hand video alone with no worker set
+        r = authed.post(f"/bot/generations/{g.id}/scenes/{position}/clip", headers=headers,
+                        files={"clip": ("x.mp4", clip_bytes(tmp_path, f"s{position}"), "video/mp4")})
+        assert r.status_code == 200, r.text
+    tick(app)
+    assert gens(app)[0].status in (GenStatus.SAVING, GenStatus.READY), gens(app)[0].error
+    assert not net.worker.submits  # the worker was never asked
+
+
+def test_a_plain_script_without_the_worker_stops_the_run_saying_why(app, authed, drive_connected, folder, bot):
+    app.state.settings.WORKER_API_KEY = ""
+    (folder / "01-kite.md").write_text(script(8, "THE KITE"))  # not in CLIP blocks: Gemini would split it
+    assert authed.post("/autoflow/start").status_code == 200
+    assert gens(app) == []
+    state = json.loads((app.state.settings.VAR_DIR / "script_runs.json").read_text())
+    assert "Write this script in CLIP 1, CLIP 2" in next(iter(state.values()))["error"]
+
+
+def test_a_by_hand_video_between_scenes_carries_on_without_the_worker(app, authed, drive_connected, folder, bot):
+    from tests.test_app import tick
+    app.state.settings.WORKER_API_KEY = ""
+    (folder / "01-kite-16s.md").write_text(LAID_OUT)
+    authed.post("/autoflow/start")
+    g = gens(app)[0]
+    set_gen(app, g.id, status=GenStatus.GENERATING)  # as after a crash between scenes
+    tick(app)
+    assert gens(app)[0].status == GenStatus.HAND, gens(app)[0].error
+
+
 # ---- a stop that would happen again, a stuck video, a restart --------------------
 def test_a_captcha_stops_the_whole_run(app, authed, drive_connected, folder, bot):
     (folder / "01-kite.md").write_text(script(8, "THE KITE"))

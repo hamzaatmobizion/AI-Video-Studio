@@ -83,7 +83,7 @@ def test_file_dialog_keys_on_each_system(tmp_path, monkeypatch):
     for name, expected in [("mac", [("keys", ("command", "shift", "g")), ("paste", str(path.resolve())),
                                     ("press", "enter"), ("press", "enter")]),
                            ("windows", [("keys", ("alt", "n")), ("paste", str(path.resolve())), ("press", "enter")]),
-                           ("linux", [("keys", ("ctrl", "l")), ("paste", str(path.resolve())), ("press", "enter")])]:
+                           ("linux", [("keys", ("ctrl", "l")), ("paste", str(path.resolve())), ("click", "Open")])]:
         done = []
 
         class FakeScreen:
@@ -95,6 +95,12 @@ def test_file_dialog_keys_on_each_system(tmp_path, monkeypatch):
 
             def press(self, key):
                 done.append(("press", key))
+
+            def texts(self):  # the Linux dialog: its title and its Open button
+                return [Text("Open File", 500, 4, 90, 14), Text("Open", 1060, 814, 40, 14)]
+
+            def click_at(self, x, y):
+                done.append(("click", "Open" if (1060 <= x <= 1100 and 814 <= y <= 828) else (x, y)))
 
         importlib.import_module(f"handbot.system.{name}").put_file_path(FakeScreen(), path)
         assert done == expected, name
@@ -165,3 +171,40 @@ def test_windows_warns_of_display_scaling_until_its_buttons_are_captured(tmp_pat
     monkeypatch.setattr(windows, "chrome_problems", lambda *_a: [])
     out = windows.problems(config.BotSettings(_env_file=None))
     assert any("scaling is 150%" in p for p in out) is warned
+
+
+def test_linux_presses_enter_when_the_open_button_cant_be_read(tmp_path, monkeypatch):
+    import time
+
+    from handbot.system import linux
+
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    done = []
+
+    class FakeScreen:
+        keys = paste = lambda self, *a: None
+
+        def texts(self):
+            return [Text("Open File", 500, 4, 90, 14), Text("Cancel", 960, 814, 50, 14)]
+
+        def press(self, key):
+            done.append(key)
+
+    linux.put_file_path(FakeScreen(), tmp_path / "a.jpg")
+    assert done == ["enter"]
+
+
+def test_linux_reads_chromiums_settings_when_only_chromium_was_opened(tmp_path, monkeypatch):
+    from handbot.system import linux
+
+    seen = []
+    monkeypatch.setattr(linux, "CHROME_DIR", tmp_path / "google-chrome")
+    monkeypatch.setattr(linux, "CHROMIUM_DIR", tmp_path / "chromium")
+    monkeypatch.setattr(linux, "chrome_problems", lambda _s, d, _z: seen.append(d) or [])
+    s = type("S", (), {"TESSERACT_CMD": ""})()
+    linux.problems(s)
+    (tmp_path / "chromium").mkdir()
+    linux.problems(s)
+    (tmp_path / "google-chrome").mkdir()
+    linux.problems(s)
+    assert seen == [tmp_path / "google-chrome", tmp_path / "chromium", tmp_path / "google-chrome"]

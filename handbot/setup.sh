@@ -17,6 +17,8 @@ if [ "$(uname)" = "Linux" ]; then
   fi
   # the X screen library the mouse and keyboard go through won't start without this file, even an empty one
   [ -f ~/.Xauthority ] || touch ~/.Xauthority
+  # Chrome saves the clips here (DOWNLOAD_DIR), but a new server has no Downloads folder until its first download
+  mkdir -p ~/Downloads
 fi
 
 echo "Installing…"
@@ -27,6 +29,8 @@ touch .env
 if ! grep -q '^BOT_API_KEY=.\{24,\}' .env; then
   read -r -p "The app's address as this computer reaches it (Enter for the app on this computer): " url
   read -r -p "BOT_API_KEY (the same as the app's): " key
+  # the empty lines a copied .env.example has go first, so each setting is in .env once
+  sed -i.bak -e '/^APP_URL=$/d' -e '/^BOT_API_KEY=$/d' .env && rm -f .env.bak
   [ -n "$url" ] && echo "APP_URL=$url" >> .env
   echo "BOT_API_KEY=$key" >> .env
   echo "Saved to .env"

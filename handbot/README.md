@@ -78,7 +78,7 @@ The same bot runs on Windows and Linux. What differs is in `handbot/system/` (`m
 |---|---|---|---|
 | Screen's words read with | macOS's Vision | Tesseract | Tesseract |
 | Shortcuts | ⌘V, ⌘L, ⌘T | Ctrl+V, Ctrl+L, Ctrl+T | Ctrl+V, Ctrl+L, Ctrl+T |
-| File dialog | ⌘⇧G, the path, Enter, Enter | Alt+N (File name), the path, Enter | Ctrl+L, the path, Enter |
+| File dialog | ⌘⇧G, the path, Enter, Enter | Alt+N (File name), the path, Enter | Ctrl+L, the path, Open clicked (Enter there closes the dialog without the file) |
 | Back to your app's tab | macOS's control of Chrome's tabs | its tab clicked (`app_tab`), then Ctrl+L, the address, Enter (Ctrl+T for a new tab when it isn't open) | the same as Windows |
 | Permissions | Accessibility, Screen Recording | none | none |
 | Button pictures | `handbot/buttons/` | `handbot/buttons/windows/`, else the Mac's | `handbot/buttons/linux/`, else the Mac's |
@@ -109,7 +109,7 @@ DISPLAY=:1 fluxbox &
 x11vnc -display :1 -forever -localhost -rfbauth ~/.vnc/passwd &   # once before: x11vnc -storepasswd
 ```
 Reach VNC through an SSH tunnel (`ssh -L 5900:localhost:5900 server`, then a VNC viewer on `localhost:5900`). Then, in that screen:
-1. `DISPLAY=:1 ./handbot/setup.sh`: it installs Tesseract, xdotool and xclip (sudo) and the bot's packages, and asks for the app's address and `BOT_API_KEY`.
+1. `DISPLAY=:1 ./handbot/setup.sh`: it installs Tesseract, xdotool and xclip (sudo) and the bot's packages, makes `~/Downloads` (where Chrome saves the clips), and asks for the app's address and `BOT_API_KEY`. Google Chrome or Chromium (on an ARM server, the only one there) both work.
 2. In Chrome (`DISPLAY=:1 google-chrome &`): sign in to Google and Flow, turn off "Ask where to save each file", Flow at 100% zoom (Ctrl+0).
 3. Start the app and the bot with `DISPLAY=:1` set, such as `DISPLAY=:1 ./run.sh`, and keep Xvfb, fluxbox and x11vnc running (a systemd service each, or `tmux`).
 

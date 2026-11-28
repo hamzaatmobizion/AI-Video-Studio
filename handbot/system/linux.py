@@ -18,6 +18,7 @@ ZOOM_KEY = "Ctrl+0"
 FILE_DIALOG = "file dialog"
 TAB_CONTROL = False  # the app's page is opened with the keyboard (Ctrl+L or Ctrl+T, its address, Enter)
 CHROME_DIR = Path("~/.config/google-chrome").expanduser()
+CHROMIUM_DIR = Path("~/.config/chromium").expanduser()  # Chromium's (the only Chrome on an ARM server)
 BLACK_SHOT = "The screenshot is black: check the screen (Xvfb) is running and DISPLAY points at it."
 CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
 log = logging.getLogger("handbot")
@@ -100,11 +101,19 @@ def keep_awake() -> None:
 
 
 def put_file_path(sc, path: Path) -> None:
-    """In the open file dialog: Ctrl+L (its location box), the file's path, then Enter (Open)."""
+    """In the open file dialog: Ctrl+L (its location box), the file's path, then a click on its Open button (read off
+    the screen). Enter in the location box closes the dialog without picking the file, so it's pressed only if Open
+    can't be read."""
     sc.keys("ctrl", "l")
     time.sleep(0.4)
     sc.paste(str(path.resolve()))
-    sc.press("enter")
+    time.sleep(0.6)
+    opens = [t for t in sc.texts() if t.text.strip().lower() == "open"]  # the button, not the "Open File" title
+    if opens:
+        sc.click_at(*max(opens, key=lambda t: (t.y, t.x)).point())  # the lowest: the button at the dialog's bottom
+    else:
+        log.info("couldn't read the file dialog's Open button; pressing Enter")
+        sc.press("enter")
 
 
 def problems(s) -> list[str]:
@@ -123,4 +132,6 @@ def problems(s) -> list[str]:
         out.append("Install xdotool (sudo apt install xdotool): it brings Chrome to the front.")
     if not (shutil.which("xclip") or shutil.which("xsel")):
         out.append("Install xclip (sudo apt install xclip): the bot pastes prompts through the clipboard.")
-    return out + chrome_problems(s, CHROME_DIR, ZOOM_KEY)
+    # Google Chrome's settings, else Chromium's when only Chromium has been opened
+    chrome_dir = CHROMIUM_DIR if not CHROME_DIR.exists() and CHROMIUM_DIR.exists() else CHROME_DIR
+    return out + chrome_problems(s, chrome_dir, ZOOM_KEY)

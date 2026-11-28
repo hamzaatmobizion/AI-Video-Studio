@@ -9,19 +9,30 @@ import os
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import cv2  # noqa: E402
-import numpy as np  # noqa: E402
-import pyautogui  # noqa: E402
-import pyperclip  # noqa: E402
 
-from handbot import flow, system  # noqa: E402
-from handbot.config import SYSTEM, get_settings  # noqa: E402
-from handbot.screen import PICTURE_SCALE, Screen, to_scale  # noqa: E402
+def annotate(kind: str, title: str, message: str) -> None:
+    """A GitHub annotation (::error / ::notice): shown on the run's page and readable without signing in."""
+    print(f"::{kind} title={title}::" + message.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+
+
+try:
+    import cv2  # noqa: E402
+    import numpy as np  # noqa: E402
+    import pyautogui  # noqa: E402
+    import pyperclip  # noqa: E402
+
+    from handbot import flow, system  # noqa: E402
+    from handbot.config import SYSTEM, get_settings  # noqa: E402
+    from handbot.screen import PICTURE_SCALE, Screen, to_scale  # noqa: E402
+except Exception:  # noqa: BLE001
+    annotate("error", f"{sys.platform}: the bot's code doesn't load", traceback.format_exc()[-1500:])
+    raise
 
 OUT = Path(os.environ.get("OUT", "desktop-out")).resolve()
 OUT.mkdir(parents=True, exist_ok=True)
@@ -35,14 +46,21 @@ def shot(tag: str) -> None:
     SC.save(OUT / f"{SYSTEM}-{tag}.jpg")
 
 
+LAST_READ: list[str] = []
+
+
 def fail(message: str, tag: str) -> None:
     shot(f"FAIL-{tag}")
     print(f"✗ {message}")
+    annotate("error", f"{SYSTEM} {tag}", message)
+    if LAST_READ:
+        annotate("notice", f"{SYSTEM} {tag}: what Tesseract last read", "\n".join(LAST_READ[:60])[-3000:])
     sys.exit(1)
 
 
 def read() -> list:
     texts = SC.texts()
+    LAST_READ[:] = [f"{t.x},{t.y} {t.w}x{t.h}  {t.text}" for t in texts]
     (OUT / f"{SYSTEM}-last-read.txt").write_text("\n".join(f"{t.x},{t.y} {t.w}x{t.h}  {t.text}" for t in texts),
                                                   encoding="utf-8")
     return texts
@@ -109,6 +127,7 @@ def step_read() -> None:
     missing = [what for what, rx in checks.items() if not any(rx.search(s) for s in said)]
     if missing:
         fail(f"Tesseract didn't read {', '.join(missing)}", "read")
+    annotate("notice", f"{SYSTEM} read", "\n".join(said)[:3000])
     print("✓ Tesseract reads Flow-like text on a dark page")
 
 
@@ -178,4 +197,13 @@ def step_upload() -> None:
 
 
 if __name__ == "__main__":
-    globals()[f"step_{sys.argv[1]}"]()
+    try:
+        globals()[f"step_{sys.argv[1]}"]()
+    except SystemExit:
+        raise
+    except Exception:  # noqa: BLE001
+        shot(f"FAIL-{sys.argv[1]}")
+        annotate("error", f"{SYSTEM} {sys.argv[1]}: error", traceback.format_exc()[-2500:])
+        if LAST_READ:
+            annotate("notice", f"{SYSTEM} {sys.argv[1]}: what Tesseract last read", "\n".join(LAST_READ[:60])[-3000:])
+        sys.exit(1)

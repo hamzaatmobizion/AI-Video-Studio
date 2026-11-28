@@ -30,7 +30,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q xvfb fluxbox xdotool xclip xterm tesseract-ocr python3-tk
+          sudo apt-get install -y -q xvfb fluxbox xdotool xclip xterm tesseract-ocr python3-tk libgl1 libglib2.0-0
           Xvfb :99 -screen 0 1920x1080x24 &
           sleep 2
           DISPLAY=:99 fluxbox &

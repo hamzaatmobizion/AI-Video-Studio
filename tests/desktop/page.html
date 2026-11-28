@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Hand bot desktop test</title>
+<!-- A local page for tests/desktop_check.py: Flow-like text on a dark page, and an upload button (no Flow, no sign-in) -->
+<style>
+  body { background: #131314; color: #e3e3e3; font-family: Arial, sans-serif; margin: 40px; font-size: 22px; }
+  h1 { font-size: 34px; }
+  .bar { background: #1e1f20; border-radius: 24px; padding: 22px 28px; color: #9aa0a6; width: 620px; }
+  .failed { color: #f28b82; font-weight: bold; }
+  .banner { background: #3c4043; padding: 14px 20px; border-radius: 8px; width: 900px; }
+  label.up { display: inline-block; background: #e3e3e3; color: #131314; padding: 16px 30px; border-radius: 12px;
+             font-weight: bold; font-size: 26px; cursor: pointer; }
+  input { display: none; }
+  #chosen { font-size: 28px; color: #fff; margin-top: 18px; }
+</style>
+</head>
+<body>
+<h1>Hand bot desktop test</h1>
+<div class="bar">What do you want to create?</div>
+<p class="failed">Failed</p>
+<div class="banner">You're out of Google Flow credits. You can wait until they refresh.</div>
+<p><label class="up" for="f">UPLOAD MEDIA</label><input id="f" type="file"></p>
+<div id="chosen">Nothing chosen yet</div>
+<script>
+  const f = document.getElementById("f"), chosen = document.getElementById("chosen");
+  f.onchange = () => { chosen.textContent = "Chosen: " + f.files[0].name; };
+</script>
+</body>
+</html>

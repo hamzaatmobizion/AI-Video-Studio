@@ -1,0 +1,82 @@
+# The hand bot on GitHub's Windows and Linux test machines (real desktops), with its own code on a local test page:
+# no Google sign-in, no Flow. Runs on pushes to the handbot-desktop-test branch, or by hand. See tests/desktop_check.py.
+name: Hand bot desktop test
+
+on:
+  push:
+    branches: [handbot-desktop-test]
+  workflow_dispatch:
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      OUT: desktop-out
+      BOT_API_KEY: desktop-test-key-not-a-real-one-123
+      PYTHONUNBUFFERED: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Linux screen (Xvfb), window manager, Tesseract, xdotool, xclip
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb fluxbox xdotool xclip xterm tesseract-ocr python3-tk
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 2
+          DISPLAY=:99 fluxbox &
+          sleep 2
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          mkdir -p ~/Downloads ~/.config/google-chrome
+          touch ~/.config/google-chrome/"First Run"
+
+      - name: Windows Tesseract
+        if: runner.os == 'Windows'
+        run: |
+          choco install tesseract -y --no-progress
+          New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Google\Chrome\User Data" | Out-Null
+          New-Item -ItemType File -Force "$env:LOCALAPPDATA\Google\Chrome\User Data\First Run" | Out-Null
+          New-Item -ItemType Directory -Force "$env:USERPROFILE\Downloads" | Out-Null
+
+      - name: Install the bot (requirements-bot.txt)
+        run: python -m pip install -q -r requirements-bot.txt
+
+      - name: 1 The bot's code loads
+        run: python tests/desktop_check.py imports
+      - name: 2 Screenshots
+        run: python tests/desktop_check.py screenshot
+      - name: 3 Clipboard
+        run: python tests/desktop_check.py clipboard
+      - name: 4 Chrome opens the test page (address pasted)
+        run: python tests/desktop_check.py page
+      - name: 5 Tesseract reads Flow-like text
+        if: always()
+        run: python tests/desktop_check.py read
+      - name: 6 Chrome brought to the front
+        if: always()
+        run: python tests/desktop_check.py front
+      - name: 7 A captured button is found again
+        if: always()
+        run: python tests/desktop_check.py match
+      - name: 8 Upload through the real file dialog
+        if: always()
+        run: python tests/desktop_check.py upload
+      - name: 9 handbot check
+        if: always()
+        run: python -m handbot check
+
+      - name: Screenshots of every step
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: desktop-out

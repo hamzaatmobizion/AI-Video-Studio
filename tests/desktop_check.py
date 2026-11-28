@@ -160,11 +160,10 @@ def step_read() -> None:
 
 
 def _active_title() -> str:
-    if SYSTEM == "mac":  # the app in front (no permission needed to ask)
-        from AppKit import NSWorkspace
-
-        app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        return app.localizedName() if app else ""
+    if SYSTEM == "mac":  # the app in front, from macOS's lsappinfo (NSWorkspace in this program wouldn't be up to date)
+        front = subprocess.run(["lsappinfo", "front"], capture_output=True, text=True).stdout.strip()
+        out = subprocess.run(["lsappinfo", "info", "-only", "name", front], capture_output=True, text=True).stdout
+        return out.split("=", 1)[-1].strip().strip('"')
     if SYSTEM == "windows":
         import pygetwindow as gw
 

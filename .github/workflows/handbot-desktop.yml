@@ -36,6 +36,7 @@ jobs:
           DISPLAY=:99 fluxbox &
           sleep 2
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          touch ~/.Xauthority
           mkdir -p ~/Downloads ~/.config/google-chrome
           touch ~/.config/google-chrome/"First Run"
 

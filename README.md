@@ -31,6 +31,19 @@ Then open http://localhost:8000 (or your `APP_PORT`), click **Create one** to si
 
 Other commands: `./run.sh test`, `./run.sh doctor`, `./run.sh help`.
 
+### Linux and Windows
+- **Linux:** the same `./run.sh setup` and `./run.sh` (`sudo apt install ffmpeg` first). For the hand bot, start them
+  on its screen, such as `DISPLAY=:1 ./run.sh` (see [handbot/README.md](handbot/README.md), "On a Windows or Linux server").
+- **Windows** (PowerShell, from the project folder; Python 3 from python.org with "Add to PATH", Chrome and Git
+  installed):
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File run.ps1 setup            # .venv, deps, Chromium, FFmpeg (winget), .env
+  powershell -ExecutionPolicy Bypass -File handbot\setup.ps1        # the hand bot's settings and check
+  powershell -ExecutionPolicy Bypass -File run.ps1                  # web app + worker; Ctrl+C stops both
+  ```
+  `run.ps1` takes the same `test`, `doctor` and `help`. For the hand bot keep the desktop signed in and unlocked, with
+  Display → Scale at 100%.
+
 ## Google Flow (second screen)
 The **Flow** screen (`/flow`) is the same Studio (prompt, duration, characters, review, lock characters, clip
 checks), but every clip is made in **Google Flow** (labs.google/fx/tools/flow) with **Veo 3.1 - Lite**, paid with

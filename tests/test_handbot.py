@@ -144,3 +144,24 @@ def test_linux_brings_chrome_forward_until_it_has_the_keyboard(monkeypatch):
     assert [c for c in done if c[1] == "windowfocus"] == [("xdotool", "windowfocus", "--sync", "22")] * 3
     assert not any("click" in " ".join(c) for c in done)  # never clicked into
 
+
+
+@pytest.mark.parametrize("dpi, captured, warned", [(144, False, True), (96, False, False), (144, True, False)])
+def test_windows_warns_of_display_scaling_until_its_buttons_are_captured(tmp_path, monkeypatch, dpi, captured, warned):
+    import ctypes
+    from types import SimpleNamespace
+
+    from handbot import config
+    from handbot.system import windows
+
+    monkeypatch.setattr(config, "HERE", tmp_path)
+    monkeypatch.setattr(config, "SYSTEM", "windows")
+    (tmp_path / "buttons" / "windows").mkdir(parents=True)
+    if captured:
+        (tmp_path / "buttons" / "windows" / "generate.png").write_bytes(b"windows")
+    fake = SimpleNamespace(user32=SimpleNamespace(GetDpiForSystem=lambda: dpi))
+    monkeypatch.setattr(ctypes, "windll", fake, raising=False)
+    monkeypatch.setattr(windows.ocr, "tesseract_cmd", lambda _c: "tesseract")
+    monkeypatch.setattr(windows, "chrome_problems", lambda *_a: [])
+    out = windows.problems(config.BotSettings(_env_file=None))
+    assert any("scaling is 150%" in p for p in out) is warned

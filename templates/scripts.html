@@ -35,7 +35,7 @@
       <span class="af-chip warn">{% if no_credits %}○ The bot was stopped because Flow is out of credits. Start starts it again.{% else %}○ The bot isn't running.{% if not running %} Start starts it too.{% endif %}{% endif %}</span>
       <button type="button" class="secondary af-small" data-post="/autoflow/bot" data-reload>Start the bot</button>
     {% else %}
-      <span class="af-chip warn">○ The bot isn't running. Start it on its Mac with <code>python -m handbot run</code> (BOT_AUTOSTART is off).</span>
+      <span class="af-chip warn">○ The bot isn't running. Start it on its computer with <code>python -m handbot run</code> (BOT_AUTOSTART is off).</span>
     {% endif %}
   </div>
 
@@ -67,7 +67,13 @@
     <details class="af-alert">
       <summary><strong>⚠ The bot exited.</strong> Its last words</summary>
       <pre class="small">{{ bot_exited }}</pre>
+      {% if platform == "windows" %}
+      <p class="muted small">A black screenshot or no clicks means the Windows desktop is locked or hidden: keep it signed in and unlocked (after Remote Desktop, disconnect with the <code>tscon</code> command in handbot/README.md), with Display → Scale at 100%, and start the app again with <code>.\run.ps1</code>.</p>
+      {% elif platform == "linux" %}
+      <p class="muted small">A black screenshot or no clicks means the bot has no screen: check the virtual screen (Xvfb) and its window manager are running and the app was started with <code>DISPLAY</code> set (such as <code>DISPLAY=:1 ./run.sh</code>), then start it again.</p>
+      {% else %}
       <p class="muted small">A black screenshot or no clicks means macOS hasn't allowed the app that runs <code>./run.sh</code> (Terminal, or VS Code) to control the Mac: turn it on in System Settings → Privacy &amp; Security → Accessibility and Screen Recording, restart it, and start the app again.</p>
+      {% endif %}
     </details>
   {% endif %}
 

@@ -1,4 +1,4 @@
-"""The hand bot's routes (handbot/ on its own Mac): it takes the by-hand scene that's waiting, makes the clip in
+"""The hand bot's routes (handbot/ on its own computer: macOS, Windows or Linux): it takes the by-hand scene that's waiting, makes the clip in
 Google Flow with the real mouse and keyboard, and uploads it. Signed in with BOT_API_KEY, not a session."""
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from pydantic import BaseModel

@@ -27,4 +27,8 @@ Write-Host ""
 Read-Host "Open Flow in Chrome (signed in), then press Enter to check the buttons on the screen"
 .\.venv\Scripts\python -m handbot check
 Write-Host ""
-Write-Host "Start the bot with:  .venv\Scripts\python -m handbot run"
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    Write-Host "FFmpeg isn't installed: the app on this computer needs it to join the clips (.\run.ps1 setup installs it)."
+}
+Write-Host "Run the app and the bot here:  .\run.ps1 setup  (once), then  .\run.ps1  and AutoFlow's Start starts the bot."
+Write-Host "Or start the bot on its own (the app on another computer):  .venv\Scripts\python -m handbot run"

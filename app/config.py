@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     # The hand bot (handbot/) makes by-hand Flow clips for this user, signing in with this key
     BOT_API_KEY: str = ""
     BOT_USER_EMAIL: str = ""
-    BOT_AUTOSTART: bool = True  # AutoFlow's Start runs the bot (on this Mac) unless it's running; false: bot elsewhere
+    BOT_AUTOSTART: bool = True  # AutoFlow's Start runs the bot (on this computer) unless it's running; false: bot elsewhere
 
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""

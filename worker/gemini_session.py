@@ -1,8 +1,8 @@
 """Exclusive use of the browser profile, the manual sign-in window, and the session check."""
-import fcntl
 import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -11,6 +11,33 @@ from worker.config import WorkerSettings
 from worker.jobs import JobStore
 
 log = logging.getLogger("worker.session")
+
+if sys.platform.startswith("win"):
+    import msvcrt
+
+    # Windows locks a byte range, not the whole file: a byte well past the holder's name, so the name stays readable
+    LOCK_AT = 1 << 20
+
+    def _lock(fd: int) -> None:
+        """Raises OSError if another process holds the lock."""
+        os.lseek(fd, LOCK_AT, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        finally:
+            os.lseek(fd, 0, os.SEEK_SET)
+
+    def _unlock(fd: int) -> None:
+        os.lseek(fd, LOCK_AT, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock(fd: int) -> None:
+        """Raises OSError if another process holds the lock."""
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 # Playwright's driver was killed mid-check, e.g. by Ctrl+C on ./run.sh.
@@ -24,7 +51,7 @@ class Busy(Exception):
 
 
 class ProfileLock:
-    """Cross-process lock on the browser profile (flock), so generation, the session check and the
+    """Cross-process lock on the browser profile (flock; on Windows msvcrt.locking), so generation, the session check and the
     sign-in window (from the server or the CLI) never open the profile at the same time."""
 
     def __init__(self, path):
@@ -38,11 +65,12 @@ class ProfileLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock(fd)
         except OSError:
             os.close(fd)
             return False
         os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
         os.write(fd, holder.encode())
         self._fd, self.holder = fd, holder
         return True
@@ -50,7 +78,7 @@ class ProfileLock:
     def release(self, holder: str) -> None:
         if self._fd is None or self.holder != holder:
             return
-        fcntl.flock(self._fd, fcntl.LOCK_UN)
+        _unlock(self._fd)
         os.close(self._fd)
         self._fd, self.holder = None, None
 
@@ -142,7 +170,7 @@ class GeminiSession:
         if self.checking:
             return self.status()
         if self.window_open:
-            raise Busy(f"Quit the {self.name} sign-in window first (⌘Q in that window).")
+            raise Busy(f"Quit the {self.name} sign-in window first (⌘Q, or Ctrl+Shift+Q on Windows and Linux, in that window).")
         if self.lock.holder is not None or self.lock.held_by_other_process():
             raise Busy("The browser profile is busy (a video is being generated). Check again when it finishes.")
         self.check_in_background()
@@ -200,7 +228,7 @@ class GeminiSession:
 
     def check(self) -> dict:
         if self.window_open:
-            raise Busy(f"Quit the {self.name} sign-in window first (⌘Q in that window).")
+            raise Busy(f"Quit the {self.name} sign-in window first (⌘Q, or Ctrl+Shift+Q on Windows and Linux, in that window).")
         if not self.lock.try_acquire("session-check"):
             raise Busy("The browser profile is busy (a video is being generated). Check again when it finishes.")
         try:

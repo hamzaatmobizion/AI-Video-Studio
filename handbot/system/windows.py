@@ -97,10 +97,26 @@ def put_file_path(sc, path: Path) -> None:
     sc.press("enter")
 
 
+def scaling() -> int:
+    """Windows' display scaling, in percent (100 at 96 dots per inch). pyautogui has made this program DPI-aware, so
+    the screen is seen in its real pixels; 100 if it can't be read."""
+    import ctypes
+
+    try:
+        return round(ctypes.windll.user32.GetDpiForSystem() * 100 / 96)
+    except (AttributeError, OSError):
+        return 100
+
+
 def problems(s) -> list[str]:
-    """What this Windows computer still needs: Tesseract, and Chrome saving downloads into DOWNLOAD_DIR without
-    asking, at 100% zoom on Flow."""
+    """What this Windows computer still needs: Tesseract, display scaling at 100% (unless the buttons were captured
+    here), and Chrome saving downloads into DOWNLOAD_DIR without asking, at 100% zoom on Flow."""
     out = []
+    pct = scaling()
+    if pct != 100 and not any(s.capture_dir.glob("*.png")):
+        # the Mac's button pictures are matched at 100%: at 150% Flow's buttons are half as big again on the screen
+        out.append(f"Windows display scaling is {pct}%: set Settings → System → Display → Scale to 100%, or capture "
+                   "the buttons on this computer (python -m handbot capture <button>).")
     if ocr.tesseract_cmd(s.TESSERACT_CMD) is None:
         out.append("Install Tesseract (winget install UB-Mannheim.TesseractOCR), or set TESSERACT_CMD in .env.")
     return out + chrome_problems(s, CHROME_DIR, ZOOM_KEY)

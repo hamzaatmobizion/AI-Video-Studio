@@ -1649,3 +1649,18 @@ def test_api_failure_while_profile_busy_retries_later(ws, store, lock):
     store.update(jid, not_before=None)
     runner.tick()
     assert store.get(jid)["status"] == "done"
+
+
+def test_chrome_is_found_where_its_windows_installer_puts_it(tmp_path, monkeypatch):
+    from worker import gemini_browser
+
+    exe = tmp_path / "Local" / "Google" / "Chrome" / "Application" / "chrome.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    monkeypatch.setattr(gemini_browser.sys, "platform", "win32")
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "none"))
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    assert gemini_browser._chrome_path() == str(exe)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "none"))
+    assert gemini_browser._chrome_path() == "chrome.exe"  # not installed there: Windows looks on PATH

@@ -1,10 +1,10 @@
 """The hand bot started by the app (AutoFlow's Start), so nobody has to run `python -m handbot run` in a terminal.
 
-Only for a bot on this same Mac (BOT_AUTOSTART, on by default): it's `python -m handbot run` from the project folder,
+Only for a bot on this same computer (BOT_AUTOSTART, on by default): it's `python -m handbot run` from the project folder,
 with its output in var/logs/handbot.log, and it stops with the app. A bot already running (started in a terminal, or
-on another Mac) is left alone: the app knows it by its asking for work (GenerationService.bot_online).
+on another computer) is left alone: the app knows it by its asking for work (GenerationService.bot_online).
 
-The bot moves the mouse and takes screenshots, which macOS allows only to the app that started it: the terminal that
+On macOS, the bot moves the mouse and takes screenshots, which macOS allows only to the app that started it: the terminal that
 runs ./run.sh needs Accessibility and Screen Recording, as when the bot is started there by hand.
 """
 import logging

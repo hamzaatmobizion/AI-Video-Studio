@@ -1,5 +1,6 @@
 import asyncio
 import re
+import sys
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -157,6 +158,10 @@ def by_hand_page(gen_id: int, request: Request, user=Depends(require_page_user))
                   bot_ready=settings.bot_configured,bot_online=svc.bot_online())
 
 
+# the system this app (and a bot it starts) runs on, as handbot/config.py names it: mac, windows or linux
+PLATFORM = "mac" if sys.platform == "darwin" else "windows" if sys.platform.startswith("win") else "linux"
+
+
 @router.get("/autoflow", response_class=HTMLResponse)
 def scripts_page(request: Request, user=Depends(require_page_user)):
     """The scripts in the scripts folder, and the run that has the hand bot make them one after another."""
@@ -169,7 +174,7 @@ def scripts_page(request: Request, user=Depends(require_page_user)):
     return render(request, "scripts.html", scripts=runs.scripts(user.id), running=bool(run.get("started")),
                   error=error, folder=runs.folder.resolve(), bot_ready=st.settings.bot_configured,
                   bot_online=st.bot.running(), bot_exited="" if no_credits else st.bot.exited(),
-                  no_credits=no_credits, autostart=st.settings.BOT_AUTOSTART)
+                  no_credits=no_credits, autostart=st.settings.BOT_AUTOSTART, platform=PLATFORM)
 
 
 @router.get("/autoflow/script", response_class=HTMLResponse)
@@ -192,12 +197,12 @@ def script_picture(request: Request, name: str, n: int, user=Depends(require_pag
 
 @router.post("/autoflow/bot")
 def start_bot(request: Request, user=Depends(require_post)):
-    """AutoFlow's "Start the bot": runs the hand bot on this Mac, so no terminal is needed."""
+    """AutoFlow's "Start the bot": runs the hand bot on this computer, so no terminal is needed."""
     st = request.app.state
     if not st.settings.bot_configured:
         raise UserError("The hand bot isn't set up: BOT_API_KEY and BOT_USER_EMAIL aren't set.")
     if not st.settings.BOT_AUTOSTART:
-        raise UserError("BOT_AUTOSTART is off in .env: start the bot on its own Mac.")
+        raise UserError("BOT_AUTOSTART is off in .env: start the bot on its own computer.")
     st.bot.ensure(force=True)
     return {"ok": True}
 

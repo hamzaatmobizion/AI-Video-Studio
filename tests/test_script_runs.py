@@ -240,6 +240,10 @@ def test_start_starts_the_bot_once(app, authed, drive_connected, folder, bot, mo
     (app.state.settings.VAR_DIR / "logs" / "handbot.log").write_text("✗ Screen Recording isn't allowed")
     page = authed.get("/autoflow").text
     assert "The bot exited" in page and "Screen Recording isn" in page
+    import app.routes.pages as pages  # the hint under its last words fits the computer the app runs on
+    for name, hint in [("mac", "Accessibility and Screen Recording"), ("windows", "tscon"), ("linux", "Xvfb")]:
+        monkeypatch.setattr(pages, "PLATFORM", name)
+        assert hint in authed.get("/autoflow").text, name
     assert app.state.bot.ensure() is False  # not again within 5 minutes on its own
     assert authed.post("/autoflow/bot").status_code == 200 and FakeProc.last is not first  # the button does
     app.state.bot.stop()

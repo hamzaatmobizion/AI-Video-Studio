@@ -89,10 +89,12 @@ Run the app on the same desktop as the bot (it starts the bot itself, AutoFlow's
 
 ### Windows
 1. Sign in to the Windows desktop (Remote Desktop is fine). Set the power options so the screen never turns off or locks.
-2. Install Python 3 (python.org, tick "Add to PATH"), Google Chrome and Git, then get the project (`git clone`).
-3. From the project folder: `powershell -ExecutionPolicy Bypass -File handbot\setup.ps1`. It installs Tesseract (winget) and the bot's packages, and asks for the app's address and `BOT_API_KEY`.
-4. In Chrome: sign in to Google and Flow, Settings → Downloads: turn off "Ask where to save each file", Flow at 100% zoom (Ctrl+0).
-5. Start the bot: `.venv\Scripts\python -m handbot run` (or the app, which starts it).
+2. Settings → System → Display → **Scale: 100%**. The button pictures are the Mac's and match only at 100% (`check` warns otherwise); at another scale, capture every button on this computer instead.
+3. Install Python 3 (python.org, tick "Add to PATH"), Google Chrome and Git, then get the project (`git clone`).
+4. From the project folder, for the app on this computer too: `powershell -ExecutionPolicy Bypass -File run.ps1 setup`. It installs the app's, the worker's and the bot's packages, Playwright's Chromium and FFmpeg (winget), and makes `.env` with fresh secrets. Open a new PowerShell window afterwards so it finds `ffmpeg`.
+5. `powershell -ExecutionPolicy Bypass -File handbot\setup.ps1`. It installs Tesseract (winget) and the bot's packages, and asks for the app's address and `BOT_API_KEY`.
+6. In Chrome: sign in to Google and Flow, Settings → Downloads: turn off "Ask where to save each file", Flow at 100% zoom (Ctrl+0).
+7. Start the app and worker: `powershell -ExecutionPolicy Bypass -File run.ps1` (Ctrl+C stops both, and a bot the app started). AutoFlow's Start then starts the bot. With the app on another computer, start the bot on its own: `.venv\Scripts\python -m handbot run`.
 
 **Closing Remote Desktop** locks the session and hides the screen, and the bot then sees black. To leave it running, disconnect with this instead (in a Command Prompt run as administrator, on the server): `for /f "skip=1 tokens=3" %s in ('query user %USERNAME%') do tscon.exe %s /dest:console`. Start the app and the bot from a task that runs **when you sign in** (Task Scheduler, "Run only when user is logged on"), never as a Windows service, which has no screen.
 

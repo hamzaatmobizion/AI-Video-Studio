@@ -143,7 +143,7 @@ def cmd_doctor(_args) -> int:
             print(f"✓ {tool} found")
         else:
             ok = False
-            print(f"✗ {tool} not found (brew install ffmpeg / apt install ffmpeg)")
+            print(f"✗ {tool} not found (brew install ffmpeg / apt install ffmpeg / winget install Gyan.FFmpeg)")
     try:
         from pathlib import Path
 

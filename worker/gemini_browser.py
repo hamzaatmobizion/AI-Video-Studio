@@ -538,6 +538,13 @@ def stop_error(kind: str) -> GeneratorError:
 def _chrome_path() -> str:
     if sys.platform == "darwin":
         return "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    if sys.platform.startswith("win"):
+        # where Chrome's installer puts it (for every user, or only this one), as handbot/system/windows.py looks
+        for var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+            exe = Path(os.environ.get(var) or "") / "Google" / "Chrome" / "Application" / "chrome.exe"
+            if os.environ.get(var) and exe.is_file():
+                return str(exe)
+        return "chrome.exe"
     return "google-chrome"
 
 
@@ -564,11 +571,15 @@ def launch_kwargs(settings: WorkerSettings, headless: bool | None = None) -> dic
 
 # Gemini and Google Flow share the one profile, so this is either sign-in window (often Flow's)
 PROFILE_IN_USE = ("The worker's Chrome window (the Gemini or Google Flow sign-in window) is still open. Quit it "
-                  "(Chrome menu → Quit, or ⌘Q in that window), then click Check session.")
+                  "(Chrome menu → Exit/Quit, or ⌘Q / Ctrl+Shift+Q in that window), then click Check session.")
 
 
 def profile_browser_pid(settings: WorkerSettings) -> int | None:
-    """PID of a Chrome still running on the profile (from its SingletonLock "host-pid" link), else None."""
+    """PID of a Chrome still running on the profile (from its SingletonLock "host-pid" link), else None. Windows
+    Chrome has no SingletonLock link, so there it's None and launch_context's retries cover a Chrome still closing
+    (and there os.kill(pid, 0) would end the process instead of checking it)."""
+    if sys.platform.startswith("win"):
+        return None
     try:
         target = os.readlink(settings.profile_dir / "SingletonLock")
         pid = int(target.rsplit("-", 1)[1])

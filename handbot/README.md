@@ -1,6 +1,6 @@
 # Hand bot
 
-Makes **by-hand** Google Flow videos of any length on a Mac of its own, one 8-second clip per scene. All of a video's scenes are made in one Flow project, one after another: each scene after the first gets the previous clip's last frame among its pictures (the app adds it), so the scenes join smoothly. Pictures already uploaded to the project, such as the characters from scene 1, aren't uploaded again: the bot types the start of the picture's name in the picker's **Search assets** box and picks it there. Only new pictures (the last frame, a character who first shows up in this scene) are uploaded. Each picture is named by its content ("3fa2c1-boy-stude.jpg"), so the same character has the same name in every scene. A scene whose people were all in the scene before is made in Flow's **Frames** mode: the previous clip's last frame goes in **Start** (through its own "Select a frame image" picker), so the clip starts exactly from it and the scenes join without a jump; its prompt then says "as in the start frame" instead of "as in reference image N". A scene with someone new is made with **Ingredients**, their picture among them. The app decides which, and the video's by-hand page shows the same. After each scene's upload the bot clicks your app's tab and opens the video's by-hand page, where the next scene is shown waiting ("The bot is making scene 2 of 3…"); after the rest between clips it clicks the Flow tab (`flow_tab`) and makes that scene in the same project. After the last scene it shows the finished video on the app's Flow page. If the project isn't showing any more when the next scene's turn comes (or after a stop and Try again), it starts a new project for it; the last frame still carries the scene on. It uses your normal Chrome, moves the real mouse and types on the real keyboard. There's no Playwright and no automation flags.
+Makes **by-hand** Google Flow videos of any length on a computer of its own (a Mac, or a Windows or Linux server: see "On a Windows or Linux server"), one 8-second clip per scene. All of a video's scenes are made in one Flow project, one after another: each scene after the first gets the previous clip's last frame among its pictures (the app adds it), so the scenes join smoothly. Pictures already uploaded to the project, such as the characters from scene 1, aren't uploaded again: the bot types the start of the picture's name in the picker's **Search assets** box and picks it there. Only new pictures (the last frame, a character who first shows up in this scene) are uploaded. Each picture is named by its content ("3fa2c1-boy-stude.jpg"), so the same character has the same name in every scene. A scene whose people were all in the scene before is made in Flow's **Frames** mode: the previous clip's last frame goes in **Start** (through its own "Select a frame image" picker), so the clip starts exactly from it and the scenes join without a jump; its prompt then says "as in the start frame" instead of "as in reference image N". A scene with someone new is made with **Ingredients**, their picture among them. The app decides which, and the video's by-hand page shows the same. After each scene's upload the bot clicks your app's tab and opens the video's by-hand page, where the next scene is shown waiting ("The bot is making scene 2 of 3…"); after the rest between clips it clicks the Flow tab (`flow_tab`) and makes that scene in the same project. After the last scene it shows the finished video on the app's Flow page. If the project isn't showing any more when the next scene's turn comes (or after a stop and Try again), it starts a new project for it; the last frame still carries the scene on. It uses your normal Chrome, moves the real mouse and types on the real keyboard. There's no Playwright and no automation flags.
 
 For each scene that's waiting, the bot does this:
 1. It takes the prompt and pictures from the app.
@@ -71,6 +71,47 @@ The settings options are matched whether they're selected (white) or not (dark),
 
 If a Chrome tab has Flow open, the bot uses that tab: it clicks it in the tab bar (`flow_tab`) if it isn't the one in front, and never opens a second Flow tab. Then it goes straight to Flow's home page there (clicking ⌂ on a project page, `flow_home`) and starts a new project, without searching. Only when no Flow tab is open is Flow opened by searching Google and clicking Flow's result. The bot never types Flow's address. Each time it picks one search at random from `SEARCHES` in `flow.py` ("google flow", "googleflow", "flow google", "google labs flow" and others). About 4 times in 10 it types only the start of the search and takes one of Chrome's suggestions with the arrow keys. On Google's results it clicks Flow's grey `https://flow.google.com` line (`search_result_flow`), or else a link that reads just "Google Flow", read off the screen (such as the one listed under Google's own result when the search ended up as just "google"). If that doesn't end on Google's results with Flow in them, or on Flow itself, it scrolls down once, then searches "google flow" the plain way.
 
+## On a Windows or Linux server
+The same bot runs on Windows and Linux. What differs is in `handbot/system/` (`mac.py`, `windows.py`, `linux.py`); the Flow steps are the same everywhere:
+
+| | Mac | Windows | Linux |
+|---|---|---|---|
+| Screen's words read with | macOS's Vision | Tesseract | Tesseract |
+| Shortcuts | ⌘V, ⌘L, ⌘T | Ctrl+V, Ctrl+L, Ctrl+T | Ctrl+V, Ctrl+L, Ctrl+T |
+| File dialog | ⌘⇧G, the path, Enter, Enter | Alt+N (File name), the path, Enter | Ctrl+L, the path, Enter |
+| Back to your app's tab | macOS's control of Chrome's tabs | its tab clicked (`app_tab`), then Ctrl+L, the address, Enter (Ctrl+T for a new tab when it isn't open) | the same as Windows |
+| Permissions | Accessibility, Screen Recording | none | none |
+| Button pictures | `handbot/buttons/` | `handbot/buttons/windows/`, else the Mac's | `handbot/buttons/linux/`, else the Mac's |
+
+Until a button is captured on Windows or Linux, the Mac's picture is used (Flow's page looks almost the same in every Chrome). `check` says "(the Mac's picture)" next to those. Capture again, on that computer, any that `check` doesn't find while they're on the screen. Chrome's own parts (`flow_tab`, the tab bar) and the file dialog look different, so expect to capture those. Reading the screen with Tesseract is slower than on a Mac; `OCR_SCALE` (2) sets how much screenshots are enlarged first: lower is faster, higher reads small text better.
+
+Run the app on the same desktop as the bot (it starts the bot itself, AutoFlow's Start), so the bot has the screen, mouse and keyboard.
+
+### Windows
+1. Sign in to the Windows desktop (Remote Desktop is fine). Set the power options so the screen never turns off or locks.
+2. Install Python 3 (python.org, tick "Add to PATH"), Google Chrome and Git, then get the project (`git clone`).
+3. From the project folder: `powershell -ExecutionPolicy Bypass -File handbot\setup.ps1`. It installs Tesseract (winget) and the bot's packages, and asks for the app's address and `BOT_API_KEY`.
+4. In Chrome: sign in to Google and Flow, Settings → Downloads: turn off "Ask where to save each file", Flow at 100% zoom (Ctrl+0).
+5. Start the bot: `.venv\Scripts\python -m handbot run` (or the app, which starts it).
+
+**Closing Remote Desktop** locks the session and hides the screen, and the bot then sees black. To leave it running, disconnect with this instead (in a Command Prompt run as administrator, on the server): `for /f "skip=1 tokens=3" %s in ('query user %USERNAME%') do tscon.exe %s /dest:console`. Start the app and the bot from a task that runs **when you sign in** (Task Scheduler, "Run only when user is logged on"), never as a Windows service, which has no screen.
+
+### Linux
+A server has no screen, so the bot gets a virtual one (Xvfb), with a small window manager so Chrome's window can be brought to the front, and VNC so you can see it, sign in and capture buttons. On Ubuntu or Debian:
+```
+sudo apt install xvfb fluxbox x11vnc
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && sudo apt install ./google-chrome-stable_current_amd64.deb
+Xvfb :1 -screen 0 1920x1080x24 &
+DISPLAY=:1 fluxbox &
+x11vnc -display :1 -forever -localhost -rfbauth ~/.vnc/passwd &   # once before: x11vnc -storepasswd
+```
+Reach VNC through an SSH tunnel (`ssh -L 5900:localhost:5900 server`, then a VNC viewer on `localhost:5900`). Then, in that screen:
+1. `DISPLAY=:1 ./handbot/setup.sh`: it installs Tesseract, xdotool and xclip (sudo) and the bot's packages, and asks for the app's address and `BOT_API_KEY`.
+2. In Chrome (`DISPLAY=:1 google-chrome &`): sign in to Google and Flow, turn off "Ask where to save each file", Flow at 100% zoom (Ctrl+0).
+3. Start the app and the bot with `DISPLAY=:1` set, such as `DISPLAY=:1 ./run.sh`, and keep Xvfb, fluxbox and x11vnc running (a systemd service each, or `tmux`).
+
+The screen must be X11, not Wayland. Xvfb is X11.
+
 ## Run
 ```
 .venv/bin/python -m handbot run
@@ -85,6 +126,6 @@ The bot stops on a video, tells your app why and switches Chrome to your app, wh
 - Chrome is signed out
 - it can't find a button
 
-A Mac notification with a sound tells you it stopped. Pop-ups that only ask you to agree ("I agree", "Got it", "Accept", "OK"…) are read off the screen with macOS's text recognition and clicked, except any that mention payment, credits or a plan: those stop the bot.
+A Mac notification with a sound tells you it stopped (on Windows and Linux servers, the bot's log and the video's page do). Pop-ups that only ask you to agree ("I agree", "Got it", "Accept", "OK"…) are read off the screen (macOS's text recognition, or Tesseract) and clicked, except any that mention payment, credits or a plan: those stop the bot.
 
 The video stays waiting in the app: press **Try again** there and the bot takes it again, or **Make it myself** to make the clip on its by-hand page.

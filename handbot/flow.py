@@ -7,6 +7,7 @@ import shutil
 import time
 from pathlib import Path
 
+from handbot import system
 from handbot.config import BotSettings
 from handbot.screen import Match, Screen, Text, chrome_front, show_app_page
 
@@ -223,11 +224,11 @@ class FlowHand:
             return
         log.info("searching Google for Flow (%s)", "couldn't reach Flow's home page in its tab" if on_flow
                  else "no Flow tab open")
-        self.sc.keys("command", "l" if on_flow else "t")  # never search in a tab that isn't Flow's (yours)
+        self.sc.keys(system.MOD, "l" if on_flow else "t")  # never search in a tab that isn't Flow's (yours)
         self._search(random.choice(SEARCHES))
         if not self._reach_flow():  # the search or suggestion led elsewhere: search the plain way once
             log.info("that search didn't lead to Flow; searching again")
-            self.sc.keys("command", "l")
+            self.sc.keys(system.MOD, "l")
             self._search("google flow", suggest=False)
             if not self._reach_flow():
                 self._blocked()
@@ -379,7 +380,8 @@ class FlowHand:
         """One picture in through a picker that `opener` opens (+, or Start in Frames mode). One uploaded to this
         project before (a character in an earlier scene) is found by its name in the picker's list and picked; a new
         one (such as the previous clip's last frame), or one that can't be picked, is uploaded: Upload media, then the
-        Mac file dialog (the path pasted after ⌘⇧G), and the upload is picked in the list. Then Add to prompt."""
+        file dialog (the path pasted: after ⌘⇧G on a Mac, into File name on Windows, after Ctrl+L on Linux), and the
+        upload is picked in the list. Then Add to prompt."""
         self._click(opener)
         picked = self._pick_uploaded(path, picker) if path.name in self.uploaded else None
         if picked == "added":  # clicking the row added it at once
@@ -390,13 +392,7 @@ class FlowHand:
         if self.sc.find("upload_media", 3) is None:  # the picker closed meanwhile: open it again
             self._click(opener)
         self._open_file_dialog(path)
-        self.sc.keys("command", "shift", "g")
-        time.sleep(0.6)
-        # pasted, not typed: key by key, the temp folder's "__" opened the Emoji viewer, which took the rest
-        self.sc.paste(str(path.resolve()))
-        self.sc.press("enter")
-        time.sleep(random.uniform(0.8, 1.4))
-        self.sc.press("enter")  # Open
+        system.put_file_path(self.sc, path)
         time.sleep(random.uniform(4, 6))  # the upload; it's put first in the list
         anchor = self.sc.find(picker[0], 10)
         if anchor is None:
@@ -410,19 +406,19 @@ class FlowHand:
         self.uploaded.add(path.name)
 
     def _open_file_dialog(self, path: Path) -> None:
-        """Click Upload media and wait for the Mac file dialog (its Cancel and Open buttons read off the screen), so
+        """Click Upload media and wait for the file dialog (its Cancel and Open buttons read off the screen), so
         the path is never typed into Flow's page instead. Clicked once more if it doesn't open."""
         for attempt in range(2):
             self._click("upload_media", 6)
             end = time.monotonic() + 8
             while time.monotonic() < end:
                 time.sleep(1)
-                words = {t.text.strip().lower() for t in self.sc.texts()}
-                if {"cancel", "open"} <= words:
+                if system.dialog_open([t.text for t in self.sc.texts()]):
                     time.sleep(random.uniform(0.3, 0.8))
                     return
             log.info("the file dialog didn't open for %s (try %d)", path.name, attempt + 1)
-        raise self._stop(f"The Mac file dialog didn't open after clicking Upload media for {path.name}.", "file_dialog")
+        raise self._stop(f"The {system.FILE_DIALOG} didn't open after clicking Upload media for {path.name}.",
+                         "file_dialog")
 
     def _pick_uploaded(self, path: Path, picker: tuple) -> str | None:
         """In the open picker, click the row of a picture uploaded to this project before (the list shows every upload
@@ -611,13 +607,20 @@ class FlowHand:
     def show_app(self, app_url: str, path: str = "/flow") -> None:
         """Back to your app: click its tab in Chrome's tab bar (by its purple ▶ icon), load `path` there (the Flow page,
         or between scenes the video's by-hand page with the next scene), then scroll down a few steps at a time. With
-        no tab of the app open, the page is opened in a new tab."""
+        no tab of the app open, the page is opened in a new tab. On a Mac the page is loaded through macOS's control
+        of Chrome's tabs; on Windows and Linux with the keyboard (Ctrl+L in the app's tab, or Ctrl+T, its address)."""
         chrome_front()
-        if self.sc.has("app_tab") and self.sc.find("app_tab", 2, **BUTTONS["app_tab"][2]):
+        on_app = self.sc.has("app_tab") and self.sc.find("app_tab", 2, **BUTTONS["app_tab"][2]) is not None
+        if on_app:
             self._click("app_tab", 2)
         else:
             log.info("no tab of your app in the tab bar; opening %s", path)
-        show_app_page(app_url, path)
+        if system.TAB_CONTROL:
+            show_app_page(app_url, path)
+        else:
+            self.sc.keys(system.MOD, "l" if on_app else "t")  # never in a Flow tab: the app's own tab, or a new one
+            self.sc.paste(app_url + path)
+            self.sc.press("enter")
         time.sleep(random.uniform(2, 4))  # the page updates itself once the video is in
         for _ in range(random.randint(2, 4)):  # down to the video, a few steps at a time
             self.sc.scroll(-random.randint(2, 5))

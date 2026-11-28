@@ -1,8 +1,8 @@
-"""The real screen, mouse and keyboard (macOS). Buttons are found by matching small pictures of them
-(handbot/buttons/<name>.png, taken with `python -m handbot capture`, kept in git) against a screenshot."""
+"""The real screen, mouse and keyboard (macOS, Windows or Linux: what differs is in handbot/system/). Buttons are
+found by matching small pictures of them (handbot/buttons/<name>.png, taken with `python -m handbot capture`, kept in
+git; on Windows and Linux handbot/buttons/<system>/<name>.png first) against a screenshot."""
 import json
 import random
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +12,10 @@ import numpy as np
 import pyautogui
 import pyperclip
 
+from handbot import system
 from handbot.config import BotSettings
+from handbot.system import chrome_front, notify, show_app_page  # noqa: F401 — used by flow.py and loop.py
+from handbot.system.base import Text
 
 pyautogui.FAILSAFE = True  # push the mouse into a screen corner to stop the bot at once
 pyautogui.PAUSE = 0.05
@@ -26,41 +29,6 @@ def to_scale(img: np.ndarray, k: float) -> np.ndarray:
     if abs(k - 1) < 0.01:
         return img
     return cv2.resize(img, None, fx=k, fy=k, interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
-
-
-@dataclass
-class Text:
-    """A line of text read off the screen, and where it is (mouse points)."""
-    text: str
-    x: int
-    y: int
-    w: int
-    h: int
-
-    def point(self) -> tuple[int, int]:
-        return (self.x + int(self.w * random.uniform(0.3, 0.7)), self.y + int(self.h * random.uniform(0.35, 0.65)))
-
-
-def read_text(image: Path, size: tuple[int, int]) -> list[Text]:
-    """The lines of text in a screenshot (macOS's own text recognition, on this Mac), placed on a screen `size`
-    points wide and high."""
-    import Vision
-    from Foundation import NSURL
-
-    req = Vision.VNRecognizeTextRequest.alloc().init()
-    req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
-    req.setUsesLanguageCorrection_(False)
-    handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(NSURL.fileURLWithPath_(str(image)), None)
-    ok, _ = handler.performRequests_error_([req], None)
-    out = []
-    for obs in (req.results() or []) if ok else []:
-        cand = obs.topCandidates_(1)
-        if not cand:
-            continue
-        (bx, by), (bw, bh) = obs.boundingBox()  # 0–1, from the bottom left
-        out.append(Text(str(cand[0].string()), int(bx * size[0]), int((1 - by - bh) * size[1]),
-                        int(bw * size[0]), int(bh * size[1])))
-    return out
 
 
 @dataclass
@@ -84,19 +52,19 @@ class Screen:
     # ---- seeing ----------------------------------------------------------
     def grab(self) -> np.ndarray:
         """The main display in grey, at its real pixel size (twice the mouse points on a Retina screen)."""
-        return cv2.cvtColor(np.array(pyautogui.screenshot()), cv2.COLOR_RGB2GRAY)
+        return cv2.cvtColor(np.array(system.grab()), cv2.COLOR_RGB2GRAY)
 
     def scale(self, shot: np.ndarray) -> float:
         return shot.shape[1] / pyautogui.size().width
 
     def has(self, name: str) -> bool:
-        return (self.s.buttons_dir / f"{name}.png").exists()
+        return self.s.button_path(name).exists()
 
     def _template(self, name: str, k: float) -> np.ndarray:
         """The button's picture at this screen's `k` pixels per point."""
         key = (name, round(k, 2))
         if key not in self._templates:
-            path = self.s.buttons_dir / f"{name}.png"
+            path = self.s.button_path(name)
             if not path.exists():
                 raise FileNotFoundError(f"No picture of '{name}': run  python -m handbot capture {name}")
             self._templates[key] = to_scale(cv2.imread(str(path), cv2.IMREAD_GRAYSCALE), k / PICTURE_SCALE)
@@ -157,9 +125,9 @@ class Screen:
     def texts(self) -> list[Text]:
         """Every line of text on the screen now."""
         path = self.s.BOT_DATA_PATH / "read.png"
-        subprocess.run(["screencapture", "-x", str(path)], check=True)
+        system.screenshot(path)
         try:
-            return read_text(path, self.size())
+            return system.read_text(path, self.size())
         finally:
             path.unlink(missing_ok=True)
 
@@ -184,7 +152,7 @@ class Screen:
         return True
 
     def save(self, path: Path) -> Path:
-        pyautogui.screenshot().convert("RGB").save(path, quality=70)
+        system.grab().convert("RGB").save(path, quality=70)
         return path
 
     # ---- the mouse -------------------------------------------------------
@@ -233,7 +201,7 @@ class Screen:
 
     # ---- the keyboard ----------------------------------------------------
     def keys(self, *keys: str) -> None:
-        """A shortcut such as keys("command", "t")."""
+        """A shortcut such as keys(system.MOD, "t"): ⌘T on a Mac, Ctrl+T on Windows and Linux."""
         pyautogui.hotkey(*keys, interval=0.08)
         time.sleep(random.uniform(0.2, 0.4))
 
@@ -248,10 +216,10 @@ class Screen:
             time.sleep(random.uniform(0.05, 0.16))
 
     def paste(self, text: str) -> None:
-        """Put the text on the clipboard and press ⌘V (keeps long and non-English text exact)."""
+        """Put the text on the clipboard and press ⌘V / Ctrl+V (keeps long and non-English text exact)."""
         pyperclip.copy(text)
         time.sleep(0.2)
-        self.keys("command", "v")
+        self.keys(system.MOD, "v")
 
     # ---- saved points ----------------------------------------------------
     def point(self, name: str) -> tuple[int, int] | None:
@@ -265,50 +233,3 @@ class Screen:
 def _detail(img: np.ndarray) -> np.ndarray:
     """The image less its blurred self: letters and edges stay, smooth colour behind them goes."""
     return cv2.subtract(img, cv2.GaussianBlur(img, (0, 0), 6))
-
-
-def chrome_front() -> None:
-    """Start Chrome (your own profile, signed in) if it isn't running, and bring it to the front. It's never quit."""
-    if subprocess.run(["pgrep", "-x", "Google Chrome"], capture_output=True).returncode != 0:
-        subprocess.run(["open", "-a", "Google Chrome"], check=True)
-        time.sleep(6)
-    subprocess.run(["osascript", "-e", 'tell application "Google Chrome" to activate'], check=True)
-    time.sleep(0.8)
-
-
-SHOW_PAGE = """
-on run argv
-    set target to item 1 of argv
-    set base to item 2 of argv
-    tell application "Google Chrome"
-        activate
-        repeat with w in windows
-            set i to 0
-            repeat with t in tabs of w
-                set i to i + 1
-                if (URL of t) starts with base then
-                    set active tab index of w to i
-                    set index of w to 1
-                    set URL of t to target
-                    return "found"
-                end if
-            end repeat
-        end repeat
-        tell window 1 to make new tab with properties {URL:target}
-        return "new"
-    end tell
-end run
-"""
-
-
-def show_app_page(base: str, path: str) -> None:
-    """Bring your app's tab in Chrome to the front (any tab already on the app, else a new one) and load `path` there.
-    macOS's own control of Chrome's tabs (the app's tab titles keep changing, so its tab can't be found by sight);
-    it never touches Flow's tabs."""
-    subprocess.run(["osascript", "-e", SHOW_PAGE, base + path, base], check=True, capture_output=True, timeout=60)
-
-
-def notify(title: str, message: str) -> None:
-    """A Mac notification with a sound, so you notice the bot needs you."""
-    script = "on run argv\n display notification (item 2 of argv) with title (item 1 of argv) sound name \"Glass\"\nend run"
-    subprocess.run(["osascript", "-e", script, title, message[:200]], capture_output=True, timeout=10)

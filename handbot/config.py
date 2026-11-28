@@ -1,10 +1,13 @@
-"""Hand bot settings, from the bot Mac's own .env."""
+"""Hand bot settings, from the bot computer's own .env."""
+import sys
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 HERE = Path(__file__).resolve().parent
+# the system the bot runs on (handbot/system/<SYSTEM>.py): mac, windows or linux
+SYSTEM = "mac" if sys.platform == "darwin" else "windows" if sys.platform.startswith("win") else "linux"
 
 
 class BotSettings(BaseSettings):
@@ -22,6 +25,11 @@ class BotSettings(BaseSettings):
     GENERATION_TIMEOUT_SECONDS: int = 900
     REFUND_RETRIES: int = 2  # a clip that fails with "credits refunded" is generated again up to this many times
     MATCH_CONFIDENCE: float = 0.85
+    # Windows and Linux only (macOS reads the screen with its own Vision): the Tesseract program if it isn't on PATH,
+    # the pixels per point screenshots are read at (small text reads better enlarged), and the least sure word kept
+    TESSERACT_CMD: str = ""
+    OCR_SCALE: float = 2.0
+    OCR_MIN_CONFIDENCE: float = 40
 
     @property
     def app_url(self) -> str:
@@ -29,7 +37,19 @@ class BotSettings(BaseSettings):
 
     @property
     def buttons_dir(self) -> Path:
+        """The button pictures taken on a Mac (handbot/buttons/)."""
         return HERE / "buttons"
+
+    @property
+    def capture_dir(self) -> Path:
+        """Where `capture` saves a button's picture: handbot/buttons/ on a Mac, handbot/buttons/windows/ or
+        handbot/buttons/linux/ on those (Chrome's tab bar and the file dialog look different there)."""
+        return self.buttons_dir if SYSTEM == "mac" else self.buttons_dir / SYSTEM
+
+    def button_path(self, name: str) -> Path:
+        """A button's picture: the one taken on this system if there is one, else the Mac's."""
+        own = self.capture_dir / f"{name}.png"
+        return own if own.exists() else self.buttons_dir / f"{name}.png"
 
     @property
     def clips_dir(self) -> Path:

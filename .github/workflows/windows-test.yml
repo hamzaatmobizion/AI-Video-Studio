@@ -40,6 +40,7 @@ jobs:
           "Chrome: $((Get-Item 'C:\Program Files\Google\Chrome\Application\chrome.exe' -ErrorAction SilentlyContinue).VersionInfo.ProductVersion)" | Out-File out\machine.txt -Append
           "Session: $((query user 2>&1) -join ' | ')" | Out-File out\machine.txt -Append
           .\report.ps1 "1 Machine" out\machine.txt
+          exit 0
 
       - name: run.ps1 setup (as written)
         continue-on-error: true
@@ -109,6 +110,7 @@ jobs:
           Get-Content out\*.txt -ErrorAction SilentlyContinue | Select-String "RESULT|passed|failed|error" | ForEach-Object { $_.Line } | Out-File out\summary.txt
           .\report.ps1 "0 Summary" out\summary.txt
           Get-Process python, chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          exit 0
 
       - uses: actions/upload-artifact@v4
         if: always()

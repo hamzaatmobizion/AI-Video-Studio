@@ -54,7 +54,7 @@ def fail(message: str, tag: str) -> None:
     print(f"✗ {message}")
     annotate("error", f"{SYSTEM} {tag}", message)
     if LAST_READ:
-        annotate("notice", f"{SYSTEM} {tag}: what Tesseract last read", "\n".join(LAST_READ[:60])[-3000:])
+        annotate("notice", f"{SYSTEM} {tag}: what was last read", "\n".join(LAST_READ[:60])[-3000:])
     sys.exit(1)
 
 
@@ -154,7 +154,7 @@ def step_read() -> None:
     checks = {"the prompt box's hint": flow.EMPTY_PROMPT, "\"Failed\"": flow.FAILED, "out of credits": flow.NO_CREDITS}
     missing = [what for what, rx in checks.items() if not any(rx.search(s) for s in said)]
     if missing:
-        fail(f"Tesseract didn't read {', '.join(missing)}", "read")
+        fail(f"{'Apple Vision' if SYSTEM == 'mac' else 'Tesseract'} didn't read {', '.join(missing)}", "read")
     annotate("notice", f"{SYSTEM} read", "\n".join(said)[:3000])
     print(f"✓ {'Apple Vision' if SYSTEM == 'mac' else 'Tesseract'} reads Flow-like text on a dark page")
 
@@ -240,5 +240,5 @@ if __name__ == "__main__":
         shot(f"FAIL-{sys.argv[1]}")
         annotate("error", f"{SYSTEM} {sys.argv[1]}: error", traceback.format_exc()[-2500:])
         if LAST_READ:
-            annotate("notice", f"{SYSTEM} {sys.argv[1]}: what Tesseract last read", "\n".join(LAST_READ[:60])[-3000:])
+            annotate("notice", f"{SYSTEM} {sys.argv[1]}: what was last read", "\n".join(LAST_READ[:60])[-3000:])
         sys.exit(1)

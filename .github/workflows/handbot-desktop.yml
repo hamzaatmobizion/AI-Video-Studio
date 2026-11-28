@@ -54,32 +54,44 @@ jobs:
           mkdir -p ~/Downloads "$HOME/Library/Application Support/Google/Chrome"
           touch "$HOME/Library/Application Support/Google/Chrome/First Run"
           ls -d "/Applications/Google Chrome.app" || brew install --cask google-chrome
+          # without this, macOS asks "downloaded from the Internet. Are you sure you want to open it?" and Chrome
+          # never opens (GitHub's Mac has Chrome from Homebrew; a Mac you set up yourself asks once, and you click Open)
+          xattr -dr com.apple.quarantine "/Applications/Google Chrome.app" || true
 
       - name: Install the bot (requirements-bot.txt)
         run: python -m pip install -q -r requirements-bot.txt
 
       - name: 1 The bot's code loads
+        timeout-minutes: 5
         run: python tests/desktop_check.py imports
       - name: 2 Screenshots
+        timeout-minutes: 5
         run: python tests/desktop_check.py screenshot
       - name: 3 Clipboard
+        timeout-minutes: 5
         run: python tests/desktop_check.py clipboard
       - name: 4 Chrome opens the test page (address pasted)
+        timeout-minutes: 5
         run: python tests/desktop_check.py page
       - name: 5 Flow-like text is read (Apple Vision on Mac, Tesseract elsewhere)
         if: always()
+        timeout-minutes: 5
         run: python tests/desktop_check.py read
       - name: 6 Chrome brought to the front
         if: always()
+        timeout-minutes: 5
         run: python tests/desktop_check.py front
       - name: 7 A captured button is found again
         if: always()
+        timeout-minutes: 5
         run: python tests/desktop_check.py match
       - name: 8 Upload through the real file dialog
         if: always()
+        timeout-minutes: 5
         run: python tests/desktop_check.py upload
       - name: 9 handbot check
         if: always()
+        timeout-minutes: 5
         run: python -m handbot check
 
       - name: Screenshots of every step

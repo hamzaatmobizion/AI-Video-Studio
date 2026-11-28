@@ -1,4 +1,4 @@
-"""The hand bot on a real Windows or Linux desktop, with its own code (run by .github/workflows/handbot-desktop.yml on
+"""The hand bot on a real Mac, Windows or Linux desktop, with its own code (run by .github/workflows/handbot-desktop.yml on
 GitHub's test machines; not part of pytest). No Google sign-in and no Flow: tests/desktop/page.html, a local page
 with text like Flow's and an upload button. Each step is its own command, so each shows as its own step on GitHub:
 
@@ -107,7 +107,7 @@ def step_clipboard() -> None:
 
 def _focus() -> str:
     """Which window has the keyboard (Linux: xdotool; Windows: the active window)."""
-    if SYSTEM == "windows":
+    if SYSTEM in ("windows", "mac"):
         return _active_title()
     out = subprocess.run(["xdotool", "getwindowfocus", "getwindowname"], capture_output=True, text=True)
     return (out.stdout or out.stderr).strip()
@@ -156,10 +156,15 @@ def step_read() -> None:
     if missing:
         fail(f"Tesseract didn't read {', '.join(missing)}", "read")
     annotate("notice", f"{SYSTEM} read", "\n".join(said)[:3000])
-    print("✓ Tesseract reads Flow-like text on a dark page")
+    print(f"✓ {'Apple Vision' if SYSTEM == 'mac' else 'Tesseract'} reads Flow-like text on a dark page")
 
 
 def _active_title() -> str:
+    if SYSTEM == "mac":  # the app in front (no permission needed to ask)
+        from AppKit import NSWorkspace
+
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        return app.localizedName() if app else ""
     if SYSTEM == "windows":
         import pygetwindow as gw
 
@@ -170,7 +175,7 @@ def _active_title() -> str:
 
 
 def step_front() -> None:
-    other = subprocess.Popen(["notepad.exe"] if SYSTEM == "windows" else ["xterm"])
+    other = subprocess.Popen({"windows": ["notepad.exe"], "mac": ["open", "-a", "TextEdit"]}.get(SYSTEM, ["xterm"]))
     time.sleep(4)
     print(f"in front before: {_active_title()!r}")
     system.chrome_front()
@@ -178,6 +183,8 @@ def step_front() -> None:
     title = _active_title()
     print(f"in front after chrome_front: {title!r}")
     other.terminate()
+    if SYSTEM == "mac":
+        subprocess.run(["pkill", "-x", "TextEdit"], capture_output=True)
     if "chrome" not in title.lower() and "desktop test" not in title.lower():
         fail(f"Chrome wasn't brought to the front (in front: {title!r})", "front")
     shot("front")

@@ -1,4 +1,4 @@
-# The hand bot on GitHub's Windows and Linux test machines (real desktops), with its own code on a local test page:
+# The hand bot on GitHub's Mac, Windows and Linux test machines (real desktops), with its own code on a local test page:
 # no Google sign-in, no Flow. Runs on pushes to the handbot-desktop-test branch, or by hand. See tests/desktop_check.py.
 name: Hand bot desktop test
 
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
@@ -48,6 +48,13 @@ jobs:
           New-Item -ItemType File -Force "$env:LOCALAPPDATA\Google\Chrome\User Data\First Run" | Out-Null
           New-Item -ItemType Directory -Force "$env:USERPROFILE\Downloads" | Out-Null
 
+      - name: Mac Chrome without its first-run pages
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p ~/Downloads "$HOME/Library/Application Support/Google/Chrome"
+          touch "$HOME/Library/Application Support/Google/Chrome/First Run"
+          ls -d "/Applications/Google Chrome.app" || brew install --cask google-chrome
+
       - name: Install the bot (requirements-bot.txt)
         run: python -m pip install -q -r requirements-bot.txt
 
@@ -59,7 +66,7 @@ jobs:
         run: python tests/desktop_check.py clipboard
       - name: 4 Chrome opens the test page (address pasted)
         run: python tests/desktop_check.py page
-      - name: 5 Tesseract reads Flow-like text
+      - name: 5 Flow-like text is read (Apple Vision on Mac, Tesseract elsewhere)
         if: always()
         run: python tests/desktop_check.py read
       - name: 6 Chrome brought to the front

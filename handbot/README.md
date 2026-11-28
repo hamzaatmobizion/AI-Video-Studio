@@ -100,6 +100,7 @@ Run the app on the same desktop as the bot (it starts the bot itself, AutoFlow's
 A server has no screen, so the bot gets a virtual one (Xvfb), with a small window manager so Chrome's window can be brought to the front, and VNC so you can see it, sign in and capture buttons. On Ubuntu or Debian:
 ```
 sudo apt install xvfb fluxbox x11vnc
+touch ~/.Xauthority   # the mouse and keyboard library won't start without it (even empty)
 wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && sudo apt install ./google-chrome-stable_current_amd64.deb
 Xvfb :1 -screen 0 1920x1080x24 &
 DISPLAY=:1 fluxbox &

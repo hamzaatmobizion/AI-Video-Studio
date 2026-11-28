@@ -15,6 +15,8 @@ if [ "$(uname)" = "Linux" ]; then
     sudo apt-get update -q
     sudo apt-get install -y -q tesseract-ocr xdotool xclip python3-venv python3-tk python3-dev
   fi
+  # the X screen library the mouse and keyboard go through won't start without this file, even an empty one
+  [ -f ~/.Xauthority ] || touch ~/.Xauthority
 fi
 
 echo "Installing…"

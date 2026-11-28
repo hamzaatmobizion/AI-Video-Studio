@@ -4,7 +4,8 @@ import importlib
 
 import pytest
 
-from handbot.system.ocr import Word, dedupe, lines
+from handbot.system.base import Text
+from handbot.system.ocr import Word, dedupe, fill_in, lines
 
 
 def w(text, x, y, width=None, h=20, conf=90.0):
@@ -111,3 +112,11 @@ def test_the_file_dialog_is_seen_on_each_system():
     # Linux (GTK): Cancel with Open, Location or Recent
     assert linux.dialog_open(["Cancel", "Recent"]) and linux.dialog_open(["Cancel", "Location:"])
     assert not linux.dialog_open(["Cancelled", "Open"])  # whole words only
+
+
+def test_the_evened_out_reading_only_adds_lines_where_the_others_found_nothing():
+    first = [Text("What do you want to create?", 570, 900, 180, 17), Text("Failed", 40, 340, 60, 16)]
+    more = [Text("|hat do you want to create?", 571, 901, 181, 17),  # misread where the others read it right
+            Text("UPLOAD MEDIA", 50, 470, 200, 30),  # a light button the others missed
+            Text("ok", 468, 389, 63, 44)]  # an icon read as letters: dropped
+    assert [t.text for t in fill_in(first, more)] == ["Failed", "UPLOAD MEDIA", "What do you want to create?"]

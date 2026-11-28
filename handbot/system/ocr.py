@@ -1,11 +1,15 @@
 """Reading the screen's words with Tesseract (Windows and Linux; macOS uses its own Vision).
 
-Tesseract reads dark text on a light background best, and Flow is dark, so each screenshot is read twice, as it is and
-with light and dark swapped, and a word found both ways is kept once. Small screen text reads better enlarged, so the
+Tesseract reads dark text on a light background best, and Flow is dark, so each screenshot is read as it is and with
+light and dark swapped, and a word found both ways is kept once. Then it's read once more evened out (each pixel
+against the colour around it, so any text is dark on light whatever its background): that finds a light button's dark
+words on a dark page, which the other two miss, and only adds lines where they found nothing (it misreads some
+letters they get right, such as "|hat" for "What"). Small screen text reads better enlarged, so the
 screenshot is read at OCR_SCALE pixels per point. Tesseract gives single words; words on one line that sit close
 together are joined into one line of text, as macOS's Vision gives them (a button's words stay one line, two buttons
 side by side stay apart)."""
 import os
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +18,7 @@ from handbot.system.base import Text
 
 LINE_GAP = 0.7  # words this close (× their height) on one line are one line of text
 SAME_LINE = 0.4  # word centres at most this far apart (× their height) are on one line
+BACKGROUND = 25  # the evened-out reading: the colour around a pixel is taken this many points across
 WINDOWS_TESSERACT = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Tesseract-OCR" / "tesseract.exe"
 
 
@@ -57,14 +62,21 @@ def read_text(image: Path, size: tuple[int, int]) -> list[Text]:
     up = max(1.0, s.OCR_SCALE / per_point)
     if up > 1.01:
         grey = cv2.resize(grey, None, fx=up, fy=up, interpolation=cv2.INTER_CUBIC)
-    words: list[Word] = []
-    for img in (grey, 255 - grey):
-        d = pytesseract.image_to_data(img, config="--psm 11", output_type=pytesseract.Output.DICT)
-        for i, text in enumerate(d["text"]):
-            conf = float(d["conf"][i])
-            if text.strip() and conf >= s.OCR_MIN_CONFIDENCE:
-                words.append(Word(text.strip(), d["left"][i], d["top"][i], d["width"][i], d["height"][i], conf))
-    return lines(dedupe(words), up * per_point)
+    k = int(BACKGROUND * up * per_point) | 1  # odd, as the median blur needs
+    evened = 255 - cv2.absdiff(grey, cv2.medianBlur(grey, k))
+
+    def words_in(*images) -> list[Word]:
+        out = []
+        for img in images:
+            d = pytesseract.image_to_data(img, config="--psm 11", output_type=pytesseract.Output.DICT)
+            for i, text in enumerate(d["text"]):
+                conf = float(d["conf"][i])
+                if text.strip() and conf >= s.OCR_MIN_CONFIDENCE:
+                    out.append(Word(text.strip(), d["left"][i], d["top"][i], d["width"][i], d["height"][i], conf))
+        return out
+
+    scale = up * per_point
+    return fill_in(lines(dedupe(words_in(grey, 255 - grey)), scale), lines(dedupe(words_in(evened)), scale))
 
 
 def _overlap(a: Word, b: Word) -> float:
@@ -83,6 +95,21 @@ def dedupe(words: list[Word]) -> list[Word]:
         if all(_overlap(w, k) < 0.5 for k in kept):
             kept.append(w)
     return kept
+
+
+def _covers(a: Text, b: Text) -> bool:
+    """Whether two lines sit in the same spot (most of the smaller one inside the other)."""
+    w = min(a.x + a.w, b.x + b.w) - max(a.x, b.x)
+    h = min(a.y + a.h, b.y + b.h) - max(a.y, b.y)
+    return w > 0 and h > 0 and w * h >= 0.3 * max(1, min(a.w * a.h, b.w * b.h))
+
+
+def fill_in(first: list[Text], more: list[Text]) -> list[Text]:
+    """`first`'s lines, and those of `more` that sit where `first` found nothing and have words (3 letters or more:
+    icons read evened out come out as short junk, such as "ok")."""
+    out = first + [m for m in more if len(re.sub(r"[^A-Za-z]", "", m.text)) >= 3
+                   and not any(_covers(m, f) for f in first)]
+    return sorted(out, key=lambda t: (t.y, t.x))
 
 
 def lines(words: list[Word], k: float) -> list[Text]:

@@ -85,6 +85,8 @@ def problems(s) -> list[str]:
     out = []
     if not os.environ.get("DISPLAY"):
         out.append("No screen: start the virtual screen (Xvfb, see handbot/README.md) and set DISPLAY (such as :1).")
+    if not Path("~/.Xauthority").expanduser().exists():
+        out.append("Create ~/.Xauthority (touch ~/.Xauthority): the mouse and keyboard can't start without it.")
     if os.environ.get("WAYLAND_DISPLAY"):
         out.append("This is a Wayland screen: the bot needs X11 (log in with an X11/Xorg session, or use Xvfb).")
     if ocr.tesseract_cmd(s.TESSERACT_CMD) is None:

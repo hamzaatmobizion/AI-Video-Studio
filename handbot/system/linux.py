@@ -1,6 +1,7 @@
 """Linux (an X11 screen, such as the Xvfb virtual screen of a server): screenshots with mss, text read by Tesseract,
 Chrome started and brought to the front with xdotool, Ctrl shortcuts, and the file dialog's Ctrl+L. Linux asks for no
 permissions; the screen must be X11 (not Wayland), with a window manager, and DISPLAY set."""
+import logging
 import os
 import shutil
 import subprocess
@@ -19,6 +20,7 @@ TAB_CONTROL = False  # the app's page is opened with the keyboard (Ctrl+L or Ctr
 CHROME_DIR = Path("~/.config/google-chrome").expanduser()
 BLACK_SHOT = "The screenshot is black: check the screen (Xvfb) is running and DISPLAY points at it."
 CHROME_NAMES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
+log = logging.getLogger("handbot")
 
 grab = grab_mss
 screenshot = screenshot_mss
@@ -40,9 +42,27 @@ def _run(*cmd: str) -> bool:
         return False
 
 
+def _out(*cmd: str) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _is_chrome(title: str) -> bool:
+    return title.endswith(("Google Chrome", "Chromium"))
+
+
+def _chrome_window() -> str | None:
+    """Chrome's main window (its title ends "- Google Chrome"; Chrome also has hidden helper windows)."""
+    ids = _out("xdotool", "search", "--onlyvisible", "--class", "google-chrome|chromium").split()
+    return next((i for i in ids if _is_chrome(_out("xdotool", "getwindowname", i))), None)
+
+
 def chrome_front() -> None:
-    """Start Chrome (your own profile, signed in) if it isn't running, maximized, and bring its window to the front.
-    It's never closed."""
+    """Start Chrome (your own profile, signed in) if it isn't running, maximized, and bring its window to the front
+    with the keyboard: checked, as just after Chrome starts no window may have it (and Ctrl+L would go nowhere). Never
+    clicked into, which could press a button on the page or switch tabs. It's never closed."""
     if not _run("pgrep", "-x", "chrome") and not _run("pgrep", "-x", "chromium"):
         exe = next((shutil.which(n) for n in CHROME_NAMES if shutil.which(n)), None)
         if exe is None:
@@ -50,8 +70,16 @@ def chrome_front() -> None:
         subprocess.Popen([exe, "--start-maximized"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
         time.sleep(6)
-    _run("xdotool", "search", "--onlyvisible", "--class", "google-chrome|chromium", "windowactivate", "--sync")
-    time.sleep(0.8)
+    for _ in range(5):
+        win = _chrome_window()
+        if win:
+            _run("xdotool", "windowactivate", "--sync", win)
+            _run("xdotool", "windowfocus", "--sync", win)
+        time.sleep(0.8)
+        if _is_chrome(_out("xdotool", "getwindowfocus", "getwindowname")):
+            return
+        time.sleep(1.5)  # Chrome may still be opening its window
+    log.warning("Chrome doesn't have the keyboard after bringing it to the front")
 
 
 def show_app_page(base: str, path: str) -> None:

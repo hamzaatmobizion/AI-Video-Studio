@@ -120,3 +120,27 @@ def test_the_evened_out_reading_only_adds_lines_where_the_others_found_nothing()
             Text("UPLOAD MEDIA", 50, 470, 200, 30),  # a light button the others missed
             Text("ok", 468, 389, 63, 44)]  # an icon read as letters: dropped
     assert [t.text for t in fill_in(first, more)] == ["Failed", "UPLOAD MEDIA", "What do you want to create?"]
+
+
+def test_linux_brings_chrome_forward_until_it_has_the_keyboard(monkeypatch):
+    import time
+
+    from handbot.system import linux
+
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    focus = iter(["", "", "Flow - Google Chrome"])  # just after Chrome starts, no window has the keyboard
+    done = []
+
+    def out(*cmd):
+        if cmd[:2] == ("xdotool", "search"):
+            return "11\n22"
+        if cmd[:2] == ("xdotool", "getwindowname"):
+            return {"11": "", "22": "Flow - Google Chrome"}[cmd[2]]  # 11: a hidden helper window
+        return next(focus)
+
+    monkeypatch.setattr(linux, "_out", out)
+    monkeypatch.setattr(linux, "_run", lambda *cmd: done.append(cmd) or cmd[:2] == ("pgrep", "-x"))
+    linux.chrome_front()
+    assert [c for c in done if c[1] == "windowfocus"] == [("xdotool", "windowfocus", "--sync", "22")] * 3
+    assert not any("click" in " ".join(c) for c in done)  # never clicked into
+

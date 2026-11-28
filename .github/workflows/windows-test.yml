@@ -1,0 +1,121 @@
+# Windows test of the app, worker and hand bot on a real Windows desktop (GitHub's Windows machine): run.ps1 setup
+# and start, handbot\setup.ps1, the test suite, AutoFlow's "Start the bot", and the bot's own Windows parts on a local
+# test page (no Google sign-in). Each step's output is reported as a notice on the run; screenshots are uploaded.
+name: windows-test
+on:
+  push:
+    branches: [windows-test]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Report helper
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          @'
+          param([string]$Title, [string]$File, [string]$Level = "notice")
+          $text = if (Test-Path $File) { (Get-Content $File -Raw) } else { "(no output)" }
+          if ($text.Length -gt 3500) { $text = "..." + $text.Substring($text.Length - 3500) }
+          $text = $text.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+          Write-Host "::$Level title=$Title::$text"
+          '@ | Set-Content report.ps1
+
+      - name: Machine
+        run: |
+          $dpi = Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern uint GetDpiForSystem();' -Name D -PassThru
+          "Windows: $((Get-CimInstance Win32_OperatingSystem).Caption)" | Out-File out\machine.txt
+          "Screen: $((Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentHorizontalResolution)x$((Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentVerticalResolution), DPI $($dpi::GetDpiForSystem())" | Out-File out\machine.txt -Append
+          "winget: $([bool](Get-Command winget -ErrorAction SilentlyContinue)); ffmpeg: $([bool](Get-Command ffmpeg -ErrorAction SilentlyContinue)); tesseract: $([bool](Get-Command tesseract -ErrorAction SilentlyContinue)); py: $(py -3 --version 2>&1)" | Out-File out\machine.txt -Append
+          "Chrome: $((Get-Item 'C:\Program Files\Google\Chrome\Application\chrome.exe' -ErrorAction SilentlyContinue).VersionInfo.ProductVersion)" | Out-File out\machine.txt -Append
+          "Session: $((query user 2>&1) -join ' | ')" | Out-File out\machine.txt -Append
+          .\report.ps1 "1 Machine" out\machine.txt
+
+      - name: run.ps1 setup (as written)
+        continue-on-error: true
+        run: |
+          powershell -ExecutionPolicy Bypass -File run.ps1 setup *> out\setup.txt
+          "exit: $LASTEXITCODE; .env made: $(Test-Path .env); venv: $(Test-Path .venv\Scripts\python.exe)" | Out-File out\setup.txt -Append
+          .\report.ps1 "2 run.ps1 setup" out\setup.txt
+
+      - name: Install what setup couldn't (no winget here), then setup again
+        run: |
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg -y --no-progress | Out-Null }
+          if (-not (Test-Path "$env:ProgramFiles\Tesseract-OCR\tesseract.exe")) { choco install tesseract -y --no-progress | Out-Null }
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $env:Path
+          "ffmpeg: $((Get-Command ffmpeg -ErrorAction SilentlyContinue).Source); tesseract: $(Test-Path "$env:ProgramFiles\Tesseract-OCR\tesseract.exe")" | Out-File out\setup2.txt
+          powershell -ExecutionPolicy Bypass -File run.ps1 setup *>> out\setup2.txt
+          "exit: $LASTEXITCODE; .env made: $(Test-Path .env)" | Out-File out\setup2.txt -Append
+          (Get-Command ffmpeg).Source | Split-Path | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          .\report.ps1 "3 setup again" out\setup2.txt
+
+      - name: Bot settings in .env
+        run: |
+          $key = .venv\Scripts\python -c "import secrets;print(secrets.token_urlsafe(32))"
+          $lines = Get-Content .env | Where-Object { $_ -notmatch '^(BOT_API_KEY|BOT_USER_EMAIL)=' }
+          $lines + "BOT_API_KEY=$key" + "BOT_USER_EMAIL=bot@example.com" | Set-Content .env -Encoding ascii
+
+      - name: handbot\setup.ps1
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          "" | powershell -ExecutionPolicy Bypass -File handbot\setup.ps1 *> out\botsetup.txt
+          "exit: $LASTEXITCODE" | Out-File out\botsetup.txt -Append
+          .\report.ps1 "4 handbot setup.ps1" out\botsetup.txt
+
+      - name: Test suite on Windows
+        continue-on-error: true
+        run: |
+          .venv\Scripts\python -m pytest -q -p no:warnings -x --tb=short *> out\pytest.txt
+          .venv\Scripts\python -m pytest -q -p no:warnings --tb=line *> out\pytest_all.txt
+          .\report.ps1 "5 pytest (first failure)" out\pytest.txt
+          .\report.ps1 "5 pytest (all)" out\pytest_all.txt
+
+      - name: run.ps1 start, then AutoFlow's Start the bot
+        continue-on-error: true
+        run: |
+          Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File run.ps1 start" -RedirectStandardOutput out\run.txt -RedirectStandardError out\run_err.txt
+          $up = $false
+          foreach ($i in 1..60) { Start-Sleep 2; try { Invoke-WebRequest http://127.0.0.1:8000/login -UseBasicParsing -TimeoutSec 3 | Out-Null; $up = $true; break } catch {} }
+          "app up: $up" | Out-File out\run_up.txt
+          Get-Content out\run.txt, out\run_err.txt -ErrorAction SilentlyContinue | Out-File out\run_up.txt -Append
+          .\report.ps1 "6 run.ps1 start" out\run_up.txt
+          $env:PYTHONPATH = "."
+          .venv\Scripts\python .github\windows-test\drive.py *> out\drive.txt
+          .\report.ps1 "7 AutoFlow Start the bot" out\drive.txt
+
+      - name: Bot's Windows parts (Chrome, OCR, file dialog)
+        continue-on-error: true
+        run: |
+          $env:PYTHONPATH = "."
+          .venv\Scripts\python -m handbot check *> out\check.txt
+          .\report.ps1 "8 handbot check" out\check.txt
+          .venv\Scripts\python .github\windows-test\screen_test.py *> out\screen.txt
+          .\report.ps1 "9 screen test" out\screen.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          Get-Content out\*.txt -ErrorAction SilentlyContinue | Select-String "RESULT|passed|failed|error" | ForEach-Object { $_.Line } | Out-File out\summary.txt
+          .\report.ps1 "0 Summary" out\summary.txt
+          Get-Process python, chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test
+          path: |
+            out/
+            handbot-data/shots/
+            handbot-data/logs/
+            var/logs/

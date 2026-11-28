@@ -1,0 +1,14 @@
+<!doctype html><html><head><title>Bot test</title><style>
+body{background:#131313;color:#e8e8e8;font:22px sans-serif;padding:60px}
+.box{background:#262626;border-radius:16px;padding:24px;width:700px;color:#9a9a9a}
+button{font:20px sans-serif;margin-top:30px;padding:12px 22px;border-radius:20px;border:0;background:#e8e8e8;color:#111}
+#chosen{margin-top:30px;font-size:24px}
+</style></head><body>
+<div class="box">What do you want to create?</div>
+<button id="up">Upload media</button>
+<input id="f" type="file" hidden>
+<div id="chosen">Nothing picked</div>
+<script>
+up.onclick=()=>f.click();
+f.onchange=()=>{chosen.textContent="Chosen "+f.files[0].name};
+</script></body></html>

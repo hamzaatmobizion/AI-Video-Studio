@@ -105,14 +105,42 @@ def step_clipboard() -> None:
     print("✓ the clipboard keeps the prompt exact")
 
 
+def _focus() -> str:
+    """Which window has the keyboard (Linux: xdotool; Windows: the active window)."""
+    if SYSTEM == "windows":
+        return _active_title()
+    out = subprocess.run(["xdotool", "getwindowfocus", "getwindowname"], capture_output=True, text=True)
+    return (out.stdout or out.stderr).strip()
+
+
+def _top() -> str:
+    """The text read in the top 15% of the screen (the tab bar and the address bar)."""
+    h = pyautogui.size().height
+    return " | ".join(t.text for t in read() if t.y < h * 0.15)
+
+
 def step_page() -> None:
     system.chrome_front()
     time.sleep(4)
     shot("chrome")
-    SC.keys(system.MOD, "l")  # the address bar, as the bot does
-    SC.paste(PAGE.as_uri())
-    SC.press("enter")
-    wait_for(lambda t: "desktop test" in t.lower(), 40, "page", "the test page's heading")
+    log = [f"keyboard in: {_focus()!r}", f"top before: {_top()}"]
+    for attempt in range(2):
+        if attempt:  # a second try: click into Chrome's page first, so it surely has the keyboard
+            w, h = pyautogui.size()
+            SC.click_at(w // 2, h // 2)
+            log.append(f"try 2, clicked the page; keyboard in: {_focus()!r}")
+        SC.keys(system.MOD, "l")  # the address bar, as the bot does
+        log.append(f"after Ctrl+L: {_top()}")
+        SC.paste(PAGE.as_uri())
+        log.append(f"clipboard holds: {pyperclip.paste()!r}; after paste: {_top()}")
+        SC.press("enter")
+        time.sleep(3)
+        log.append(f"after Enter: {_top()}")
+        shot(f"page-try{attempt + 1}")
+        if any("desktop test" in t.text.lower() for t in read()):
+            break
+    annotate("notice", f"{SYSTEM} page: step by step", "\n".join(log))
+    wait_for(lambda t: "desktop test" in t.lower(), 30, "page", "the test page's heading")
     if not np.array(system.grab()).any():
         fail(system.BLACK_SHOT, "page")
     shot("page")
